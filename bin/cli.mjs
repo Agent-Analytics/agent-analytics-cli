@@ -4,20 +4,19 @@
  * agent-analytics CLI
  * 
  * Usage:
- *   npx agent-analytics login          — Authenticate via GitHub
- *   npx agent-analytics init <name>    — Create a project and get your snippet
- *   npx agent-analytics projects       — List your projects
- *   npx agent-analytics stats <name>   — Get stats for a project
- *   npx agent-analytics events <name>  — Get recent events
- *   npx agent-analytics create <name>  — Create a new project
- *   npx agent-analytics delete <id>    — Delete a project
- *   npx agent-analytics revoke-key     — Revoke and regenerate API key
- *   npx agent-analytics whoami         — Show current account
+ *   npx agent-analytics login --token <key>  — Save your API key
+ *   npx agent-analytics init <name>          — Create a project and get your snippet
+ *   npx agent-analytics projects             — List your projects
+ *   npx agent-analytics stats <name>         — Get stats for a project
+ *   npx agent-analytics events <name>        — Get recent events
+ *   npx agent-analytics create <name>        — Create a new project
+ *   npx agent-analytics delete <id>          — Delete a project
+ *   npx agent-analytics revoke-key           — Revoke and regenerate API key
+ *   npx agent-analytics whoami               — Show current account
  */
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
 import { getApiKey, setApiKey, getBaseUrl, getConfig, saveConfig } from '../lib/config.mjs';
-import { createServer } from 'node:http';
 
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -43,75 +42,37 @@ function requireKey() {
 
 // ==================== COMMANDS ====================
 
-async function cmdLogin() {
-  heading('Agent Analytics — Login');
-  log('Opening GitHub authentication...\n');
+async function cmdLogin(token) {
+  if (!token) {
+    heading('Agent Analytics — Login');
+    log('');
+    log('Pass your API key from the dashboard:');
+    log(`  ${CYAN}npx agent-analytics login --token aak_your_key_here${RESET}`);
+    log('');
+    log('Or set it as an environment variable:');
+    log(`  ${CYAN}export AGENT_ANALYTICS_KEY=aak_your_key_here${RESET}`);
+    log('');
+    log(`Get your API key at: ${CYAN}https://app.agentanalytics.sh${RESET}`);
+    log(`${DIM}Sign in with GitHub → your API key is shown once on first signup.${RESET}`);
+    return;
+  }
 
-  // Start a local server to catch the OAuth callback
-  const port = 9876;
+  // Validate the token works
+  const api = new AgentAnalyticsAPI(token, getBaseUrl());
+  try {
+    const account = await api.getAccount();
+    setApiKey(token);
+    const config = getConfig();
+    config.email = account.email;
+    config.github_login = account.github_login;
+    saveConfig(config);
 
-  return new Promise((resolve) => {
-    const server = createServer(async (req, res) => {
-      const url = new URL(req.url, `http://localhost:${port}`);
-
-      if (url.pathname === '/callback') {
-        const apiKey = url.searchParams.get('api_key');
-        const email = url.searchParams.get('email');
-        const login = url.searchParams.get('login');
-
-        if (apiKey) {
-          setApiKey(apiKey);
-          const config = getConfig();
-          config.email = email;
-          config.github_login = login;
-          saveConfig(config);
-
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(`
-            <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;background:#06070a;color:#eef0f4">
-              <div style="text-align:center">
-                <h1>✓ Authenticated</h1>
-                <p style="color:#5a5f6e">You can close this tab and return to the terminal.</p>
-              </div>
-            </body></html>
-          `);
-
-          server.close();
-          log(`${GREEN}✓${RESET} Logged in as ${BOLD}${login || email}${RESET}`);
-          log(`${DIM}API key saved to ~/.config/agent-analytics/config.json${RESET}`);
-          log(`\nNext: ${CYAN}npx agent-analytics init my-site${RESET}`);
-          resolve();
-        } else {
-          res.writeHead(400, { 'Content-Type': 'text/plain' });
-          res.end('Authentication failed — no API key received.');
-          server.close();
-          error('Authentication failed');
-        }
-      } else {
-        res.writeHead(404);
-        res.end();
-      }
-    });
-
-    server.listen(port, () => {
-      const authUrl = `${getBaseUrl()}/auth/github?cli_port=${port}`;
-      log(`${DIM}If browser doesn't open, visit:${RESET}`);
-      log(`${CYAN}${authUrl}${RESET}\n`);
-
-      // Try to open browser
-      import('node:child_process').then(({ exec }) => {
-        const cmd = process.platform === 'darwin' ? 'open' :
-                    process.platform === 'win32' ? 'start' : 'xdg-open';
-        exec(`${cmd} "${authUrl}"`, () => {});
-      });
-    });
-
-    // Timeout after 2 minutes
-    setTimeout(() => {
-      server.close();
-      error('Login timed out. Try again.');
-    }, 120_000);
-  });
+    success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET}`);
+    log(`${DIM}API key saved to ~/.config/agent-analytics/config.json${RESET}`);
+    log(`\nNext: ${CYAN}npx agent-analytics init my-site${RESET}`);
+  } catch (err) {
+    error(`Invalid API key: ${err.message}`);
+  }
 }
 
 async function cmdInit(name) {
@@ -119,12 +80,8 @@ async function cmdInit(name) {
 
   let key = getApiKey();
 
-  // If not logged in, do login first
   if (!key) {
-    log(`${DIM}Not logged in yet. Starting authentication...${RESET}\n`);
-    await cmdLogin();
-    key = getApiKey();
-    if (!key) error('Login failed');
+    error('Not logged in. Run: npx agent-analytics login --token <your-key>\nGet your key at: https://app.agentanalytics.sh');
   }
 
   const api = new AgentAnalyticsAPI(key, getBaseUrl());
@@ -319,8 +276,8 @@ ${BOLD}USAGE${RESET}
   npx agent-analytics <command> [options]
 
 ${BOLD}COMMANDS${RESET}
-  ${CYAN}login${RESET}              Authenticate via GitHub
-  ${CYAN}init${RESET} <name>        Create first project (login + create)
+  ${CYAN}login${RESET} --token <key> Save your API key
+  ${CYAN}init${RESET} <name>        Create a project and get your snippet
   ${CYAN}projects${RESET}           List your projects
   ${CYAN}create${RESET} <name>      Create a new project
   ${CYAN}delete${RESET} <id>        Delete a project
@@ -339,7 +296,10 @@ ${BOLD}ENVIRONMENT${RESET}
   AGENT_ANALYTICS_URL    Custom API URL
 
 ${BOLD}EXAMPLES${RESET}
-  ${DIM}# First time setup${RESET}
+  ${DIM}# First time: save your API key (from app.agentanalytics.sh)${RESET}
+  npx agent-analytics login --token aak_your_key
+
+  ${DIM}# Create a project${RESET}
   npx agent-analytics init my-site
 
   ${DIM}# Check how your site is doing${RESET}
@@ -366,7 +326,7 @@ function getArg(flag) {
 try {
   switch (command) {
     case 'login':
-      await cmdLogin();
+      await cmdLogin(getArg('--token'));
       break;
     case 'init':
       await cmdInit(args[1]);
