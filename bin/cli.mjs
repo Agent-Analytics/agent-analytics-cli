@@ -75,8 +75,9 @@ async function cmdLogin(token) {
   }
 }
 
-async function cmdInit(name) {
-  if (!name) error('Usage: npx agent-analytics init <project-name>');
+async function cmdInit(name, domain) {
+  if (!name) error('Usage: npx agent-analytics init <project-name> --domain https://mysite.com');
+  if (!domain) error('Usage: npx agent-analytics init <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
 
   let key = getApiKey();
 
@@ -89,9 +90,9 @@ async function cmdInit(name) {
   heading(`Creating project: ${name}`);
 
   try {
-    const data = await api.createProject(name);
+    const data = await api.createProject(name, domain);
 
-    success('Project created!\n');
+    success(`Project created for ${BOLD}${domain}${RESET}!\n`);
 
     heading('1. Add this snippet to your site:');
     log(`${CYAN}${data.snippet}${RESET}\n`);
@@ -203,18 +204,21 @@ async function cmdEvents(project, opts = {}) {
   }
 }
 
-async function cmdCreate(name, origins) {
-  if (!name) error('Usage: npx agent-analytics create <project-name> [--origins https://mysite.com]');
+async function cmdCreate(name, domain) {
+  if (!name) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com');
+  if (!domain) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
 
   const api = requireKey();
 
   try {
-    const data = await api.createProject(name, origins || '*');
+    const data = await api.createProject(name, domain);
 
-    success(`Project "${name}" created\n`);
-    heading('Snippet:');
+    success(`Project "${name}" created for ${BOLD}${domain}${RESET}\n`);
+    heading('1. Add this snippet to your site:');
     log(`${CYAN}${data.snippet}${RESET}\n`);
-    heading('Token:');
+    heading('2. Your agent queries stats with:');
+    log(`${CYAN}${data.api_example}${RESET}\n`);
+    heading('Project token:');
     log(`${YELLOW}${data.project_token}${RESET}\n`);
   } catch (err) {
     error(`Failed to create project: ${err.message}`);
@@ -279,7 +283,7 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}login${RESET} --token <key> Save your API key
   ${CYAN}init${RESET} <name>        Create a project and get your snippet
   ${CYAN}projects${RESET}           List your projects
-  ${CYAN}create${RESET} <name>      Create a new project
+  ${CYAN}create${RESET} <name>      Create a new project (same as init)
   ${CYAN}delete${RESET} <id>        Delete a project
   ${CYAN}stats${RESET} <name>       Get stats for a project
   ${CYAN}events${RESET} <name>      Get recent events
@@ -289,7 +293,7 @@ ${BOLD}COMMANDS${RESET}
 ${BOLD}OPTIONS${RESET}
   --days <N>         Days of data (default: 7)
   --limit <N>        Max events to return (default: 100)
-  --origins <url>    Allowed origins for project
+  --domain <url>     Your site domain (required for create/init)
 
 ${BOLD}ENVIRONMENT${RESET}
   AGENT_ANALYTICS_KEY    API key (overrides config file)
@@ -300,7 +304,7 @@ ${BOLD}EXAMPLES${RESET}
   npx agent-analytics login --token aak_your_key
 
   ${DIM}# Create a project${RESET}
-  npx agent-analytics init my-site
+  npx agent-analytics init my-site --domain https://mysite.com
 
   ${DIM}# Check how your site is doing${RESET}
   npx agent-analytics stats my-site --days 30
@@ -329,7 +333,7 @@ try {
       await cmdLogin(getArg('--token'));
       break;
     case 'init':
-      await cmdInit(args[1]);
+      await cmdInit(args[1], getArg('--domain'));
       break;
     case 'projects':
     case 'list':
@@ -345,7 +349,7 @@ try {
       });
       break;
     case 'create':
-      await cmdCreate(args[1], getArg('--origins'));
+      await cmdCreate(args[1], getArg('--domain'));
       break;
     case 'delete':
       await cmdDelete(args[1]);
