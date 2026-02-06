@@ -1,0 +1,21 @@
+{
+  "name": "agent-analytics",
+  "version": "0.1.0",
+  "description": "Web analytics your AI agent can read. CLI for managing projects and querying stats.",
+  "bin": {
+    "agent-analytics": "./bin/cli.mjs"
+  },
+  "type": "module",
+  "keywords": ["analytics", "ai", "agent", "cli", "web-analytics"],
+  "author": "Agent Analytics <danny@animaapp.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Agent-Analytics/agent-analytics-cli"
+  },
+  "homepage": "https://agentanalytics.sh",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": ["bin/", "lib/", "README.md", "LICENSE"]
+}
