@@ -33,6 +33,7 @@ npx agent-analytics delete <id>                     # Delete a project
 npx agent-analytics stats <name>              # Stats (last 7 days)
 npx agent-analytics stats <name> --days 30    # Stats (last 30 days)
 npx agent-analytics events <name>             # Recent events
+npx agent-analytics properties-received <name>  # Property keys per event
 
 # Security
 npx agent-analytics revoke-key     # Revoke and regenerate API key

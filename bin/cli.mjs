@@ -9,6 +9,7 @@
  *   npx agent-analytics projects             — List your projects
  *   npx agent-analytics stats <name>         — Get stats for a project
  *   npx agent-analytics events <name>        — Get recent events
+ *   npx agent-analytics properties-received <name> — Show property keys per event
  *   npx agent-analytics create <name>        — Create a new project
  *   npx agent-analytics delete <id>          — Delete a project
  *   npx agent-analytics revoke-key           — Revoke and regenerate API key
@@ -204,6 +205,43 @@ async function cmdEvents(project, opts = {}) {
   }
 }
 
+async function cmdPropertiesReceived(project, opts = {}) {
+  if (!project) error('Usage: npx agent-analytics properties-received <project-name> [--since DATE] [--sample N]');
+
+  const api = requireKey();
+
+  try {
+    const data = await api.getPropertiesReceived(project, opts);
+
+    heading(`Received Properties: ${project}`);
+    log('');
+
+    if (!data.properties || data.properties.length === 0) {
+      log('  No properties found.');
+      return;
+    }
+
+    // Group by event for display
+    const byEvent = {};
+    for (const p of data.properties) {
+      if (!byEvent[p.event]) byEvent[p.event] = [];
+      byEvent[p.event].push(p.key);
+    }
+
+    for (const [event, keys] of Object.entries(byEvent)) {
+      log(`  ${BOLD}${event}${RESET}`);
+      for (const key of keys) {
+        log(`    ${CYAN}${key}${RESET}`);
+      }
+    }
+
+    log(`\n${DIM}Sampled from last ${data.sample_size} events${RESET}`);
+    log('');
+  } catch (err) {
+    error(`Failed to get properties: ${err.message}`);
+  }
+}
+
 async function cmdCreate(name, domain) {
   if (!name) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com');
   if (!domain) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
@@ -287,6 +325,7 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}delete${RESET} <id>        Delete a project
   ${CYAN}stats${RESET} <name>       Get stats for a project
   ${CYAN}events${RESET} <name>      Get recent events
+  ${CYAN}properties-received${RESET} <name>  Show property keys per event
   ${CYAN}whoami${RESET}             Show current account
   ${CYAN}revoke-key${RESET}         Revoke and regenerate API key
 
@@ -294,6 +333,8 @@ ${BOLD}OPTIONS${RESET}
   --days <N>         Days of data (default: 7)
   --limit <N>        Max events to return (default: 100)
   --domain <url>     Your site domain (required for create/init)
+  --since <date>     ISO date for properties-received (default: 7 days)
+  --sample <N>       Max events to sample (default: 5000)
 
 ${BOLD}ENVIRONMENT${RESET}
   AGENT_ANALYTICS_KEY    API key (overrides config file)
@@ -346,6 +387,12 @@ try {
       await cmdEvents(args[1], {
         days: parseInt(getArg('--days') || '7'),
         limit: parseInt(getArg('--limit') || '100'),
+      });
+      break;
+    case 'properties-received':
+      await cmdPropertiesReceived(args[1], {
+        since: getArg('--since'),
+        sample: getArg('--sample') ? parseInt(getArg('--sample')) : undefined,
       });
       break;
     case 'create':
