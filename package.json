@@ -17,5 +17,8 @@
   "engines": {
     "node": ">=18"
   },
-  "files": ["bin/", "lib/", "README.md", "LICENSE"]
+  "files": ["bin/", "lib/", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
 }
