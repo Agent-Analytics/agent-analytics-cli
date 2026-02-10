@@ -351,7 +351,7 @@ ${BOLD}EXAMPLES${RESET}
   npx agent-analytics stats my-site --days 30
 
   ${DIM}# Your agent can also use the API directly${RESET}
-  curl "https://app.agentanalytics.sh/stats?project=my-site&days=7" \\
+  curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \\
     -H "X-API-Key: \$AGENT_ANALYTICS_KEY"
 
 ${DIM}https://agentanalytics.sh${RESET}
