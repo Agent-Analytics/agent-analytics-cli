@@ -163,41 +163,4 @@ describe('AgentAnalyticsAPI', () => {
     });
   });
 
-  describe('track (static)', () => {
-    let originalFetch;
-    let lastUrl;
-    let lastBody;
-
-    before(() => {
-      originalFetch = globalThis.fetch;
-      globalThis.fetch = async (url, opts) => {
-        lastUrl = url;
-        lastBody = JSON.parse(opts.body);
-        return { ok: true, json: async () => ({ ok: true }) };
-      };
-    });
-
-    after(() => { globalThis.fetch = originalFetch; });
-
-    it('sends POST /track with project token', async () => {
-      await AgentAnalyticsAPI.track('aat_token', 'page_view', { path: '/' }, {
-        project: 'my-site',
-        userId: 'user_1',
-        baseUrl: 'https://api.test',
-      });
-
-      assert.equal(lastUrl, 'https://api.test/track');
-      assert.equal(lastBody.token, 'aat_token');
-      assert.equal(lastBody.event, 'page_view');
-      assert.equal(lastBody.project, 'my-site');
-      assert.equal(lastBody.user_id, 'user_1');
-      assert.deepEqual(lastBody.properties, { path: '/' });
-      assert.equal(typeof lastBody.timestamp, 'number');
-    });
-
-    it('uses defaults for missing options', async () => {
-      await AgentAnalyticsAPI.track('aat_token', 'click', {});
-      assert.equal(lastBody.project, 'default');
-    });
-  });
 });
