@@ -1,6 +1,6 @@
 {
   "name": "agent-analytics",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "Web analytics your AI agent can read. CLI for managing projects and querying stats.",
   "bin": {
     "agent-analytics": "./bin/cli.mjs"
