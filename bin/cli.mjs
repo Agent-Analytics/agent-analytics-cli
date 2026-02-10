@@ -93,7 +93,9 @@ async function cmdInit(name, domain) {
   try {
     const data = await api.createProject(name, domain);
 
-    success(`Project created for ${BOLD}${domain}${RESET}!\n`);
+    success(data.existing
+      ? `Found existing project for ${BOLD}${domain}${RESET}!\n`
+      : `Project created for ${BOLD}${domain}${RESET}!\n`);
 
     heading('1. Add this snippet to your site:');
     log(`${CYAN}${data.snippet}${RESET}\n`);
@@ -251,7 +253,9 @@ async function cmdCreate(name, domain) {
   try {
     const data = await api.createProject(name, domain);
 
-    success(`Project "${name}" created for ${BOLD}${domain}${RESET}\n`);
+    success(data.existing
+      ? `Found existing project "${name}" for ${BOLD}${domain}${RESET}\n`
+      : `Project "${name}" created for ${BOLD}${domain}${RESET}\n`);
     heading('1. Add this snippet to your site:');
     log(`${CYAN}${data.snippet}${RESET}\n`);
     heading('2. Your agent queries stats with:');
