@@ -145,7 +145,9 @@ async function cmdStats(project, days = 7) {
   const api = requireKey();
 
   try {
-    const data = await api.getStats(project, days);
+    const result = await api.getStats(project, days, { returnHeaders: true });
+    const data = result.data;
+    const headers = result.headers;
 
     heading(`Stats: ${project} (last ${days} days)`);
     log('');
@@ -169,6 +171,22 @@ async function cmdStats(project, days = 7) {
       for (const d of data.daily) {
         const bar = '█'.repeat(Math.min(Math.ceil(d.total_events / 5), 40));
         log(`  ${d.date}  ${GREEN}${bar}${RESET}  ${d.total_events} events`);
+      }
+    }
+
+    // Monthly usage summary from response headers
+    const monthlyUsage = headers['x-monthly-usage'];
+    if (monthlyUsage) {
+      const events = parseInt(monthlyUsage, 10);
+      const bill = (events / 1000) * 2;
+      const monthlyLimit = headers['x-monthly-limit'];
+      const pct = headers['x-monthly-usage-percent'];
+      log('');
+      if (monthlyLimit && pct) {
+        const capDollars = (parseInt(monthlyLimit, 10) / 1000) * 2;
+        log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)}) — ${pct}% of $${capDollars.toFixed(2)} cap`);
+      } else {
+        log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)})`);
       }
     }
 
@@ -308,6 +326,9 @@ async function cmdWhoami() {
     log(`  ${BOLD}GitHub:${RESET}   ${data.github_login || 'N/A'}`);
     log(`  ${BOLD}Tier:${RESET}     ${data.tier}`);
     log(`  ${BOLD}Projects:${RESET} ${data.projects_count}/${data.projects_limit}`);
+    if (data.tier === 'pro' && data.monthly_spend_cap_dollars != null) {
+      log(`  ${BOLD}Spend cap:${RESET} $${data.monthly_spend_cap_dollars.toFixed(2)}/month`);
+    }
     log('');
   } catch (err) {
     error(`Failed to get account: ${err.message}`);
