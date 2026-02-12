@@ -10,7 +10,7 @@ tags:
   - tracking
   - web
   - events
-metadata: {"openclaw":{"requires":{"env":["AGENT_ANALYTICS_KEY"],"anyBins":["npx"]},"primaryEnv":"AGENT_ANALYTICS_KEY"}}
+metadata: {"openclaw":{"requires":{"env":["AGENT_ANALYTICS_API_KEY"],"anyBins":["npx"]},"primaryEnv":"AGENT_ANALYTICS_API_KEY"}}
 ---
 
 # Agent Analytics — Add tracking to any website
@@ -141,7 +141,7 @@ npx agent-analytics properties-received my-site
 
 # Direct API (for agents without npx):
 curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
-  -H "X-API-Key: $AGENT_ANALYTICS_KEY"
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
 ```
 
 ### Visualizing results

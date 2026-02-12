@@ -34,23 +34,23 @@ describe('config', () => {
   });
 
   describe('getApiKey', () => {
-    const originalEnv = process.env.AGENT_ANALYTICS_KEY;
+    const originalEnv = process.env.AGENT_ANALYTICS_API_KEY;
 
     after(() => {
       if (originalEnv === undefined) {
-        delete process.env.AGENT_ANALYTICS_KEY;
+        delete process.env.AGENT_ANALYTICS_API_KEY;
       } else {
-        process.env.AGENT_ANALYTICS_KEY = originalEnv;
+        process.env.AGENT_ANALYTICS_API_KEY = originalEnv;
       }
     });
 
     it('returns env var when set', () => {
-      process.env.AGENT_ANALYTICS_KEY = 'aak_from_env';
+      process.env.AGENT_ANALYTICS_API_KEY = 'aak_from_env';
       assert.equal(getApiKey(), 'aak_from_env');
     });
 
     it('returns null when no env var and no config key', () => {
-      delete process.env.AGENT_ANALYTICS_KEY;
+      delete process.env.AGENT_ANALYTICS_API_KEY;
       const orig = getConfig();
       const backup = orig.api_key;
       delete orig.api_key;

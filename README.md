@@ -44,15 +44,15 @@ npx agent-analytics revoke-key     # Revoke and regenerate API key
 Set the env var and call the API directly — no CLI needed:
 
 ```bash
-export AGENT_ANALYTICS_KEY=aak_your_key
+export AGENT_ANALYTICS_API_KEY=aak_your_key
 
 # Query stats
 curl "https://app.agentanalytics.sh/stats?project=my-site&days=7" \
-  -H "X-API-Key: $AGENT_ANALYTICS_KEY"
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
 
 # Create a project
 curl -X POST "https://app.agentanalytics.sh/projects" \
-  -H "X-API-Key: $AGENT_ANALYTICS_KEY" \
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "new-site", "allowed_origins": "https://mysite.com"}'
 ```
@@ -61,7 +61,7 @@ curl -X POST "https://app.agentanalytics.sh/projects" \
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_ANALYTICS_KEY` | API key (overrides config file) |
+| `AGENT_ANALYTICS_API_KEY` | API key (overrides config file) |
 | `AGENT_ANALYTICS_URL` | Custom API URL (for self-hosted) |
 
 ## Config

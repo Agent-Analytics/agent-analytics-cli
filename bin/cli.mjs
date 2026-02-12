@@ -52,7 +52,7 @@ async function cmdLogin(token) {
     log(`  ${CYAN}npx agent-analytics login --token aak_your_key_here${RESET}`);
     log('');
     log('Or set it as an environment variable:');
-    log(`  ${CYAN}export AGENT_ANALYTICS_KEY=aak_your_key_here${RESET}`);
+    log(`  ${CYAN}export AGENT_ANALYTICS_API_KEY=aak_your_key_here${RESET}`);
     log('');
     log(`Get your API key at: ${CYAN}https://app.agentanalytics.sh${RESET}`);
     log(`${DIM}Sign in with GitHub → your API key is shown once on first signup.${RESET}`);
@@ -372,7 +372,7 @@ ${BOLD}OPTIONS${RESET}
   --sample <N>       Max events to sample (default: 5000)
 
 ${BOLD}ENVIRONMENT${RESET}
-  AGENT_ANALYTICS_KEY    API key (overrides config file)
+  AGENT_ANALYTICS_API_KEY    API key (overrides config file)
   AGENT_ANALYTICS_URL    Custom API URL
 
 ${BOLD}EXAMPLES${RESET}
@@ -387,7 +387,7 @@ ${BOLD}EXAMPLES${RESET}
 
   ${DIM}# Your agent can also use the API directly${RESET}
   curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \\
-    -H "X-API-Key: \$AGENT_ANALYTICS_KEY"
+    -H "X-API-Key: \$AGENT_ANALYTICS_API_KEY"
 
 ${DIM}https://agentanalytics.sh${RESET}
 `);
