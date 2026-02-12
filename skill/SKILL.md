@@ -142,6 +142,13 @@ curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
   -H "X-API-Key: $AGENT_ANALYTICS_KEY"
 ```
 
+### Visualizing results
+
+For better-looking output, pair with these companion skills:
+
+- **`table-image-generator`** — render stats as clean table images (great for Discord/Telegram where ASCII tables break)
+- **`chart-image`** — generate line, bar, area, or pie charts from your analytics data
+
 ## What this skill does NOT do
 
 - No dashboards — your agent IS the dashboard
