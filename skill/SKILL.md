@@ -10,7 +10,7 @@ tags:
   - tracking
   - web
   - events
-metadata: {"requires":{"env":["AGENT_ANALYTICS_KEY"],"anyBins":["npx"]}}
+metadata: {"openclaw":{"requires":{"env":["AGENT_ANALYTICS_KEY"],"anyBins":["npx"]},"primaryEnv":"AGENT_ANALYTICS_KEY"}}
 ---
 
 # Agent Analytics — Add tracking to any website
@@ -54,6 +54,8 @@ Add before `</body>`:
 ```
 
 This auto-tracks `page_view` events with path, referrer, browser, OS, device, screen size, and UTM params. You do NOT need to add custom page_view events.
+
+> **Security note:** The project write token (`aat_*`) is intentionally public and safe to embed in client-side HTML. It can only write events to one specific project, is rate-limited (10 req/min free, 1,000 req/min pro), and is revocable from the dashboard. It cannot read data — that requires the separate API key (`aak_*`).
 
 ## Step 1b: Discover existing events (existing projects)
 
