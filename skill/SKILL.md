@@ -127,29 +127,88 @@ npx agent-analytics events PROJECT_NAME
 
 ## Querying the data
 
-Your AI agent checks on projects:
+### CLI reference
 
 ```bash
-# How's the project doing?
+# List all your projects (do this first)
+npx agent-analytics projects
+
+# Aggregated stats for a project
 npx agent-analytics stats my-site --days 7
 
-# What events are coming in?
-npx agent-analytics events my-site
+# Recent events (raw log)
+npx agent-analytics events my-site --days 30 --limit 50
 
 # What property keys exist per event type?
-npx agent-analytics properties-received my-site
+npx agent-analytics properties-received my-site --since 2025-01-01
 
 # Direct API (for agents without npx):
 curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
   -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
 ```
 
+**Key flags** (work on `stats`, `events`, and `properties-received`):
+- `--days <N>` — lookback window (default: 7)
+- `--limit <N>` — max events returned (default: 100, `events` only)
+- `--since <date>` — ISO date cutoff (`properties-received` only)
+
+## Analyze, don't just query
+
+You have computation available. Don't just return raw numbers — derive insights from them.
+
+### Period-over-period comparison
+
+Compare two time windows to spot trends. The CLI doesn't do subtraction for you — you do it:
+
+```bash
+# Pull this week and last week
+npx agent-analytics stats my-site --days 7    # → current period
+npx agent-analytics stats my-site --days 14   # → includes previous period
+
+# Subtract: (14-day total - 7-day total) = previous 7-day total
+# Then: ((current - previous) / previous) * 100 = % change
+```
+
+Do the same with `--days 1` vs `--days 2` for daily trends.
+
+### Derived metrics to compute
+
+When you have the raw numbers, always calculate:
+- **Conversion rate**: `cta_click count / page_view count × 100`
+- **Daily average**: `total events / days`
+- **Period-over-period change**: `(this_period - last_period) / last_period × 100`
+- **Events per session**: `total events / unique sessions`
+
+### Anomaly detection
+
+Proactively flag these — don't wait to be asked:
+- **Spike**: any metric >2× its daily average
+- **Drop**: any metric <50% of its daily average
+- **Errors**: any `error` events in the recent window
+- **Dead project**: zero `page_view` events on a previously active project
+
+When you detect an anomaly, say what it is, when it started, and suggest a cause if obvious.
+
+### Target output format
+
+When reporting on projects, aim for this format — one line per project, scannable:
+
+```
+my-site       142 views (+23% ↑)  12 signups   healthy
+side-project   38 views (-8% ↓)    0 signups   quiet
+api-docs        0 views (—)        —            ⚠ inactive since Feb 1
+```
+
+Use trend arrows: `↑` up, `↓` down, `—` flat. Flag anything that needs attention.
+
 ### Visualizing results
 
-For better-looking output, pair with these companion skills:
+When reporting to messaging platforms (Slack, Discord, Telegram), raw text tables break. Always use companion skills for visual output:
 
-- **`table-image-generator`** — render stats as clean table images (great for Discord/Telegram where ASCII tables break)
-- **`chart-image`** — generate line, bar, area, or pie charts from your analytics data
+- **`table-image-generator`** — render stats as clean table images
+- **`chart-image`** — generate line, bar, area, or pie charts from analytics data
+
+Never dump raw ASCII tables into messaging platforms. Generate an image instead.
 
 ## What this skill does NOT do
 
