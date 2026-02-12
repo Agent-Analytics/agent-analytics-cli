@@ -25,6 +25,8 @@ For a typical site, that's 3-5 custom events max on top of automatic page views.
 
 ## First-time setup
 
+**Get an API key:** Sign up at [agentanalytics.sh](https://agentanalytics.sh) and generate a key from the dashboard. Alternatively, self-host the open-source version from [GitHub](https://github.com/Agent-Analytics/agent-analytics).
+
 If the project doesn't have tracking yet:
 
 ```bash
