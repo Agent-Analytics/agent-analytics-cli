@@ -13,6 +13,7 @@
  *   npx agent-analytics create <name>        — Create a new project
  *   npx agent-analytics delete <id>          — Delete a project
  *   npx agent-analytics revoke-key           — Revoke and regenerate API key
+ *   npx agent-analytics delete-account       — Delete your account (opens dashboard)
  *   npx agent-analytics whoami               — Show current account
  */
 
@@ -298,6 +299,14 @@ async function cmdDelete(id) {
   }
 }
 
+function cmdDeleteAccount() {
+  heading('Delete Account');
+  log('');
+  log('For security, account deletion must be done from the dashboard.');
+  log(`Visit: ${CYAN}https://app.agentanalytics.sh/settings${RESET}`);
+  log('');
+}
+
 async function cmdRevokeKey() {
   const api = requireKey();
 
@@ -353,6 +362,7 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}properties-received${RESET} <name>  Show property keys per event
   ${CYAN}whoami${RESET}             Show current account
   ${CYAN}revoke-key${RESET}         Revoke and regenerate API key
+  ${CYAN}delete-account${RESET}     Delete your account (opens dashboard)
 
 ${BOLD}OPTIONS${RESET}
   --days <N>         Days of data (default: 7)
@@ -428,6 +438,9 @@ try {
       break;
     case 'revoke-key':
       await cmdRevokeKey();
+      break;
+    case 'delete-account':
+      cmdDeleteAccount();
       break;
     case 'whoami':
       await cmdWhoami();
