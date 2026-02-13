@@ -1,5 +1,5 @@
 {
-  "name": "agent-analytics",
+  "name": "@agent-analytics/cli",
   "version": "0.1.7",
   "description": "Web analytics your AI agent can read. CLI for managing projects and querying stats.",
   "bin": {
