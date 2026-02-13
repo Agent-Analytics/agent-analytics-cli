@@ -95,7 +95,7 @@ describe('config', () => {
 
     it('returns default URL when no env var or config', () => {
       delete process.env.AGENT_ANALYTICS_URL;
-      assert.equal(getBaseUrl(), 'https://app.agentanalytics.sh');
+      assert.equal(getBaseUrl(), 'https://api.agentanalytics.sh');
     });
   });
 });

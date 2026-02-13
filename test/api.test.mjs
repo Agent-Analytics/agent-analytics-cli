@@ -12,7 +12,7 @@ describe('AgentAnalyticsAPI', () => {
 
     it('uses default baseUrl', () => {
       const api = new AgentAnalyticsAPI('aak_test');
-      assert.equal(api.baseUrl, 'https://app.agentanalytics.sh');
+      assert.equal(api.baseUrl, 'https://api.agentanalytics.sh');
     });
   });
 
