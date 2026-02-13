@@ -4,17 +4,17 @@
  * agent-analytics CLI
  * 
  * Usage:
- *   npx agent-analytics login --token <key>  — Save your API key
- *   npx agent-analytics create <name>         — Create a project and get your snippet
- *   npx agent-analytics projects             — List your projects
- *   npx agent-analytics stats <name>         — Get stats for a project
- *   npx agent-analytics events <name>        — Get recent events
- *   npx agent-analytics properties-received <name> — Show property keys per event
- *   npx agent-analytics init <name>          — Alias for create
- *   npx agent-analytics delete <id>          — Delete a project
- *   npx agent-analytics revoke-key           — Revoke and regenerate API key
- *   npx agent-analytics delete-account       — Delete your account (opens dashboard)
- *   npx agent-analytics whoami               — Show current account
+ *   npx @agent-analytics/cli login --token <key>  — Save your API key
+ *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
+ *   npx @agent-analytics/cli projects             — List your projects
+ *   npx @agent-analytics/cli stats <name>         — Get stats for a project
+ *   npx @agent-analytics/cli events <name>        — Get recent events
+ *   npx @agent-analytics/cli properties-received <name> — Show property keys per event
+ *   npx @agent-analytics/cli init <name>          — Alias for create
+ *   npx @agent-analytics/cli delete <id>          — Delete a project
+ *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
+ *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
+ *   npx @agent-analytics/cli whoami               — Show current account
  */
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
@@ -37,7 +37,7 @@ function heading(msg) { log(`\n${BOLD}${msg}${RESET}`); }
 function requireKey() {
   const key = getApiKey();
   if (!key) {
-    error('Not logged in. Run: npx agent-analytics login');
+    error('Not logged in. Run: npx @agent-analytics/cli login');
   }
   return new AgentAnalyticsAPI(key, getBaseUrl());
 }
@@ -49,7 +49,7 @@ async function cmdLogin(token) {
     heading('Agent Analytics — Login');
     log('');
     log('Pass your API key from the dashboard:');
-    log(`  ${CYAN}npx agent-analytics login --token aak_your_key_here${RESET}`);
+    log(`  ${CYAN}npx @agent-analytics/cli login --token aak_your_key_here${RESET}`);
     log('');
     log('Or set it as an environment variable:');
     log(`  ${CYAN}export AGENT_ANALYTICS_API_KEY=aak_your_key_here${RESET}`);
@@ -71,15 +71,15 @@ async function cmdLogin(token) {
 
     success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET}`);
     log(`${DIM}API key saved to ~/.config/agent-analytics/config.json${RESET}`);
-    log(`\nNext: ${CYAN}npx agent-analytics create my-site${RESET}`);
+    log(`\nNext: ${CYAN}npx @agent-analytics/cli create my-site${RESET}`);
   } catch (err) {
     error(`Invalid API key: ${err.message}`);
   }
 }
 
 async function cmdCreate(name, domain) {
-  if (!name) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com');
-  if (!domain) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
+  if (!name) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com');
+  if (!domain) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
 
   const api = requireKey();
 
@@ -115,7 +115,7 @@ async function cmdProjects() {
 
     if (!projects || projects.length === 0) {
       log('No projects yet. Create one:');
-      log(`  ${CYAN}npx agent-analytics create my-site${RESET}`);
+      log(`  ${CYAN}npx @agent-analytics/cli create my-site${RESET}`);
       return;
     }
 
@@ -135,7 +135,7 @@ async function cmdProjects() {
 }
 
 async function cmdStats(project, days = 7) {
-  if (!project) error('Usage: npx agent-analytics stats <project-name> [--days N]');
+  if (!project) error('Usage: npx @agent-analytics/cli stats <project-name> [--days N]');
 
   const api = requireKey();
 
@@ -192,7 +192,7 @@ async function cmdStats(project, days = 7) {
 }
 
 async function cmdEvents(project, opts = {}) {
-  if (!project) error('Usage: npx agent-analytics events <project-name> [--days N] [--limit N]');
+  if (!project) error('Usage: npx @agent-analytics/cli events <project-name> [--days N] [--limit N]');
 
   const api = requireKey();
 
@@ -221,7 +221,7 @@ async function cmdEvents(project, opts = {}) {
 }
 
 async function cmdPropertiesReceived(project, opts = {}) {
-  if (!project) error('Usage: npx agent-analytics properties-received <project-name> [--since DATE] [--sample N]');
+  if (!project) error('Usage: npx @agent-analytics/cli properties-received <project-name> [--since DATE] [--sample N]');
 
   const api = requireKey();
 
@@ -258,7 +258,7 @@ async function cmdPropertiesReceived(project, opts = {}) {
 }
 
 async function cmdDelete(id) {
-  if (!id) error('Usage: npx agent-analytics delete <project-id>');
+  if (!id) error('Usage: npx @agent-analytics/cli delete <project-id>');
 
   const api = requireKey();
 
@@ -320,7 +320,7 @@ function showHelp() {
 ${BOLD}agent-analytics${RESET} — Web analytics your AI agent can read
 
 ${BOLD}USAGE${RESET}
-  npx agent-analytics <command> [options]
+  npx @agent-analytics/cli <command> [options]
 
 ${BOLD}COMMANDS${RESET}
   ${CYAN}login${RESET} --token <key> Save your API key
@@ -348,13 +348,13 @@ ${BOLD}ENVIRONMENT${RESET}
 
 ${BOLD}EXAMPLES${RESET}
   ${DIM}# First time: save your API key (from app.agentanalytics.sh)${RESET}
-  npx agent-analytics login --token aak_your_key
+  npx @agent-analytics/cli login --token aak_your_key
 
   ${DIM}# Create a project${RESET}
-  npx agent-analytics create my-site --domain https://mysite.com
+  npx @agent-analytics/cli create my-site --domain https://mysite.com
 
   ${DIM}# Check how your site is doing${RESET}
-  npx agent-analytics stats my-site --days 30
+  npx @agent-analytics/cli stats my-site --days 30
 
   ${DIM}# Your agent can also use the API directly${RESET}
   curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \\
@@ -421,7 +421,7 @@ try {
       showHelp();
       break;
     default:
-      error(`Unknown command: ${command}. Run: npx agent-analytics help`);
+      error(`Unknown command: ${command}. Run: npx @agent-analytics/cli help`);
   }
 } catch (err) {
   error(err.message);

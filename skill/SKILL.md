@@ -31,14 +31,14 @@ If the project doesn't have tracking yet:
 
 ```bash
 # 1. Login (one time — uses your API key)
-npx agent-analytics login --token aak_YOUR_API_KEY
+npx @agent-analytics/cli login --token aak_YOUR_API_KEY
 
 # 2. Create the project (returns a project write token)
-npx agent-analytics create my-site --domain https://mysite.com
+npx @agent-analytics/cli create my-site --domain https://mysite.com
 
 # 3. Add the snippet (Step 1 below) using the returned token
 # 4. Deploy, click around, verify:
-npx agent-analytics events my-site
+npx @agent-analytics/cli events my-site
 ```
 
 The `create` command returns a **project write token** — use it as `data-token` in the snippet below. This is separate from your API key (which is for reading/querying).
@@ -62,7 +62,7 @@ This auto-tracks `page_view` events with path, referrer, browser, OS, device, sc
 If tracking is already set up, check what events and property keys are already in use so you match the naming:
 
 ```bash
-npx agent-analytics properties-received PROJECT_NAME
+npx @agent-analytics/cli properties-received PROJECT_NAME
 ```
 
 This shows which property keys each event type uses (e.g. `cta_click → id`, `signup → method`). Match existing naming before adding new events.
@@ -120,7 +120,7 @@ After adding tracking, verify it works:
 window.aa.track('test_event', {source: 'manual_test'})
 
 # Option B: Click around, then check:
-npx agent-analytics events PROJECT_NAME
+npx @agent-analytics/cli events PROJECT_NAME
 
 # Events appear within seconds.
 ```
@@ -131,16 +131,16 @@ npx agent-analytics events PROJECT_NAME
 
 ```bash
 # List all your projects (do this first)
-npx agent-analytics projects
+npx @agent-analytics/cli projects
 
 # Aggregated stats for a project
-npx agent-analytics stats my-site --days 7
+npx @agent-analytics/cli stats my-site --days 7
 
 # Recent events (raw log)
-npx agent-analytics events my-site --days 30 --limit 50
+npx @agent-analytics/cli events my-site --days 30 --limit 50
 
 # What property keys exist per event type?
-npx agent-analytics properties-received my-site --since 2025-01-01
+npx @agent-analytics/cli properties-received my-site --since 2025-01-01
 
 # Direct API (for agents without npx):
 curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
@@ -162,8 +162,8 @@ Compare two time windows to spot trends. The CLI doesn't do subtraction for you 
 
 ```bash
 # Pull this week and last week
-npx agent-analytics stats my-site --days 7    # → current period
-npx agent-analytics stats my-site --days 14   # → includes previous period
+npx @agent-analytics/cli stats my-site --days 7    # → current period
+npx @agent-analytics/cli stats my-site --days 14   # → includes previous period
 
 # Subtract: (14-day total - 7-day total) = previous 7-day total
 # Then: ((current - previous) / previous) * 100 = % change

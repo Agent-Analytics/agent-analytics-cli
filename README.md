@@ -8,35 +8,35 @@ Web analytics your AI agent can read. Drop a JS snippet on your site, query the 
 # 1. Get your API key from https://api.agentanalytics.sh (sign in with GitHub)
 
 # 2. Save your key
-npx agent-analytics login --token aak_your_key
+npx @agent-analytics/cli login --token aak_your_key
 
 # 3. Create a project
-npx agent-analytics create my-site --domain https://mysite.com
+npx @agent-analytics/cli create my-site --domain https://mysite.com
 
 # 4. Check your stats
-npx agent-analytics stats my-site
+npx @agent-analytics/cli stats my-site
 ```
 
 ## Commands
 
 ```bash
 # Auth
-npx agent-analytics login --token <key>    # Save your API key
-npx agent-analytics whoami                  # Show current account
+npx @agent-analytics/cli login --token <key>    # Save your API key
+npx @agent-analytics/cli whoami                  # Show current account
 
 # Projects
-npx agent-analytics create <name> --domain <url>    # Create a project
-npx agent-analytics projects                        # List your projects
-npx agent-analytics delete <id>                     # Delete a project
+npx @agent-analytics/cli create <name> --domain <url>    # Create a project
+npx @agent-analytics/cli projects                        # List your projects
+npx @agent-analytics/cli delete <id>                     # Delete a project
 
 # Analytics
-npx agent-analytics stats <name>              # Stats (last 7 days)
-npx agent-analytics stats <name> --days 30    # Stats (last 30 days)
-npx agent-analytics events <name>             # Recent events
-npx agent-analytics properties-received <name>  # Property keys per event
+npx @agent-analytics/cli stats <name>              # Stats (last 7 days)
+npx @agent-analytics/cli stats <name> --days 30    # Stats (last 30 days)
+npx @agent-analytics/cli events <name>             # Recent events
+npx @agent-analytics/cli properties-received <name>  # Property keys per event
 
 # Security
-npx agent-analytics revoke-key     # Revoke and regenerate API key
+npx @agent-analytics/cli revoke-key     # Revoke and regenerate API key
 ```
 
 ## For AI Agents
