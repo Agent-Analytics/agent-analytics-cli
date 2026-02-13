@@ -25,7 +25,7 @@ npx agent-analytics login --token <key>    # Save your API key
 npx agent-analytics whoami                  # Show current account
 
 # Projects
-npx agent-analytics create <name> --domain <url>   # Create a project
+npx agent-analytics init <name> --domain <url>     # Create a project
 npx agent-analytics projects                        # List your projects
 npx agent-analytics delete <id>                     # Delete a project
 
