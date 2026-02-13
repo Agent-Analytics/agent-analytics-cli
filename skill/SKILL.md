@@ -34,14 +34,14 @@ If the project doesn't have tracking yet:
 npx agent-analytics login --token aak_YOUR_API_KEY
 
 # 2. Create the project (returns a project write token)
-npx agent-analytics init my-site --domain https://mysite.com
+npx agent-analytics create my-site --domain https://mysite.com
 
 # 3. Add the snippet (Step 1 below) using the returned token
 # 4. Deploy, click around, verify:
 npx agent-analytics events my-site
 ```
 
-The `init` command returns a **project write token** — use it as `data-token` in the snippet below. This is separate from your API key (which is for reading/querying).
+The `create` command returns a **project write token** — use it as `data-token` in the snippet below. This is separate from your API key (which is for reading/querying).
 
 ## Step 1: Add the tracking snippet
 

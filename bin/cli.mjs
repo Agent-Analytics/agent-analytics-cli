@@ -5,12 +5,12 @@
  * 
  * Usage:
  *   npx agent-analytics login --token <key>  — Save your API key
- *   npx agent-analytics init <name>          — Create a project and get your snippet
+ *   npx agent-analytics create <name>         — Create a project and get your snippet
  *   npx agent-analytics projects             — List your projects
  *   npx agent-analytics stats <name>         — Get stats for a project
  *   npx agent-analytics events <name>        — Get recent events
  *   npx agent-analytics properties-received <name> — Show property keys per event
- *   npx agent-analytics create <name>        — Alias for init
+ *   npx agent-analytics init <name>          — Alias for create
  *   npx agent-analytics delete <id>          — Delete a project
  *   npx agent-analytics revoke-key           — Revoke and regenerate API key
  *   npx agent-analytics delete-account       — Delete your account (opens dashboard)
@@ -71,15 +71,15 @@ async function cmdLogin(token) {
 
     success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET}`);
     log(`${DIM}API key saved to ~/.config/agent-analytics/config.json${RESET}`);
-    log(`\nNext: ${CYAN}npx agent-analytics init my-site${RESET}`);
+    log(`\nNext: ${CYAN}npx agent-analytics create my-site${RESET}`);
   } catch (err) {
     error(`Invalid API key: ${err.message}`);
   }
 }
 
-async function cmdInit(name, domain) {
-  if (!name) error('Usage: npx agent-analytics init <project-name> --domain https://mysite.com');
-  if (!domain) error('Usage: npx agent-analytics init <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
+async function cmdCreate(name, domain) {
+  if (!name) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com');
+  if (!domain) error('Usage: npx agent-analytics create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
 
   const api = requireKey();
 
@@ -115,7 +115,7 @@ async function cmdProjects() {
 
     if (!projects || projects.length === 0) {
       log('No projects yet. Create one:');
-      log(`  ${CYAN}npx agent-analytics init my-site${RESET}`);
+      log(`  ${CYAN}npx agent-analytics create my-site${RESET}`);
       return;
     }
 
@@ -324,9 +324,9 @@ ${BOLD}USAGE${RESET}
 
 ${BOLD}COMMANDS${RESET}
   ${CYAN}login${RESET} --token <key> Save your API key
-  ${CYAN}init${RESET} <name>        Create a project and get your snippet
+  ${CYAN}create${RESET} <name>      Create a project and get your snippet
   ${CYAN}projects${RESET}           List your projects
-  ${CYAN}create${RESET} <name>      Alias for init
+  ${CYAN}init${RESET} <name>        Alias for create
   ${CYAN}delete${RESET} <id>        Delete a project
   ${CYAN}stats${RESET} <name>       Get stats for a project
   ${CYAN}events${RESET} <name>      Get recent events
@@ -338,7 +338,7 @@ ${BOLD}COMMANDS${RESET}
 ${BOLD}OPTIONS${RESET}
   --days <N>         Days of data (default: 7)
   --limit <N>        Max events to return (default: 100)
-  --domain <url>     Your site domain (required for create/init)
+  --domain <url>     Your site domain (required for create)
   --since <date>     ISO date for properties-received (default: 7 days)
   --sample <N>       Max events to sample (default: 5000)
 
@@ -351,7 +351,7 @@ ${BOLD}EXAMPLES${RESET}
   npx agent-analytics login --token aak_your_key
 
   ${DIM}# Create a project${RESET}
-  npx agent-analytics init my-site --domain https://mysite.com
+  npx agent-analytics create my-site --domain https://mysite.com
 
   ${DIM}# Check how your site is doing${RESET}
   npx agent-analytics stats my-site --days 30
@@ -379,9 +379,9 @@ try {
     case 'login':
       await cmdLogin(getArg('--token'));
       break;
-    case 'init':
     case 'create':
-      await cmdInit(args[1], getArg('--domain'));
+    case 'init':
+      await cmdCreate(args[1], getArg('--domain'));
       break;
     case 'projects':
     case 'list':

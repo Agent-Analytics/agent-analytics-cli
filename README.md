@@ -5,7 +5,7 @@ Web analytics your AI agent can read. Drop a JS snippet on your site, query the 
 ## Quick Start
 
 ```bash
-# 1. Get your API key from https://app.agentanalytics.sh (sign in with GitHub)
+# 1. Get your API key from https://api.agentanalytics.sh (sign in with GitHub)
 
 # 2. Save your key
 npx agent-analytics login --token aak_your_key
@@ -25,7 +25,7 @@ npx agent-analytics login --token <key>    # Save your API key
 npx agent-analytics whoami                  # Show current account
 
 # Projects
-npx agent-analytics init <name> --domain <url>     # Create a project
+npx agent-analytics create <name> --domain <url>    # Create a project
 npx agent-analytics projects                        # List your projects
 npx agent-analytics delete <id>                     # Delete a project
 
@@ -47,11 +47,11 @@ Set the env var and call the API directly — no CLI needed:
 export AGENT_ANALYTICS_API_KEY=aak_your_key
 
 # Query stats
-curl "https://app.agentanalytics.sh/stats?project=my-site&days=7" \
+curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
   -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
 
 # Create a project
-curl -X POST "https://app.agentanalytics.sh/projects" \
+curl -X POST "https://api.agentanalytics.sh/projects" \
   -H "X-API-Key: $AGENT_ANALYTICS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "new-site", "allowed_origins": "https://mysite.com"}'
@@ -70,7 +70,7 @@ Stored at `~/.config/agent-analytics/config.json` (file permissions: 600).
 
 ## Links
 
-- **Dashboard:** https://app.agentanalytics.sh
+- **Dashboard:** https://api.agentanalytics.sh
 - **Website:** https://agentanalytics.sh
 - **GitHub:** https://github.com/Agent-Analytics
 - **Self-host:** https://github.com/Agent-Analytics/agent-analytics
