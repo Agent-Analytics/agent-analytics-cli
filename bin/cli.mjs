@@ -388,18 +388,18 @@ try {
       await cmdProjects();
       break;
     case 'stats':
-      await cmdStats(args[1], parseInt(getArg('--days') || '7'));
+      await cmdStats(args[1], parseInt(getArg('--days') || '7', 10));
       break;
     case 'events':
       await cmdEvents(args[1], {
-        days: parseInt(getArg('--days') || '7'),
-        limit: parseInt(getArg('--limit') || '100'),
+        days: parseInt(getArg('--days') || '7', 10),
+        limit: parseInt(getArg('--limit') || '100', 10),
       });
       break;
     case 'properties-received':
       await cmdPropertiesReceived(args[1], {
         since: getArg('--since'),
-        sample: getArg('--sample') ? parseInt(getArg('--sample')) : undefined,
+        sample: getArg('--sample') ? parseInt(getArg('--sample'), 10) : undefined,
       });
       break;
     case 'delete':
