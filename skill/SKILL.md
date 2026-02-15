@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
 description: Add lightweight, privacy-friendly analytics tracking to any website. Track page views and custom events, then query the data via CLI or API. Use when the user wants to know if a project is alive and growing.
-version: 2.2.0
+version: 2.3.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
@@ -200,62 +200,153 @@ curl "https://api.agentanalytics.sh/heatmap?project=my-site&since=2025-01-01" \
 # → { heatmap: [{ day, day_name, hour, events, users }], peak, busiest_day, busiest_hour }
 ```
 
+## Which endpoint for which question
+
+Match the user's question to the right call(s):
+
+| User asks | Call | Why |
+|-----------|------|-----|
+| "How's my site doing?" | `insights` + `breakdown` + `pages` (parallel) | Full weekly picture in one turn |
+| "Is anyone visiting?" | `insights --period 7d` | Quick alive-or-dead check |
+| "What are my top pages?" | `breakdown --property path --event page_view` | Ranked page list with unique users |
+| "Where's my traffic coming from?" | `breakdown --property referrer --event page_view` | Referrer sources |
+| "Which landing page is best?" | `pages --type entry` | Bounce rate + session depth per page |
+| "Are people actually engaging?" | `sessions-dist` | Bounce vs engaged split |
+| "When should I deploy/post?" | `heatmap` | Find low-traffic windows or peak hours |
+| "Give me a summary of all projects" | Loop: `projects` then `insights` per project | Multi-project overview |
+
+For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint.
+
 ## Analyze, don't just query
 
-Use the analytics endpoints to produce insights in one agent turn instead of multiple round-trips.
+Don't return raw numbers. Interpret them. Here's how to turn each endpoint's response into something useful.
 
-### Weekly summary (3 parallel API calls)
+### `/insights` → The headline
 
-Call `/insights`, `/breakdown?property=path&event=page_view`, and `/pages?type=entry` in parallel, then synthesize:
+API returns metrics with `current`, `previous`, `change`, `change_pct`, and a `trend` field.
+
+**How to interpret:**
+- `change_pct > 10` → "Growing" — call it out positively
+- `change_pct` between -10 and 10 → "Stable" — mention it's steady
+- `change_pct < -10` → "Declining" — flag it, suggest investigating
+- `bounce_rate` current vs previous → say "improved" (went down) or "worsened" (went up)
+- `avg_duration` → convert ms to seconds: `Math.round(value / 1000)`
+- Previous period is all zeros → say "new project, no prior data to compare"
+
+**Example output:**
+```
+This week vs last: 173 events (+22%), 98 users (+18%).
+Bounce rate: 87% (up from 82% — getting worse).
+Average session: 24s. Trend: growing.
+```
+
+### `/breakdown` → The ranking
+
+API returns `values: [{ value, count, unique_users }]` sorted by count DESC.
+
+**How to interpret:**
+- Top 3-5 values is enough — don't dump the full list
+- Show the `unique_users` too — 100 events from 2 users is very different from 100 events from 80 users
+- Use `total_with_property / total_events` to note coverage: "155 of 155 page views have a path"
+- For referrers: group "(direct)" / empty as direct traffic
+
+**Example output:**
+```
+Top pages: / (98 views, 75 users), /pricing (33 views, 25 users), /docs (19 views, 4 users).
+The /docs page has high repeat visits (19 views, 4 users) — power users.
+```
+
+### `/pages` → Landing page quality
+
+API returns `entry_pages: [{ page, sessions, bounces, bounce_rate, avg_duration, avg_events }]`.
+
+**How to interpret:**
+- `bounce_rate` > 0.7 → "high bounce, needs work above the fold"
+- `bounce_rate` < 0.3 → "strong landing page"
+- `avg_duration` → convert ms to seconds; < 10s is concerning, > 60s is great
+- `avg_events` → pages/session; 1.0 means everyone bounces, 3+ means good engagement
+- Compare pages: "Your /pricing page converts 3× better than your homepage"
+
+**Example output:**
+```
+Best landing page: /pricing — 14% bounce, 62s avg session, 4.1 pages/visit.
+Worst: /blog/launch — 52% bounce, 18s avg. Consider a stronger CTA above the fold.
+```
+
+### `/sessions/distribution` → Engagement shape
+
+API returns `distribution: [{ bucket, sessions, pct }]`, `engaged_pct`, `median_bucket`.
+
+**How to interpret:**
+- `engaged_pct` is the key number — sessions ≥30s as a percentage of total
+- `engaged_pct` < 10% → "Most visitors leave immediately — focus on first impressions"
+- `engaged_pct` 10-30% → "Moderate engagement, room to improve"
+- `engaged_pct` > 30% → "Good engagement"
+- If 80%+ is in the "0s" bucket, the site has a bounce problem
+- If there's a healthy spread across buckets, engagement is genuine
+
+**Example output:**
+```
+88% of sessions bounce instantly (0s). Only 6% stay longer than 30s.
+The few who do engage stay 3-10 minutes — the content works, but first impressions don't.
+```
+
+### `/heatmap` → Timing
+
+API returns `heatmap: [{ day, day_name, hour, events, users }]`, `peak`, `busiest_day`, `busiest_hour`.
+
+**How to interpret:**
+- `peak` is the single busiest slot — mention day + hour + timezone caveat (times are UTC)
+- `busiest_day` → "Schedule blog posts/launches on this day"
+- `busiest_hour` → "This is when your audience is online"
+- Low-traffic windows → "Deploy during Sunday 3 AM UTC to minimize user impact"
+- Weekend vs weekday split → tells you if audience is B2B (weekdays) or B2C (weekends)
+
+**Example output:**
+```
+Peak: Friday at 11 PM UTC (35 events, 33 users). Busiest day overall: Sunday.
+Traffic is heaviest on weekends — your audience browses on personal time.
+Deploy on weekday mornings for minimal disruption.
+```
+
+### Weekly summary recipe (3 parallel calls)
+
+Call `insights`, `breakdown --property path --event page_view`, and `pages --type entry` in parallel, then synthesize into one response:
 
 ```
-Weekly Report (Feb 8–15 vs Feb 1–8)
-- Events: 1,200 → up 22% from 980
-- Unique users: 450 → up 18% from 380
-- Bounce rate: 42% → improved from 48%
-- Top pages: /home (523), /pricing (187), /docs (94)
-- Best landing page: /pricing — 14% bounce, 62s avg session
-- Trend: Growing
+Weekly Report — my-site (Feb 8–15 vs Feb 1–8)
+Events: 1,200 (+22% ↑)  Users: 450 (+18% ↑)  Bounce: 42% (improved from 48%)
+Top pages: /home (523), /pricing (187), /docs (94)
+Best landing: /pricing — 14% bounce, 62s avg. Worst: /blog — 52% bounce.
+Trend: Growing.
 ```
 
-### Derived metrics to compute
+### Multi-project overview
 
-When you have the raw numbers, always calculate:
-- **Conversion rate**: `cta_click count / page_view count × 100` (use `/breakdown`)
-- **Period-over-period change**: use `/insights` — it returns `change_pct` directly
-- **Engagement rate**: use `/sessions/distribution` — returns `engaged_pct` (sessions ≥30s)
-- **Best performing pages**: use `/pages` — sort by lowest `bounce_rate`
+Call `projects` to list all projects, then call `insights --period 7d` for each. Present one line per project:
+
+```
+my-site         142 views (+23% ↑)  12 signups   healthy
+side-project     38 views (-8% ↓)    0 signups   quiet
+api-docs          0 views (—)        —            ⚠ inactive since Feb 1
+```
+
+Use arrows: `↑` up, `↓` down, `—` flat. Flag anything that needs attention.
 
 ### Anomaly detection
 
-Proactively flag these — don't wait to be asked:
-- **Spike**: any metric >2× its daily average
-- **Drop**: any metric <50% of its daily average
-- **Errors**: any `error` events in the recent window
-- **Dead project**: zero `page_view` events on a previously active project
-
-When you detect an anomaly, say what it is, when it started, and suggest a cause if obvious.
-
-### Target output format
-
-When reporting on projects, aim for this format — one line per project, scannable:
-
-```
-my-site       142 views (+23% ↑)  12 signups   healthy
-side-project   38 views (-8% ↓)    0 signups   quiet
-api-docs        0 views (—)        —            ⚠ inactive since Feb 1
-```
-
-Use trend arrows: `↑` up, `↓` down, `—` flat. Flag anything that needs attention.
+Proactively flag — don't wait to be asked:
+- **Spike**: any metric >2× its previous period → "unusual surge, check referrers"
+- **Drop**: any metric <50% of previous → "significant decline, worth investigating"
+- **Dead project**: zero `page_view` events → "⚠ no traffic detected"
+- **Errors**: any `error` events in the window → surface the `message` property
 
 ### Visualizing results
 
-When reporting to messaging platforms (Slack, Discord, Telegram), raw text tables break. Always use companion skills for visual output:
+When reporting to messaging platforms (Slack, Discord, Telegram), raw text tables break. Use companion skills:
 
 - **`table-image-generator`** — render stats as clean table images
 - **`chart-image`** — generate line, bar, area, or pie charts from analytics data
-
-Never dump raw ASCII tables into messaging platforms. Generate an image instead.
 
 ## What this skill does NOT do
 
