@@ -34,6 +34,11 @@ npx @agent-analytics/cli stats <name>              # Stats (last 7 days)
 npx @agent-analytics/cli stats <name> --days 30    # Stats (last 30 days)
 npx @agent-analytics/cli events <name>             # Recent events
 npx @agent-analytics/cli properties-received <name>  # Property keys per event
+npx @agent-analytics/cli insights <name>           # Period-over-period comparison (--period 7d)
+npx @agent-analytics/cli breakdown <name> --property path  # Top values for a property
+npx @agent-analytics/cli pages <name>              # Landing page performance (--type entry|exit|both)
+npx @agent-analytics/cli sessions-dist <name>      # Session duration histogram
+npx @agent-analytics/cli heatmap <name>            # Peak hours & busiest days
 
 # Security
 npx @agent-analytics/cli revoke-key     # Revoke and regenerate API key
