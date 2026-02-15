@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
 description: Add lightweight, privacy-friendly analytics tracking to any website. Track page views and custom events, then query the data via CLI or API. Use when the user wants to know if a project is alive and growing.
-version: 2.1.0
+version: 2.2.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
@@ -142,42 +142,89 @@ npx @agent-analytics/cli events my-site --days 30 --limit 50
 # What property keys exist per event type?
 npx @agent-analytics/cli properties-received my-site --since 2025-01-01
 
-# Direct API (for agents without npx):
-curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
+# Period-over-period comparison (this week vs last week)
+npx @agent-analytics/cli insights my-site --period 7d
+
+# Top pages, referrers, UTM sources (any property key)
+npx @agent-analytics/cli breakdown my-site --property path --event page_view --limit 10
+
+# Landing page performance
+npx @agent-analytics/cli pages my-site --type entry
+
+# Session engagement histogram
+npx @agent-analytics/cli sessions-dist my-site
+
+# Traffic patterns by day & hour
+npx @agent-analytics/cli heatmap my-site
 ```
 
-**Key flags** (work on `stats`, `events`, and `properties-received`):
-- `--days <N>` — lookback window (default: 7)
-- `--limit <N>` — max events returned (default: 100, `events` only)
+**Key flags**:
+- `--days <N>` — lookback window (default: 7; for `stats`, `events`)
+- `--limit <N>` — max rows returned (default: 100)
 - `--since <date>` — ISO date cutoff (`properties-received` only)
+- `--period <P>` — comparison period: `1d`, `7d`, `14d`, `30d`, `90d` (`insights` only)
+- `--property <key>` — property key to group by (`breakdown`, required)
+- `--event <name>` — filter by event name (`breakdown` only)
+- `--type <T>` — page type: `entry`, `exit`, `both` (`pages` only, default: entry)
+
+### Analytics API endpoints
+
+These endpoints return pre-computed aggregations — use them instead of downloading raw events and computing client-side. All require `X-API-Key` header or `?key=` param.
+
+```bash
+# Period-over-period comparison (replaces manual 2x /stats calls)
+# period: 1d, 7d, 14d, 30d, or 90d
+curl "https://api.agentanalytics.sh/insights?project=my-site&period=7d" \
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
+# → { metrics: { total_events: { current, previous, change, change_pct }, ... }, trend }
+
+# Property value breakdown (top pages, referrers, UTM sources, etc.)
+curl "https://api.agentanalytics.sh/breakdown?project=my-site&property=path&event=page_view&limit=10" \
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
+# → { values: [{ value: "/home", count: 523, unique_users: 312 }, ...] }
+
+# Entry & exit page performance
+# type: entry, exit, or both
+curl "https://api.agentanalytics.sh/pages?project=my-site&type=entry" \
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
+# → { entry_pages: [{ page, sessions, bounces, bounce_rate, avg_duration, avg_events }] }
+
+# Session duration distribution (engagement histogram)
+curl "https://api.agentanalytics.sh/sessions/distribution?project=my-site" \
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
+# → { distribution: [{ bucket: "0s", sessions, pct }, ...], engaged_pct, median_bucket }
+
+# Traffic heatmap (peak hours & busiest days)
+curl "https://api.agentanalytics.sh/heatmap?project=my-site&since=2025-01-01" \
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
+# → { heatmap: [{ day, day_name, hour, events, users }], peak, busiest_day, busiest_hour }
+```
 
 ## Analyze, don't just query
 
-You have computation available. Don't just return raw numbers — derive insights from them.
+Use the analytics endpoints to produce insights in one agent turn instead of multiple round-trips.
 
-### Period-over-period comparison
+### Weekly summary (3 parallel API calls)
 
-Compare two time windows to spot trends. The CLI doesn't do subtraction for you — you do it:
+Call `/insights`, `/breakdown?property=path&event=page_view`, and `/pages?type=entry` in parallel, then synthesize:
 
-```bash
-# Pull this week and last week
-npx @agent-analytics/cli stats my-site --days 7    # → current period
-npx @agent-analytics/cli stats my-site --days 14   # → includes previous period
-
-# Subtract: (14-day total - 7-day total) = previous 7-day total
-# Then: ((current - previous) / previous) * 100 = % change
 ```
-
-Do the same with `--days 1` vs `--days 2` for daily trends.
+Weekly Report (Feb 8–15 vs Feb 1–8)
+- Events: 1,200 → up 22% from 980
+- Unique users: 450 → up 18% from 380
+- Bounce rate: 42% → improved from 48%
+- Top pages: /home (523), /pricing (187), /docs (94)
+- Best landing page: /pricing — 14% bounce, 62s avg session
+- Trend: Growing
+```
 
 ### Derived metrics to compute
 
 When you have the raw numbers, always calculate:
-- **Conversion rate**: `cta_click count / page_view count × 100`
-- **Daily average**: `total events / days`
-- **Period-over-period change**: `(this_period - last_period) / last_period × 100`
-- **Events per session**: `total events / unique sessions`
+- **Conversion rate**: `cta_click count / page_view count × 100` (use `/breakdown`)
+- **Period-over-period change**: use `/insights` — it returns `change_pct` directly
+- **Engagement rate**: use `/sessions/distribution` — returns `engaged_pct` (sessions ≥30s)
+- **Best performing pages**: use `/pages` — sort by lowest `bounce_rate`
 
 ### Anomaly detection
 
