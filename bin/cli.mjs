@@ -10,6 +10,11 @@
  *   npx @agent-analytics/cli stats <name>         — Get stats for a project
  *   npx @agent-analytics/cli events <name>        — Get recent events
  *   npx @agent-analytics/cli properties-received <name> — Show property keys per event
+ *   npx @agent-analytics/cli insights <name>      — Period-over-period comparison
+ *   npx @agent-analytics/cli breakdown <name>     — Property value distribution
+ *   npx @agent-analytics/cli pages <name>         — Entry/exit page stats
+ *   npx @agent-analytics/cli sessions-dist <name> — Session duration distribution
+ *   npx @agent-analytics/cli heatmap <name>       — Peak hours & busiest days
  *   npx @agent-analytics/cli init <name>          — Alias for create
  *   npx @agent-analytics/cli delete <id>          — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
@@ -257,6 +262,151 @@ async function cmdPropertiesReceived(project, opts = {}) {
   }
 }
 
+async function cmdInsights(project, period = '7d') {
+  if (!project) error('Usage: npx @agent-analytics/cli insights <project-name> [--period 7d]');
+
+  const api = requireKey();
+
+  try {
+    const data = await api.getInsights(project, { period });
+
+    heading(`Insights: ${project} (${period} vs previous)`);
+    log('');
+
+    const m = data.metrics;
+    for (const [key, metric] of Object.entries(m)) {
+      const label = key.replace(/_/g, ' ');
+      const arrow = metric.change > 0 ? `${GREEN}↑` : metric.change < 0 ? `${RED}↓` : `${DIM}—`;
+      const pct = metric.change_pct !== null ? ` (${metric.change_pct > 0 ? '+' : ''}${metric.change_pct}%)` : '';
+      log(`  ${BOLD}${label}:${RESET}  ${metric.current} ${arrow}${pct}${RESET}  ${DIM}was ${metric.previous}${RESET}`);
+    }
+
+    log('');
+    log(`  ${BOLD}Trend:${RESET} ${data.trend}`);
+    log('');
+  } catch (err) {
+    error(`Failed to get insights: ${err.message}`);
+  }
+}
+
+async function cmdBreakdown(project, property, opts = {}) {
+  if (!project || !property) error('Usage: npx @agent-analytics/cli breakdown <project-name> --property <key> [--event page_view] [--limit 20]');
+
+  const api = requireKey();
+
+  try {
+    const data = await api.getBreakdown(project, { property, ...opts });
+
+    heading(`Breakdown: ${project} — ${property}${data.event ? ` (${data.event})` : ''}`);
+    log('');
+
+    if (!data.values || data.values.length === 0) {
+      log('  No data found.');
+      return;
+    }
+
+    for (const v of data.values) {
+      log(`  ${BOLD}${v.value}${RESET}  ${v.count} events  ${DIM}(${v.unique_users} users)${RESET}`);
+    }
+    log(`\n${DIM}${data.total_with_property} of ${data.total_events} events have this property${RESET}`);
+    log('');
+  } catch (err) {
+    error(`Failed to get breakdown: ${err.message}`);
+  }
+}
+
+async function cmdPages(project, type = 'entry', opts = {}) {
+  if (!project) error('Usage: npx @agent-analytics/cli pages <project-name> [--type entry|exit|both] [--limit 20]');
+
+  const api = requireKey();
+
+  try {
+    const data = await api.getPages(project, { type, ...opts });
+
+    heading(`Pages: ${project} (${type})`);
+    log('');
+
+    const pages = data.entry_pages || data.exit_pages || [];
+    if (pages.length === 0) {
+      log('  No page data found.');
+      return;
+    }
+
+    for (const p of pages) {
+      const bounceStr = `${Math.round(p.bounce_rate * 100)}% bounce`;
+      const durStr = `${Math.round(p.avg_duration / 1000)}s avg`;
+      log(`  ${BOLD}${p.page}${RESET}  ${p.sessions} sessions  ${DIM}${bounceStr}  ${durStr}  ${p.avg_events} events/session${RESET}`);
+    }
+
+    if (data.exit_pages && data.entry_pages) {
+      log('');
+      heading('Exit pages:');
+      for (const p of data.exit_pages) {
+        log(`  ${BOLD}${p.page}${RESET}  ${p.sessions} sessions`);
+      }
+    }
+    log('');
+  } catch (err) {
+    error(`Failed to get pages: ${err.message}`);
+  }
+}
+
+async function cmdSessionsDist(project) {
+  if (!project) error('Usage: npx @agent-analytics/cli sessions-dist <project-name>');
+
+  const api = requireKey();
+
+  try {
+    const data = await api.getSessionDistribution(project);
+
+    heading(`Session Distribution: ${project}`);
+    log('');
+
+    if (!data.distribution || data.distribution.length === 0) {
+      log('  No session data found.');
+      return;
+    }
+
+    for (const b of data.distribution) {
+      const bar = '█'.repeat(Math.min(Math.ceil(b.pct / 2), 40));
+      log(`  ${b.bucket.padEnd(7)}  ${GREEN}${bar}${RESET}  ${b.sessions} (${b.pct}%)`);
+    }
+
+    log('');
+    log(`  ${BOLD}Median:${RESET} ${data.median_bucket}  ${BOLD}Engaged:${RESET} ${data.engaged_pct}% (sessions ≥30s)`);
+    log('');
+  } catch (err) {
+    error(`Failed to get session distribution: ${err.message}`);
+  }
+}
+
+async function cmdHeatmap(project) {
+  if (!project) error('Usage: npx @agent-analytics/cli heatmap <project-name>');
+
+  const api = requireKey();
+
+  try {
+    const data = await api.getHeatmap(project);
+
+    heading(`Heatmap: ${project}`);
+    log('');
+
+    if (!data.heatmap || data.heatmap.length === 0) {
+      log('  No heatmap data found.');
+      return;
+    }
+
+    if (data.peak) {
+      log(`  ${BOLD}Peak:${RESET} ${data.peak.day_name} at ${data.peak.hour}:00 (${data.peak.events} events, ${data.peak.users} users)`);
+    }
+    log(`  ${BOLD}Busiest day:${RESET} ${data.busiest_day}`);
+    log(`  ${BOLD}Busiest hour:${RESET} ${data.busiest_hour}:00`);
+    log('');
+  } catch (err) {
+    error(`Failed to get heatmap: ${err.message}`);
+  }
+}
+
 async function cmdDelete(id) {
   if (!id) error('Usage: npx @agent-analytics/cli delete <project-id>');
 
@@ -331,16 +481,25 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}stats${RESET} <name>       Get stats for a project
   ${CYAN}events${RESET} <name>      Get recent events
   ${CYAN}properties-received${RESET} <name>  Show property keys per event
+  ${CYAN}insights${RESET} <name>    Period-over-period comparison
+  ${CYAN}breakdown${RESET} <name>   Property value distribution
+  ${CYAN}pages${RESET} <name>       Entry/exit page performance
+  ${CYAN}sessions-dist${RESET} <name>  Session duration distribution
+  ${CYAN}heatmap${RESET} <name>     Peak hours & busiest days
   ${CYAN}whoami${RESET}             Show current account
   ${CYAN}revoke-key${RESET}         Revoke and regenerate API key
   ${CYAN}delete-account${RESET}     Delete your account (opens dashboard)
 
 ${BOLD}OPTIONS${RESET}
   --days <N>         Days of data (default: 7)
-  --limit <N>        Max events to return (default: 100)
+  --limit <N>        Max events/rows to return (default: 100)
   --domain <url>     Your site domain (required for create)
   --since <date>     ISO date for properties-received (default: 7 days)
   --sample <N>       Max events to sample (default: 5000)
+  --period <P>       Period for insights: 1d, 7d, 14d, 30d, 90d (default: 7d)
+  --property <key>   Property key for breakdown (required)
+  --event <name>     Filter by event name (breakdown only)
+  --type <T>         Page type: entry, exit, both (default: entry)
 
 ${BOLD}ENVIRONMENT${RESET}
   AGENT_ANALYTICS_API_KEY    API key (overrides config file)
@@ -401,6 +560,26 @@ try {
         since: getArg('--since'),
         sample: getArg('--sample') ? parseInt(getArg('--sample'), 10) : undefined,
       });
+      break;
+    case 'insights':
+      await cmdInsights(args[1], getArg('--period') || '7d');
+      break;
+    case 'breakdown':
+      await cmdBreakdown(args[1], getArg('--property'), {
+        event: getArg('--event'),
+        limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+      });
+      break;
+    case 'pages':
+      await cmdPages(args[1], getArg('--type') || 'entry', {
+        limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+      });
+      break;
+    case 'sessions-dist':
+      await cmdSessionsDist(args[1]);
+      break;
+    case 'heatmap':
+      await cmdHeatmap(args[1]);
       break;
     case 'delete':
       await cmdDelete(args[1]);
