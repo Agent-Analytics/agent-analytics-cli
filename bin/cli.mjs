@@ -47,6 +47,22 @@ function requireKey() {
   return new AgentAnalyticsAPI(key, getBaseUrl());
 }
 
+function withApi(fn) {
+  return async (...args) => {
+    const api = requireKey();
+    try {
+      return await fn(api, ...args);
+    } catch (err) {
+      error(err.message);
+    }
+  };
+}
+
+function ifEmpty(arr, label) {
+  if (!arr || arr.length === 0) { log(`  No ${label} found.`); return true; }
+  return false;
+}
+
 // ==================== COMMANDS ====================
 
 async function cmdLogin(token) {
@@ -82,343 +98,257 @@ async function cmdLogin(token) {
   }
 }
 
-async function cmdCreate(name, domain) {
+const cmdCreate = withApi(async (api, name, domain) => {
   if (!name) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com');
   if (!domain) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
 
-  const api = requireKey();
-
   heading(`Creating project: ${name}`);
 
-  try {
-    const data = await api.createProject(name, domain);
+  const data = await api.createProject(name, domain);
 
-    success(data.existing
-      ? `Found existing project for ${BOLD}${domain}${RESET}!\n`
-      : `Project created for ${BOLD}${domain}${RESET}!\n`);
+  success(data.existing
+    ? `Found existing project for ${BOLD}${domain}${RESET}!\n`
+    : `Project created for ${BOLD}${domain}${RESET}!\n`);
 
-    heading('1. Add this snippet to your site:');
-    log(`${CYAN}${data.snippet}${RESET}\n`);
+  heading('1. Add this snippet to your site:');
+  log(`${CYAN}${data.snippet}${RESET}\n`);
 
-    heading('2. Your agent queries stats with:');
-    log(`${CYAN}${data.api_example}${RESET}\n`);
+  heading('2. Your agent queries stats with:');
+  log(`${CYAN}${data.api_example}${RESET}\n`);
 
-    heading('Project token (for the snippet):');
-    log(`${YELLOW}${data.project_token}${RESET}\n`);
+  heading('Project token (for the snippet):');
+  log(`${YELLOW}${data.project_token}${RESET}\n`);
+});
 
-  } catch (err) {
-    error(`Failed to create project: ${err.message}`);
+const cmdProjects = withApi(async (api) => {
+  const data = await api.listProjects();
+  const projects = data.projects;
+
+  if (!projects || projects.length === 0) {
+    log('No projects yet. Create one:');
+    log(`  ${CYAN}npx @agent-analytics/cli create my-site${RESET}`);
+    return;
   }
-}
 
-async function cmdProjects() {
-  const api = requireKey();
+  heading(`Your Projects (${projects.length})`);
+  log('');
 
-  try {
-    const data = await api.listProjects();
-    const projects = data.projects;
-
-    if (!projects || projects.length === 0) {
-      log('No projects yet. Create one:');
-      log(`  ${CYAN}npx @agent-analytics/cli create my-site${RESET}`);
-      return;
-    }
-
-    heading(`Your Projects (${projects.length})`);
+  for (const p of projects) {
+    const created = new Date(p.created_at).toLocaleDateString();
+    log(`  ${BOLD}${p.name}${RESET}  ${DIM}created ${created}${RESET}`);
+    log(`  ${DIM}token:${RESET} ${p.project_token}`);
+    log(`  ${DIM}origins:${RESET} ${p.allowed_origins || '*'}`);
     log('');
-
-    for (const p of projects) {
-      const created = new Date(p.created_at).toLocaleDateString();
-      log(`  ${BOLD}${p.name}${RESET}  ${DIM}created ${created}${RESET}`);
-      log(`  ${DIM}token:${RESET} ${p.project_token}`);
-      log(`  ${DIM}origins:${RESET} ${p.allowed_origins || '*'}`);
-      log('');
-    }
-  } catch (err) {
-    error(`Failed to list projects: ${err.message}`);
   }
-}
+});
 
-async function cmdStats(project, days = 7) {
+const cmdStats = withApi(async (api, project, days = 7) => {
   if (!project) error('Usage: npx @agent-analytics/cli stats <project-name> [--days N]');
 
-  const api = requireKey();
+  const result = await api.getStats(project, days, { returnHeaders: true });
+  const data = result.data;
+  const headers = result.headers;
 
-  try {
-    const result = await api.getStats(project, days, { returnHeaders: true });
-    const data = result.data;
-    const headers = result.headers;
+  heading(`Stats: ${project} (last ${days} days)`);
+  log('');
 
-    heading(`Stats: ${project} (last ${days} days)`);
-    log('');
-
-    if (data.totals) {
-      log(`  ${BOLD}Total events:${RESET}   ${data.totals.total_events || 0}`);
-      log(`  ${BOLD}Unique users:${RESET}   ${data.totals.unique_users || 0}`);
-    }
-
-    if (data.events && data.events.length > 0) {
-      log('');
-      heading('Events:');
-      for (const e of data.events) {
-        log(`  ${e.event}  ${DIM}→${RESET}  ${BOLD}${e.count}${RESET}  ${DIM}(${e.unique_users} users)${RESET}`);
-      }
-    }
-
-    if (data.daily && data.daily.length > 0) {
-      log('');
-      heading('Daily:');
-      for (const d of data.daily) {
-        const bar = '█'.repeat(Math.min(Math.ceil(d.total_events / 5), 40));
-        log(`  ${d.date}  ${GREEN}${bar}${RESET}  ${d.total_events} events`);
-      }
-    }
-
-    // Monthly usage summary from response headers
-    const monthlyUsage = headers['x-monthly-usage'];
-    if (monthlyUsage) {
-      const events = parseInt(monthlyUsage, 10);
-      const bill = (events / 1000) * 2;
-      const monthlyLimit = headers['x-monthly-limit'];
-      const pct = headers['x-monthly-usage-percent'];
-      log('');
-      if (monthlyLimit && pct) {
-        const capDollars = (parseInt(monthlyLimit, 10) / 1000) * 2;
-        log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)}) — ${pct}% of $${capDollars.toFixed(2)} cap`);
-      } else {
-        log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)})`);
-      }
-    }
-
-    log('');
-  } catch (err) {
-    error(`Failed to get stats: ${err.message}`);
+  if (data.totals) {
+    log(`  ${BOLD}Total events:${RESET}   ${data.totals.total_events || 0}`);
+    log(`  ${BOLD}Unique users:${RESET}   ${data.totals.unique_users || 0}`);
   }
-}
 
-async function cmdEvents(project, opts = {}) {
+  if (data.events && data.events.length > 0) {
+    log('');
+    heading('Events:');
+    for (const e of data.events) {
+      log(`  ${e.event}  ${DIM}→${RESET}  ${BOLD}${e.count}${RESET}  ${DIM}(${e.unique_users} users)${RESET}`);
+    }
+  }
+
+  if (data.daily && data.daily.length > 0) {
+    log('');
+    heading('Daily:');
+    for (const d of data.daily) {
+      const bar = '█'.repeat(Math.min(Math.ceil(d.total_events / 5), 40));
+      log(`  ${d.date}  ${GREEN}${bar}${RESET}  ${d.total_events} events`);
+    }
+  }
+
+  // Monthly usage summary from response headers
+  const monthlyUsage = headers['x-monthly-usage'];
+  if (monthlyUsage) {
+    const events = parseInt(monthlyUsage, 10);
+    const bill = (events / 1000) * 2;
+    const monthlyLimit = headers['x-monthly-limit'];
+    const pct = headers['x-monthly-usage-percent'];
+    log('');
+    if (monthlyLimit && pct) {
+      const capDollars = (parseInt(monthlyLimit, 10) / 1000) * 2;
+      log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)}) — ${pct}% of $${capDollars.toFixed(2)} cap`);
+    } else {
+      log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)})`);
+    }
+  }
+
+  log('');
+});
+
+const cmdEvents = withApi(async (api, project, opts = {}) => {
   if (!project) error('Usage: npx @agent-analytics/cli events <project-name> [--days N] [--limit N]');
 
-  const api = requireKey();
+  const data = await api.getEvents(project, opts);
 
-  try {
-    const data = await api.getEvents(project, opts);
+  heading(`Events: ${project}`);
+  log('');
 
-    heading(`Events: ${project}`);
-    log('');
+  if (ifEmpty(data.events, 'events')) return;
 
-    if (!data.events || data.events.length === 0) {
-      log('  No events yet.');
-      return;
+  for (const e of data.events) {
+    const time = new Date(e.timestamp).toLocaleString();
+    log(`  ${DIM}${time}${RESET}  ${BOLD}${e.event}${RESET}  ${DIM}${e.user_id || ''}${RESET}`);
+    if (e.properties) {
+      log(`    ${DIM}${JSON.stringify(e.properties)}${RESET}`);
     }
-
-    for (const e of data.events) {
-      const time = new Date(e.timestamp).toLocaleString();
-      log(`  ${DIM}${time}${RESET}  ${BOLD}${e.event}${RESET}  ${DIM}${e.user_id || ''}${RESET}`);
-      if (e.properties) {
-        log(`    ${DIM}${JSON.stringify(e.properties)}${RESET}`);
-      }
-    }
-    log('');
-  } catch (err) {
-    error(`Failed to get events: ${err.message}`);
   }
-}
+  log('');
+});
 
-async function cmdPropertiesReceived(project, opts = {}) {
+const cmdPropertiesReceived = withApi(async (api, project, opts = {}) => {
   if (!project) error('Usage: npx @agent-analytics/cli properties-received <project-name> [--since DATE] [--sample N]');
 
-  const api = requireKey();
+  const data = await api.getPropertiesReceived(project, opts);
 
-  try {
-    const data = await api.getPropertiesReceived(project, opts);
+  heading(`Received Properties: ${project}`);
+  log('');
 
-    heading(`Received Properties: ${project}`);
-    log('');
+  if (ifEmpty(data.properties, 'properties')) return;
 
-    if (!data.properties || data.properties.length === 0) {
-      log('  No properties found.');
-      return;
-    }
-
-    // Group by event for display
-    const byEvent = {};
-    for (const p of data.properties) {
-      if (!byEvent[p.event]) byEvent[p.event] = [];
-      byEvent[p.event].push(p.key);
-    }
-
-    for (const [event, keys] of Object.entries(byEvent)) {
-      log(`  ${BOLD}${event}${RESET}`);
-      for (const key of keys) {
-        log(`    ${CYAN}${key}${RESET}`);
-      }
-    }
-
-    log(`\n${DIM}Sampled from last ${data.sample_size} events${RESET}`);
-    log('');
-  } catch (err) {
-    error(`Failed to get properties: ${err.message}`);
+  // Group by event for display
+  const byEvent = {};
+  for (const p of data.properties) {
+    if (!byEvent[p.event]) byEvent[p.event] = [];
+    byEvent[p.event].push(p.key);
   }
-}
 
-async function cmdInsights(project, period = '7d') {
+  for (const [event, keys] of Object.entries(byEvent)) {
+    log(`  ${BOLD}${event}${RESET}`);
+    for (const key of keys) {
+      log(`    ${CYAN}${key}${RESET}`);
+    }
+  }
+
+  log(`\n${DIM}Sampled from last ${data.sample_size} events${RESET}`);
+  log('');
+});
+
+const cmdInsights = withApi(async (api, project, period = '7d') => {
   if (!project) error('Usage: npx @agent-analytics/cli insights <project-name> [--period 7d]');
 
-  const api = requireKey();
+  const data = await api.getInsights(project, { period });
 
-  try {
-    const data = await api.getInsights(project, { period });
+  heading(`Insights: ${project} (${period} vs previous)`);
+  log('');
 
-    heading(`Insights: ${project} (${period} vs previous)`);
-    log('');
-
-    const m = data.metrics;
-    for (const [key, metric] of Object.entries(m)) {
-      const label = key.replace(/_/g, ' ');
-      const arrow = metric.change > 0 ? `${GREEN}↑` : metric.change < 0 ? `${RED}↓` : `${DIM}—`;
-      const pct = metric.change_pct !== null ? ` (${metric.change_pct > 0 ? '+' : ''}${metric.change_pct}%)` : '';
-      log(`  ${BOLD}${label}:${RESET}  ${metric.current} ${arrow}${pct}${RESET}  ${DIM}was ${metric.previous}${RESET}`);
-    }
-
-    log('');
-    log(`  ${BOLD}Trend:${RESET} ${data.trend}`);
-    log('');
-  } catch (err) {
-    error(`Failed to get insights: ${err.message}`);
+  const m = data.metrics;
+  for (const [key, metric] of Object.entries(m)) {
+    const label = key.replace(/_/g, ' ');
+    const arrow = metric.change > 0 ? `${GREEN}↑` : metric.change < 0 ? `${RED}↓` : `${DIM}—`;
+    const pct = metric.change_pct !== null ? ` (${metric.change_pct > 0 ? '+' : ''}${metric.change_pct}%)` : '';
+    log(`  ${BOLD}${label}:${RESET}  ${metric.current} ${arrow}${pct}${RESET}  ${DIM}was ${metric.previous}${RESET}`);
   }
-}
 
-async function cmdBreakdown(project, property, opts = {}) {
+  log('');
+  log(`  ${BOLD}Trend:${RESET} ${data.trend}`);
+  log('');
+});
+
+const cmdBreakdown = withApi(async (api, project, property, opts = {}) => {
   if (!project || !property) error('Usage: npx @agent-analytics/cli breakdown <project-name> --property <key> [--event page_view] [--limit 20]');
 
-  const api = requireKey();
+  const data = await api.getBreakdown(project, { property, ...opts });
 
-  try {
-    const data = await api.getBreakdown(project, { property, ...opts });
+  heading(`Breakdown: ${project} — ${property}${data.event ? ` (${data.event})` : ''}`);
+  log('');
 
-    heading(`Breakdown: ${project} — ${property}${data.event ? ` (${data.event})` : ''}`);
-    log('');
+  if (ifEmpty(data.values, 'data')) return;
 
-    if (!data.values || data.values.length === 0) {
-      log('  No data found.');
-      return;
-    }
-
-    for (const v of data.values) {
-      log(`  ${BOLD}${v.value}${RESET}  ${v.count} events  ${DIM}(${v.unique_users} users)${RESET}`);
-    }
-    log(`\n${DIM}${data.total_with_property} of ${data.total_events} events have this property${RESET}`);
-    log('');
-  } catch (err) {
-    error(`Failed to get breakdown: ${err.message}`);
+  for (const v of data.values) {
+    log(`  ${BOLD}${v.value}${RESET}  ${v.count} events  ${DIM}(${v.unique_users} users)${RESET}`);
   }
-}
+  log(`\n${DIM}${data.total_with_property} of ${data.total_events} events have this property${RESET}`);
+  log('');
+});
 
-async function cmdPages(project, type = 'entry', opts = {}) {
+const cmdPages = withApi(async (api, project, type = 'entry', opts = {}) => {
   if (!project) error('Usage: npx @agent-analytics/cli pages <project-name> [--type entry|exit|both] [--limit 20]');
 
-  const api = requireKey();
+  const data = await api.getPages(project, { type, ...opts });
 
-  try {
-    const data = await api.getPages(project, { type, ...opts });
+  heading(`Pages: ${project} (${type})`);
+  log('');
 
-    heading(`Pages: ${project} (${type})`);
-    log('');
+  const pages = data.entry_pages || data.exit_pages || [];
+  if (ifEmpty(pages, 'page data')) return;
 
-    const pages = data.entry_pages || data.exit_pages || [];
-    if (pages.length === 0) {
-      log('  No page data found.');
-      return;
-    }
-
-    for (const p of pages) {
-      const bounceStr = `${Math.round(p.bounce_rate * 100)}% bounce`;
-      const durStr = `${Math.round(p.avg_duration / 1000)}s avg`;
-      log(`  ${BOLD}${p.page}${RESET}  ${p.sessions} sessions  ${DIM}${bounceStr}  ${durStr}  ${p.avg_events} events/session${RESET}`);
-    }
-
-    if (data.exit_pages && data.entry_pages) {
-      log('');
-      heading('Exit pages:');
-      for (const p of data.exit_pages) {
-        log(`  ${BOLD}${p.page}${RESET}  ${p.sessions} sessions`);
-      }
-    }
-    log('');
-  } catch (err) {
-    error(`Failed to get pages: ${err.message}`);
+  for (const p of pages) {
+    const bounceStr = `${Math.round(p.bounce_rate * 100)}% bounce`;
+    const durStr = `${Math.round(p.avg_duration / 1000)}s avg`;
+    log(`  ${BOLD}${p.page}${RESET}  ${p.sessions} sessions  ${DIM}${bounceStr}  ${durStr}  ${p.avg_events} events/session${RESET}`);
   }
-}
 
-async function cmdSessionsDist(project) {
+  if (data.exit_pages && data.entry_pages) {
+    log('');
+    heading('Exit pages:');
+    for (const p of data.exit_pages) {
+      log(`  ${BOLD}${p.page}${RESET}  ${p.sessions} sessions`);
+    }
+  }
+  log('');
+});
+
+const cmdSessionsDist = withApi(async (api, project) => {
   if (!project) error('Usage: npx @agent-analytics/cli sessions-dist <project-name>');
 
-  const api = requireKey();
+  const data = await api.getSessionDistribution(project);
 
-  try {
-    const data = await api.getSessionDistribution(project);
+  heading(`Session Distribution: ${project}`);
+  log('');
 
-    heading(`Session Distribution: ${project}`);
-    log('');
+  if (ifEmpty(data.distribution, 'session data')) return;
 
-    if (!data.distribution || data.distribution.length === 0) {
-      log('  No session data found.');
-      return;
-    }
-
-    for (const b of data.distribution) {
-      const bar = '█'.repeat(Math.min(Math.ceil(b.pct / 2), 40));
-      log(`  ${b.bucket.padEnd(7)}  ${GREEN}${bar}${RESET}  ${b.sessions} (${b.pct}%)`);
-    }
-
-    log('');
-    log(`  ${BOLD}Median:${RESET} ${data.median_bucket}  ${BOLD}Engaged:${RESET} ${data.engaged_pct}% (sessions ≥30s)`);
-    log('');
-  } catch (err) {
-    error(`Failed to get session distribution: ${err.message}`);
+  for (const b of data.distribution) {
+    const bar = '█'.repeat(Math.min(Math.ceil(b.pct / 2), 40));
+    log(`  ${b.bucket.padEnd(7)}  ${GREEN}${bar}${RESET}  ${b.sessions} (${b.pct}%)`);
   }
-}
 
-async function cmdHeatmap(project) {
+  log('');
+  log(`  ${BOLD}Median:${RESET} ${data.median_bucket}  ${BOLD}Engaged:${RESET} ${data.engaged_pct}% (sessions ≥30s)`);
+  log('');
+});
+
+const cmdHeatmap = withApi(async (api, project) => {
   if (!project) error('Usage: npx @agent-analytics/cli heatmap <project-name>');
 
-  const api = requireKey();
+  const data = await api.getHeatmap(project);
 
-  try {
-    const data = await api.getHeatmap(project);
+  heading(`Heatmap: ${project}`);
+  log('');
 
-    heading(`Heatmap: ${project}`);
-    log('');
+  if (ifEmpty(data.heatmap, 'heatmap data')) return;
 
-    if (!data.heatmap || data.heatmap.length === 0) {
-      log('  No heatmap data found.');
-      return;
-    }
-
-    if (data.peak) {
-      log(`  ${BOLD}Peak:${RESET} ${data.peak.day_name} at ${data.peak.hour}:00 (${data.peak.events} events, ${data.peak.users} users)`);
-    }
-    log(`  ${BOLD}Busiest day:${RESET} ${data.busiest_day}`);
-    log(`  ${BOLD}Busiest hour:${RESET} ${data.busiest_hour}:00`);
-    log('');
-  } catch (err) {
-    error(`Failed to get heatmap: ${err.message}`);
+  if (data.peak) {
+    log(`  ${BOLD}Peak:${RESET} ${data.peak.day_name} at ${data.peak.hour}:00 (${data.peak.events} events, ${data.peak.users} users)`);
   }
-}
+  log(`  ${BOLD}Busiest day:${RESET} ${data.busiest_day}`);
+  log(`  ${BOLD}Busiest hour:${RESET} ${data.busiest_hour}:00`);
+  log('');
+});
 
-async function cmdDelete(id) {
+const cmdDelete = withApi(async (api, id) => {
   if (!id) error('Usage: npx @agent-analytics/cli delete <project-id>');
-
-  const api = requireKey();
-
-  try {
-    await api.deleteProject(id);
-    success(`Project ${id} deleted`);
-  } catch (err) {
-    error(`Failed to delete project: ${err.message}`);
-  }
-}
+  await api.deleteProject(id);
+  success(`Project ${id} deleted`);
+});
 
 function cmdDeleteAccount() {
   heading('Delete Account');
@@ -428,42 +358,30 @@ function cmdDeleteAccount() {
   log('');
 }
 
-async function cmdRevokeKey() {
-  const api = requireKey();
+const cmdRevokeKey = withApi(async (api) => {
+  const data = await api.revokeKey();
+  setApiKey(data.api_key);
 
-  try {
-    const data = await api.revokeKey();
-    setApiKey(data.api_key);
+  warn('Old API key revoked');
+  success('New API key generated and saved\n');
+  heading('New API key:');
+  log(`${YELLOW}${data.api_key}${RESET}`);
+  log(`${DIM}Saved to ~/.config/agent-analytics/config.json${RESET}\n`);
+  warn('Update your agent with this new key!');
+});
 
-    warn('Old API key revoked');
-    success('New API key generated and saved\n');
-    heading('New API key:');
-    log(`${YELLOW}${data.api_key}${RESET}`);
-    log(`${DIM}Saved to ~/.config/agent-analytics/config.json${RESET}\n`);
-    warn('Update your agent with this new key!');
-  } catch (err) {
-    error(`Failed to revoke key: ${err.message}`);
+const cmdWhoami = withApi(async (api) => {
+  const data = await api.getAccount();
+  heading('Account');
+  log(`  ${BOLD}Email:${RESET}    ${data.email}`);
+  log(`  ${BOLD}GitHub:${RESET}   ${data.github_login || 'N/A'}`);
+  log(`  ${BOLD}Tier:${RESET}     ${data.tier}`);
+  log(`  ${BOLD}Projects:${RESET} ${data.projects_count}/${data.projects_limit}`);
+  if (data.tier === 'pro' && data.monthly_spend_cap_dollars != null) {
+    log(`  ${BOLD}Spend cap:${RESET} $${data.monthly_spend_cap_dollars.toFixed(2)}/month`);
   }
-}
-
-async function cmdWhoami() {
-  const api = requireKey();
-
-  try {
-    const data = await api.getAccount();
-    heading('Account');
-    log(`  ${BOLD}Email:${RESET}    ${data.email}`);
-    log(`  ${BOLD}GitHub:${RESET}   ${data.github_login || 'N/A'}`);
-    log(`  ${BOLD}Tier:${RESET}     ${data.tier}`);
-    log(`  ${BOLD}Projects:${RESET} ${data.projects_count}/${data.projects_limit}`);
-    if (data.tier === 'pro' && data.monthly_spend_cap_dollars != null) {
-      log(`  ${BOLD}Spend cap:${RESET} $${data.monthly_spend_cap_dollars.toFixed(2)}/month`);
-    }
-    log('');
-  } catch (err) {
-    error(`Failed to get account: ${err.message}`);
-  }
-}
+  log('');
+});
 
 function showHelp() {
   log(`
