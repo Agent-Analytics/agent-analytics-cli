@@ -18,6 +18,13 @@
  *   npx @agent-analytics/cli init <name>          — Alias for create
  *   npx @agent-analytics/cli delete <id>          — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
+ *   npx @agent-analytics/cli experiments list <project>   — List experiments
+ *   npx @agent-analytics/cli experiments create <p> ...  — Create experiment
+ *   npx @agent-analytics/cli experiments get <id>        — Get experiment with results
+ *   npx @agent-analytics/cli experiments pause <id>      — Pause experiment
+ *   npx @agent-analytics/cli experiments resume <id>     — Resume experiment
+ *   npx @agent-analytics/cli experiments complete <id>   — Complete experiment
+ *   npx @agent-analytics/cli experiments delete <id>     — Delete experiment
  *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
  *   npx @agent-analytics/cli whoami               — Show current account
  */
@@ -383,6 +390,122 @@ const cmdWhoami = withApi(async (api) => {
   log('');
 });
 
+// ==================== EXPERIMENTS ====================
+
+const cmdExperiments = withApi(async (api, sub, ...rest) => {
+  if (!sub) error('Usage: npx @agent-analytics/cli experiments <list|create|get|pause|resume|complete|delete> ...');
+
+  switch (sub) {
+    case 'list': {
+      const project = rest[0];
+      if (!project) error('Usage: npx @agent-analytics/cli experiments list <project>');
+      const data = await api.listExperiments(project);
+      heading(`Experiments: ${project}`);
+      log('');
+      if (ifEmpty(data.experiments, 'experiments')) return;
+      for (const e of data.experiments) {
+        const status = e.status === 'active' ? `${GREEN}active${RESET}` : e.status === 'paused' ? `${YELLOW}paused${RESET}` : `${DIM}completed${RESET}`;
+        log(`  ${BOLD}${e.name}${RESET}  ${DIM}${e.id}${RESET}  ${status}  ${DIM}goal: ${e.goal_event}${RESET}`);
+        const variants = e.variants.map(v => `${v.key}(${v.weight}%)`).join(', ');
+        log(`    variants: ${variants}`);
+        if (e.winner) log(`    ${GREEN}winner: ${e.winner}${RESET}`);
+      }
+      log('');
+      break;
+    }
+    case 'create': {
+      const project = rest[0];
+      if (!project) error('Usage: npx @agent-analytics/cli experiments create <project> --name <name> --variants control,new_cta --goal <event> [--weights 60,40]');
+      const name = getArg('--name');
+      const variantsStr = getArg('--variants');
+      const goal = getArg('--goal');
+      if (!name || !variantsStr || !goal) error('Required: --name, --variants, --goal');
+      const variants = variantsStr.split(',').map(v => v.trim());
+      const weightsStr = getArg('--weights');
+      const weights = weightsStr ? weightsStr.split(',').map(w => parseInt(w.trim(), 10)) : undefined;
+      const data = await api.createExperiment(project, { name, variants, goal_event: goal, weights });
+      success(`Experiment created: ${BOLD}${data.name}${RESET} (${data.id})`);
+      log(`  ${DIM}variants:${RESET} ${data.variants.map(v => `${v.key}(${v.weight}%)`).join(', ')}`);
+      log(`  ${DIM}goal:${RESET} ${data.goal_event}`);
+      log('');
+      break;
+    }
+    case 'get': {
+      const id = rest[0];
+      if (!id) error('Usage: npx @agent-analytics/cli experiments get <id>');
+      const data = await api.getExperiment(id);
+      const status = data.status === 'active' ? `${GREEN}active${RESET}` : data.status === 'paused' ? `${YELLOW}paused${RESET}` : `${DIM}completed${RESET}`;
+      heading(`Experiment: ${data.name}`);
+      log(`  ${DIM}id:${RESET} ${data.id}  status: ${status}  ${DIM}goal: ${data.goal_event}${RESET}`);
+      if (data.winner) log(`  ${GREEN}winner: ${data.winner}${RESET}`);
+      log('');
+      if (data.results) {
+        heading('Results:');
+        for (const v of data.results.variants) {
+          const rate = (v.conversion_rate * 100).toFixed(1);
+          log(`  ${BOLD}${v.key}${RESET}  ${v.unique_users} users  ${v.conversions} conversions  ${CYAN}${rate}%${RESET}`);
+        }
+        log('');
+        if (data.results.probability_best) {
+          heading('Probability best:');
+          for (const [k, v] of Object.entries(data.results.probability_best)) {
+            const pct = (v * 100).toFixed(1);
+            log(`  ${BOLD}${k}:${RESET} ${pct}%`);
+          }
+        }
+        if (data.results.lift) {
+          heading('Lift:');
+          for (const [k, v] of Object.entries(data.results.lift)) {
+            const pct = (v * 100).toFixed(1);
+            const arrow = v > 0 ? `${GREEN}+${pct}%` : v < 0 ? `${RED}${pct}%` : `${DIM}0%`;
+            log(`  ${BOLD}${k}:${RESET} ${arrow}${RESET}`);
+          }
+        }
+        log('');
+        log(`  ${BOLD}Sufficient data:${RESET} ${data.results.sufficient_data ? `${GREEN}yes` : `${YELLOW}no`}${RESET}`);
+        if (data.results.recommendation) {
+          log(`  ${BOLD}Recommendation:${RESET} ${data.results.recommendation}`);
+        }
+      } else {
+        log(`  ${DIM}No results available yet (need exposure + conversion events)${RESET}`);
+      }
+      log('');
+      break;
+    }
+    case 'pause': {
+      const id = rest[0];
+      if (!id) error('Usage: npx @agent-analytics/cli experiments pause <id>');
+      await api.updateExperiment(id, { status: 'paused' });
+      success(`Experiment ${id} paused`);
+      break;
+    }
+    case 'resume': {
+      const id = rest[0];
+      if (!id) error('Usage: npx @agent-analytics/cli experiments resume <id>');
+      await api.updateExperiment(id, { status: 'active' });
+      success(`Experiment ${id} resumed`);
+      break;
+    }
+    case 'complete': {
+      const id = rest[0];
+      if (!id) error('Usage: npx @agent-analytics/cli experiments complete <id> [--winner <variant>]');
+      const winner = getArg('--winner');
+      await api.updateExperiment(id, { status: 'completed', winner });
+      success(`Experiment ${id} completed${winner ? ` — winner: ${winner}` : ''}`);
+      break;
+    }
+    case 'delete': {
+      const id = rest[0];
+      if (!id) error('Usage: npx @agent-analytics/cli experiments delete <id>');
+      await api.deleteExperiment(id);
+      success(`Experiment ${id} deleted`);
+      break;
+    }
+    default:
+      error(`Unknown experiments subcommand: ${sub}. Use: list, create, get, pause, resume, complete, delete`);
+  }
+});
+
 function showHelp() {
   log(`
 ${BOLD}agent-analytics${RESET} — Web analytics your AI agent can read
@@ -404,6 +527,14 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}pages${RESET} <name>       Entry/exit page performance
   ${CYAN}sessions-dist${RESET} <name>  Session duration distribution
   ${CYAN}heatmap${RESET} <name>     Peak hours & busiest days
+  ${CYAN}experiments${RESET} <sub>  A/B testing (pro only)
+    ${DIM}list <project>${RESET}      List experiments
+    ${DIM}create <project>${RESET}    Create experiment
+    ${DIM}get <id>${RESET}            Get experiment with results
+    ${DIM}pause <id>${RESET}          Pause experiment
+    ${DIM}resume <id>${RESET}         Resume experiment
+    ${DIM}complete <id>${RESET}       Complete experiment
+    ${DIM}delete <id>${RESET}         Delete experiment
   ${CYAN}whoami${RESET}             Show current account
   ${CYAN}revoke-key${RESET}         Revoke and regenerate API key
   ${CYAN}delete-account${RESET}     Delete your account (opens dashboard)
@@ -418,6 +549,11 @@ ${BOLD}OPTIONS${RESET}
   --property <key>   Property key for breakdown (required)
   --event <name>     Filter by event name (breakdown only)
   --type <T>         Page type: entry, exit, both (default: entry)
+  --name <name>      Experiment name (experiments create)
+  --variants <a,b>   Comma-separated variant keys (experiments create)
+  --goal <event>     Goal event name (experiments create)
+  --weights <50,50>  Comma-separated weights (experiments create, optional)
+  --winner <variant> Winning variant (experiments complete, optional)
 
 ${BOLD}ENVIRONMENT${RESET}
   AGENT_ANALYTICS_API_KEY    API key (overrides config file)
@@ -498,6 +634,9 @@ try {
       break;
     case 'heatmap':
       await cmdHeatmap(args[1]);
+      break;
+    case 'experiments':
+      await cmdExperiments(args[1], args[2]);
       break;
     case 'delete':
       await cmdDelete(args[1]);

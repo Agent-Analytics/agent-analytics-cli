@@ -111,6 +111,76 @@ Only buttons that indicate conversion intent:
 - Name IDs as `section_action`: `hero_signup`, `pricing_pro`, `nav_dashboard`
 - Don't encode data the page_view already captures (path, referrer, browser)
 
+## Step 2b: Run A/B experiments (Pro)
+
+Experiments let you test which variant of a page element converts better. The full lifecycle is API-driven — no dashboard UI needed.
+
+### Creating an experiment
+
+```bash
+npx @agent-analytics/cli experiments create my-site \
+  --name signup_cta --variants control,new_cta --goal signup
+```
+
+Or via API:
+
+```bash
+curl -X POST "https://api.agentanalytics.sh/experiments" \
+  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"my-site","name":"signup_cta","variants":["control","new_cta"],"goal_event":"signup"}'
+```
+
+### Implementing variants in code
+
+```js
+// tracker.js loads config automatically. Use aa.experiment() to get the assigned variant:
+var variant = window.aa?.experiment('signup_cta', ['control', 'new_cta']);
+
+if (variant === 'new_cta') {
+  document.querySelector('.cta').textContent = 'Start Free Trial';
+} else {
+  document.querySelector('.cta').textContent = 'Sign Up';
+}
+```
+
+Key points:
+- `aa.experiment()` is deterministic — same user always gets same variant
+- Exposure event (`$experiment_exposure`) is tracked automatically once per session
+- The inline `['control', 'new_cta']` fallback works even if config endpoint hasn't loaded yet
+- Track the goal event normally: `window.aa?.track('signup', {method: 'github'})`
+
+### Checking results
+
+```bash
+npx @agent-analytics/cli experiments get exp_abc123
+```
+
+Returns Bayesian `probability_best`, `lift`, and a `recommendation`. The system needs ~100 exposures per variant before results are significant.
+
+### Managing experiments
+
+```bash
+# Pause (stops assigning new users)
+npx @agent-analytics/cli experiments pause exp_abc123
+
+# Resume
+npx @agent-analytics/cli experiments resume exp_abc123
+
+# Complete with a winner
+npx @agent-analytics/cli experiments complete exp_abc123 --winner new_cta
+
+# Delete
+npx @agent-analytics/cli experiments delete exp_abc123
+```
+
+### Best practices
+- Name experiments with snake_case: `signup_cta`, `pricing_layout`, `hero_copy`
+- Use 2 variants (A/B) unless you have high traffic — more variants need more data
+- Set a clear `goal_event` that maps to a business outcome (`signup`, `purchase`, not `page_view`)
+- Let experiments run until `sufficient_data: true` before picking a winner
+- Complete the experiment when done: `experiments complete <id> --winner new_cta`
+
 ## Step 3: Test immediately
 
 After adding tracking, verify it works:
@@ -156,6 +226,12 @@ npx @agent-analytics/cli sessions-dist my-site
 
 # Traffic patterns by day & hour
 npx @agent-analytics/cli heatmap my-site
+
+# A/B experiments (pro only)
+npx @agent-analytics/cli experiments list my-site
+npx @agent-analytics/cli experiments create my-site --name signup_cta --variants control,new_cta --goal signup
+npx @agent-analytics/cli experiments get exp_abc123
+npx @agent-analytics/cli experiments complete exp_abc123 --winner new_cta
 ```
 
 **Key flags**:
@@ -214,6 +290,7 @@ Match the user's question to the right call(s):
 | "Are people actually engaging?" | `sessions-dist` | Bounce vs engaged split |
 | "When should I deploy/post?" | `heatmap` | Find low-traffic windows or peak hours |
 | "Give me a summary of all projects" | Loop: `projects` then `insights` per project | Multi-project overview |
+| "Which CTA converts better?" | `experiments create` + implement + `experiments get <id>` | Full A/B test lifecycle |
 
 For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint.
 
