@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
-description: Add lightweight, privacy-friendly analytics tracking to any website. Track page views and custom events, then query the data via CLI or API. Use when the user wants to know if a project is alive and growing.
-version: 2.5.0
+description: "Your agent's growth engine \u2014 open-source, headless analytics with built-in A/B testing. It adds tracking to any site, runs experiments on headlines and CTAs, reads the results, and ships the winner. Fully autonomous optimization loop, zero dashboards."
+version: 2.5.1
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
