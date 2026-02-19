@@ -131,10 +131,51 @@ curl -X POST "https://api.agentanalytics.sh/experiments" \
   -d '{"project":"my-site","name":"signup_cta","variants":["control","new_cta"],"goal_event":"signup"}'
 ```
 
-### Implementing variants in code
+### Implementing variants (declarative — recommended)
+
+The easiest way: use HTML attributes. No custom JavaScript needed.
+
+**1. Add the anti-flicker snippet** in `<head>` before tracker.js to prevent flash of control content:
+
+```html
+<style>.aa-loading [data-aa-experiment]{visibility:hidden!important}</style>
+<script>document.documentElement.classList.add('aa-loading');
+setTimeout(function(){document.documentElement.classList.remove('aa-loading')},3000)</script>
+```
+
+**2. Mark elements** with `data-aa-experiment` and provide variant content via `data-aa-variant-{key}`:
+
+```html
+<!-- Original content = control. Variant "new_cta" swaps the text. -->
+<h1 data-aa-experiment="signup_cta" data-aa-variant-new_cta="Start Free Trial">
+  Sign Up
+</h1>
+
+<!-- Multiple elements in the same experiment get the same variant -->
+<h1 data-aa-experiment="hero_test" data-aa-variant-b="New Headline">Old Headline</h1>
+<p data-aa-experiment="hero_test" data-aa-variant-b="New subtext">Old subtext</p>
+
+<!-- Multi-variant -->
+<h1 data-aa-experiment="cta_test"
+    data-aa-variant-b="Try it free"
+    data-aa-variant-c="Get started now">
+  Sign up today
+</h1>
+```
+
+Key points:
+- Original element content is the control (no attribute needed)
+- Variant keys are lowercased for attribute lookup (HTML attributes are case-insensitive)
+- Anti-flicker hides only experiment elements (not the whole page), with a 3s timeout fallback
+- tracker.js removes the `aa-loading` class after applying variants
+- Exposure event (`$experiment_exposure`) is tracked automatically once per session
+- Track the goal event normally: `window.aa?.track('signup', {method: 'github'})`
+
+### Implementing variants (programmatic — for complex cases)
+
+For dynamic content or logic that can't be expressed as a text swap, use the JS API:
 
 ```js
-// tracker.js loads config automatically. Use aa.experiment() to get the assigned variant:
 var variant = window.aa?.experiment('signup_cta', ['control', 'new_cta']);
 
 if (variant === 'new_cta') {
@@ -146,9 +187,7 @@ if (variant === 'new_cta') {
 
 Key points:
 - `aa.experiment()` is deterministic — same user always gets same variant
-- Exposure event (`$experiment_exposure`) is tracked automatically once per session
 - The inline `['control', 'new_cta']` fallback works even if config endpoint hasn't loaded yet
-- Track the goal event normally: `window.aa?.track('signup', {method: 'github'})`
 
 ### Checking results
 
