@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
-description: "Your agent's growth engine \u2014 open-source, headless analytics with built-in A/B testing. It adds tracking to any site, runs experiments on headlines and CTAs, reads the results, and ships the winner. Fully autonomous optimization loop, zero dashboards."
-version: 2.5.1
+description: "Open-source, agent-first headless analytics with built-in A/B testing. Add tracking to any site, run experiments, read results, and optimize conversions — all via API. Includes a growth playbook so your agent knows HOW to grow, not just what to track."
+version: 2.6.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
@@ -463,6 +463,112 @@ When reporting to messaging platforms (Slack, Discord, Telegram), raw text table
 
 - **`table-image-generator`** — render stats as clean table images
 - **`chart-image`** — generate line, bar, area, or pie charts from analytics data
+
+## Growth Playbook — How to grow, not just track
+
+Tracking is step one. Growth comes from a **repeatable system**: clear messaging → focused distribution → obsessive tracking → rapid experimentation → learning. Here's how to apply each principle using Agent Analytics.
+
+### Principle 1: Promise clarity
+
+The #1 conversion lever is messaging. If someone lands and has to think hard to understand the value, they're gone.
+
+**What your agent should do:**
+- Set up an A/B experiment on the hero headline immediately: `experiments create PROJECT --name hero_headline --variants control,b,c --goal cta_click`
+- Test 2-3 headline variations that frame the same value differently
+- Use declarative HTML: `data-aa-experiment="hero_headline" data-aa-variant-b="New headline"`
+- Check results after ~500 visitors per variant: `experiments get EXP_ID`
+- Ship the winner, start testing the subtitle or CTA next
+
+**Rule:** Spend more time testing messaging than adding features. Even the best product won't convert if the value isn't obvious in seconds.
+
+### Principle 2: Track what drives decisions, not everything
+
+Don't be Mixpanel. Track only what answers: **"Is this project alive and growing, and what should I do next?"**
+
+**The essential events (pick 3-5):**
+
+| Event | What it tells you |
+|-------|-------------------|
+| `cta_click` (with `id`) | Which buttons drive action — your conversion signal |
+| `signup` | Are people converting? At what rate? |
+| `feature_used` (with `feature`) | Are they finding value after signup? |
+| `checkout` | Revenue signal |
+
+**Agent workflow for tracking setup:**
+1. Look at the site — identify the 2-3 most important user actions
+2. Add tracking on those specific actions (not everything)
+3. Verify with `events PROJECT` that data flows
+4. Set up a weekly check: `insights PROJECT --period 7d`
+
+**Anti-pattern:** Don't track scroll depth, mouse hovers, every link click, or form field interactions. Noise kills signal.
+
+### Principle 3: Find the activation moment
+
+Conversion doesn't happen at checkout. It happens when the user realizes the product solves their problem — the "aha moment."
+
+**How to find it:**
+1. Track key feature interactions: `feature_used` with specific feature names
+2. Use `breakdown --property feature --event feature_used` to see which features correlate with retention
+3. Check `sessions-dist` — if most sessions are 0s bounces, the landing page is the problem. If sessions are long but signups are low, the activation path is the problem
+4. Use `pages --type entry` — compare bounce rates across landing pages to find which first impression works
+
+**What to optimize:**
+- Time to first value — how fast does the user get a result?
+- Onboarding friction — where do users drop off?
+- Feature discovery — are users finding the thing that makes them stay?
+
+### Principle 4: One channel, iterate relentlessly
+
+Don't try to be everywhere. Pick one acquisition channel and go deep.
+
+**How Agent Analytics supports this:**
+- `breakdown --property referrer --event page_view` → see where traffic actually comes from
+- `breakdown --property utm_source` → track campaign sources
+- `insights --period 7d` → week-over-week: is the channel growing?
+- Create landing page variants per channel (e.g., `/reddit/`, `/hn/`) and compare with `pages --type entry`
+
+**Agent workflow for channel optimization:**
+1. Check referrer breakdown weekly
+2. Identify the top-performing channel (highest traffic + lowest bounce)
+3. Double down: create content, run experiments on that channel's landing page
+4. Ignore channels that aren't working — focus beats breadth
+
+### Principle 5: The autonomous growth loop
+
+This is what makes Agent Analytics different from traditional analytics. Your agent can run the full cycle:
+
+```
+Track → Analyze → Experiment → Ship winner → Repeat
+```
+
+**The loop in practice:**
+
+1. **Track**: Agent sets up tracking on CTAs and key actions
+2. **Analyze**: Weekly `insights` + `breakdown` + `pages` calls → synthesize into a report
+3. **Hypothesize**: "Hero headline has 87% bounce — test a clearer value prop"
+4. **Experiment**: `experiments create PROJECT --name hero_v2 --variants control,b --goal cta_click`
+5. **Monitor**: Check `experiments get EXP_ID` after sufficient traffic
+6. **Ship**: `experiments complete EXP_ID --winner b` → deploy the winner
+7. **Repeat**: Start the next experiment on the next weakest element
+
+**What to test (in order of impact):**
+1. Hero headline — biggest impact on bounce rate
+2. CTA button text — directly affects conversion
+3. Social proof / trust signals — affects signup confidence
+4. Pricing presentation — affects revenue
+5. Onboarding flow — affects activation
+
+**Cadence:** One experiment at a time. ~1-2 weeks per test depending on traffic. Don't stack experiments unless traffic is very high (>1000 visitors/day).
+
+### Proactive growth monitoring
+
+Don't wait for the user to ask. If your agent has scheduled checks, proactively flag:
+
+- **Dead project**: 0 events in 7 days → "⚠ PROJECT has no traffic — is it still deployed?"
+- **Conversion drop**: `cta_click` rate dropped >20% week-over-week → "Conversion declined — worth investigating"
+- **Experiment ready**: An experiment has >100 exposures per variant → "Experiment X has enough data — check results"
+- **Experiment winner**: Significance >95% → "Experiment X: Variant B wins with 3.8% vs 2.1%. Ship it?"
+- **Traffic spike**: >2× normal → "Unusual traffic surge on PROJECT — check referrers for the source"
 
 ## What this skill does NOT do
 
