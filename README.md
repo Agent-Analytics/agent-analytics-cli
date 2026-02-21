@@ -51,22 +51,13 @@ whoami                           Show current account & tier
 revoke-key                       Revoke and regenerate API key
 ```
 
-## For AI Agents
+## Works With
 
-Set the env var and call the API directly — no CLI needed:
+Claude Code, OpenClaw, Cursor, Codex — any AI agent that can run `npx`. Or add the MCP server for rich charts in Claude Desktop:
 
 ```bash
-export AGENT_ANALYTICS_API_KEY=aak_your_key
-
-# Query stats
-curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
-
-# Or use the MCP server with Claude Code
 claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mcp
 ```
-
-Works with Claude Code, OpenClaw, Cursor, Codex — any agent that speaks HTTP or MCP.
 
 ## Environment Variables
 

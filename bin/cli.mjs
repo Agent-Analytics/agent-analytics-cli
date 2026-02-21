@@ -811,11 +811,11 @@ ${BOLD}QUICK START${RESET}
   ${DIM}# 3. Check how all your projects are doing — live${RESET}
   npx @agent-analytics/cli live
 
-  ${DIM}# 4. Or let your AI agent query the API directly${RESET}
-  curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \\
-    -H "X-API-Key: \$AGENT_ANALYTICS_API_KEY"
+  ${DIM}# 4. Run an A/B test${RESET}
+  npx @agent-analytics/cli experiments create my-site --name hero_test \\
+    --variants control,new_headline --goal signup
 
-${DIM}Works with Claude Code, OpenClaw, Cursor, Codex — any agent that speaks HTTP or MCP.${RESET}
+${DIM}Works with Claude Code, OpenClaw, Cursor, Codex — any agent that can run npx.${RESET}
 ${DIM}https://agentanalytics.sh${RESET}
 `);
 }
