@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
 description: "Stop juggling dashboards. Let your agent do it. Analytics your AI agent can actually use — track, analyze, experiment, optimize across all your projects via CLI. Includes a growth playbook so your agent knows HOW to grow, not just what to track."
-version: 3.1.0
+version: 3.1.1
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
@@ -285,7 +285,7 @@ npx @agent-analytics/cli revoke-key                     # Rotate API key
 - `--property <key>` — property key to group by (`breakdown`, required)
 - `--event <name>` — filter by event name (`breakdown` only)
 - `--type <T>` — page type: `entry`, `exit`, `both` (`pages` only, default: entry)
-- `--steps <csv>` — comma-separated event names (`funnel`, required)
+- `--steps <csv>` — comma-separated event names, 2-8 steps max (`funnel`, required)
 - `--window <N>` — conversion window in hours (`funnel`, default: 168) or live time window in seconds (`live`, default: 60)
 - `--count-by <field>` — `user_id` or `session_id` (`funnel` only)
 - `--interval <N>` — live refresh in seconds (default: 5)
