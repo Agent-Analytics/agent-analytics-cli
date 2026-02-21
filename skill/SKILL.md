@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
 description: "Stop juggling dashboards. Let your agent do it. Analytics your AI agent can actually use — track, analyze, experiment, optimize across all your projects via CLI. Includes a growth playbook so your agent knows HOW to grow, not just what to track."
-version: 3.2.0
+version: 3.3.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
@@ -47,17 +47,7 @@ The `create` command returns a **project write token** — use it as `data-token
 
 ## Step 1: Add the tracking snippet
 
-Add before `</body>`:
-
-```html
-<script src="https://api.agentanalytics.sh/tracker.js"
-  data-project="PROJECT_NAME"
-  data-token="PROJECT_WRITE_TOKEN"></script>
-```
-
-This auto-tracks `page_view` events with path, referrer, browser, OS, device, screen size, and UTM params. You do NOT need to add custom page_view events.
-
-> **Security note:** The project write token (`aat_*`) is intentionally public and safe to embed in client-side HTML. It can only write events to one specific project, is rate-limited (10 req/min free, 1,000 req/min pro), and is revocable from the dashboard. It cannot read data — that requires the separate API key (`aak_*`).
+The `create` command returns a tracking snippet with your project token — add it before `</body>`. It auto-tracks `page_view` events with path, referrer, browser, OS, device, screen size, and UTM params. You do NOT need to add custom page_view events.
 
 ## Step 1b: Discover existing events (existing projects)
 
@@ -124,72 +114,17 @@ npx @agent-analytics/cli experiments create my-site \
   --name signup_cta --variants control,new_cta --goal signup
 ```
 
-Or via API:
+### Implementing variants
 
-```bash
-curl -X POST "https://api.agentanalytics.sh/experiments" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"project":"my-site","name":"signup_cta","variants":["control","new_cta"],"goal_event":"signup"}'
-```
-
-### Implementing variants (declarative — recommended)
-
-The easiest way: use HTML attributes. No custom JavaScript needed.
-
-**1. Add the anti-flicker snippet** in `<head>` before tracker.js to prevent flash of control content:
+**Declarative (recommended):** Use `data-aa-experiment` and `data-aa-variant-{key}` HTML attributes. Original content is the control. The tracker swaps text for assigned variants automatically.
 
 ```html
-<style>.aa-loading [data-aa-experiment]{visibility:hidden!important}</style>
-<script>document.documentElement.classList.add('aa-loading');
-setTimeout(function(){document.documentElement.classList.remove('aa-loading')},3000)</script>
+<h1 data-aa-experiment="signup_cta" data-aa-variant-new_cta="Start Free Trial">Sign Up</h1>
 ```
 
-**2. Mark elements** with `data-aa-experiment` and provide variant content via `data-aa-variant-{key}`:
+**Programmatic (complex cases):** Use `window.aa?.experiment(name, variants)` — deterministic, same user always gets same variant.
 
-```html
-<!-- Original content = control. Variant "new_cta" swaps the text. -->
-<h1 data-aa-experiment="signup_cta" data-aa-variant-new_cta="Start Free Trial">
-  Sign Up
-</h1>
-
-<!-- Multiple elements in the same experiment get the same variant -->
-<h1 data-aa-experiment="hero_test" data-aa-variant-b="New Headline">Old Headline</h1>
-<p data-aa-experiment="hero_test" data-aa-variant-b="New subtext">Old subtext</p>
-
-<!-- Multi-variant -->
-<h1 data-aa-experiment="cta_test"
-    data-aa-variant-b="Try it free"
-    data-aa-variant-c="Get started now">
-  Sign up today
-</h1>
-```
-
-Key points:
-- Original element content is the control (no attribute needed)
-- Variant keys are lowercased for attribute lookup (HTML attributes are case-insensitive)
-- Anti-flicker hides only experiment elements (not the whole page), with a 3s timeout fallback
-- tracker.js removes the `aa-loading` class after applying variants
-- Exposure event (`$experiment_exposure`) is tracked automatically once per session
-- Track the goal event normally: `window.aa?.track('signup', {method: 'github'})`
-
-### Implementing variants (programmatic — for complex cases)
-
-For dynamic content or logic that can't be expressed as a text swap, use the JS API:
-
-```js
-var variant = window.aa?.experiment('signup_cta', ['control', 'new_cta']);
-
-if (variant === 'new_cta') {
-  document.querySelector('.cta').textContent = 'Start Free Trial';
-} else {
-  document.querySelector('.cta').textContent = 'Sign Up';
-}
-```
-
-Key points:
-- `aa.experiment()` is deterministic — same user always gets same variant
-- The inline `['control', 'new_cta']` fallback works even if config endpoint hasn't loaded yet
+Exposure events (`$experiment_exposure`) are tracked automatically once per session. Track the goal event normally: `window.aa?.track('signup', {method: 'github'})`.
 
 ### Checking results
 
@@ -637,38 +572,11 @@ Don't wait for the user to ask. If your agent has scheduled checks, proactively 
 
 ## Examples
 
-### Landing page with pricing
-
-```html
-<!-- Hero CTAs -->
-<a href="/signup" onclick="window.aa?.track('cta_click',{id:'hero_get_started'})">
-  Get Started Free
-</a>
-<a href="#pricing" onclick="window.aa?.track('cta_click',{id:'hero_see_pricing'})">
-  See Pricing →
-</a>
-
-<!-- Pricing CTAs -->
-<a href="/signup?plan=free" onclick="window.aa?.track('cta_click',{id:'pricing_free'})">
-  Try Free
-</a>
-<a href="/signup?plan=pro" onclick="window.aa?.track('cta_click',{id:'pricing_pro'})">
-  Get Started →
-</a>
-```
-
-### SaaS app with auth
+Track custom events via `window.aa?.track()` (the `?.` ensures no error if tracker hasn't loaded):
 
 ```js
-// After successful signup
+window.aa?.track('cta_click', {id: 'hero_get_started'});
 window.aa?.track('signup', {method: 'github'});
-
-// When user does the main thing your app does
 window.aa?.track('feature_used', {feature: 'create_project'});
-
-// On checkout page
 window.aa?.track('checkout', {plan: 'pro'});
-
-// In error handler
-window.aa?.track('error', {message: err.message, page: location.pathname});
 ```
