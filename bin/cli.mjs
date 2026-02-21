@@ -9,14 +9,19 @@
  *   npx @agent-analytics/cli projects             — List your projects
  *   npx @agent-analytics/cli stats <name>         — Get stats for a project
  *   npx @agent-analytics/cli events <name>        — Get recent events
+ *   npx @agent-analytics/cli query <name>         — Flexible analytics query
+ *   npx @agent-analytics/cli properties <name>    — Discover event names & property keys
  *   npx @agent-analytics/cli properties-received <name> — Show property keys per event
+ *   npx @agent-analytics/cli sessions <name>      — List individual sessions
  *   npx @agent-analytics/cli insights <name>      — Period-over-period comparison
  *   npx @agent-analytics/cli breakdown <name>     — Property value distribution
  *   npx @agent-analytics/cli pages <name>         — Entry/exit page stats
  *   npx @agent-analytics/cli sessions-dist <name> — Session duration distribution
  *   npx @agent-analytics/cli heatmap <name>       — Peak hours & busiest days
  *   npx @agent-analytics/cli init <name>          — Alias for create
- *   npx @agent-analytics/cli delete <id>          — Delete a project
+ *   npx @agent-analytics/cli project <id>          — Get single project details
+ *   npx @agent-analytics/cli update <id>           — Update a project
+ *   npx @agent-analytics/cli delete <id>           — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
  *   npx @agent-analytics/cli experiments list <project>   — List experiments
  *   npx @agent-analytics/cli experiments create <p> ...  — Create experiment
@@ -351,6 +356,109 @@ const cmdHeatmap = withApi(async (api, project) => {
   log('');
 });
 
+const cmdProperties = withApi(async (api, project, days = 30) => {
+  if (!project) error('Usage: npx @agent-analytics/cli properties <project-name> [--days N]');
+
+  const data = await api.getProperties(project, days);
+
+  heading(`Properties: ${project}`);
+  log('');
+
+  if (data.events && data.events.length > 0) {
+    heading('Events:');
+    for (const e of data.events) {
+      log(`  ${BOLD}${e.event}${RESET}  ${e.count} events  ${DIM}(${e.unique_users} users)${RESET}  ${DIM}${e.first_seen} → ${e.last_seen}${RESET}`);
+    }
+    log('');
+  }
+
+  if (data.property_keys && data.property_keys.length > 0) {
+    heading('Property keys:');
+    log(`  ${data.property_keys.join(', ')}`);
+  }
+  log('');
+});
+
+const cmdSessions = withApi(async (api, project, opts = {}) => {
+  if (!project) error('Usage: npx @agent-analytics/cli sessions <project-name> [--days N] [--limit N]');
+
+  const data = await api.getSessions(project, opts);
+
+  heading(`Sessions: ${project}`);
+  log('');
+
+  if (ifEmpty(data.sessions, 'sessions')) return;
+
+  for (const s of data.sessions) {
+    const start = new Date(s.start_time).toLocaleString();
+    const dur = s.duration ? `${Math.round(s.duration / 1000)}s` : '0s';
+    const bounce = s.is_bounce ? `${RED}bounce${RESET}` : `${GREEN}engaged${RESET}`;
+    log(`  ${DIM}${start}${RESET}  ${dur}  ${bounce}  ${s.event_count} events  ${DIM}${s.entry_page} → ${s.exit_page}${RESET}`);
+  }
+  log('');
+});
+
+const cmdQuery = withApi(async (api, project, opts = {}) => {
+  if (!project) error('Usage: npx @agent-analytics/cli query --project <name> [--metrics event_count,unique_users] [--group-by date] [--days N] [--limit N]');
+
+  const metrics = opts.metrics ? opts.metrics.split(',').map(m => m.trim()) : undefined;
+  const group_by = opts.group_by ? opts.group_by.split(',').map(g => g.trim()) : undefined;
+
+  const data = await api.query(project, {
+    metrics,
+    group_by,
+    date_from: opts.date_from,
+    date_to: opts.date_to,
+    order_by: opts.order_by,
+    order: opts.order,
+    limit: opts.limit,
+  });
+
+  heading(`Query: ${project}`);
+  log('');
+
+  if (data.period) {
+    log(`  ${DIM}Period: ${data.period.from} → ${data.period.to}${RESET}`);
+  }
+
+  if (!data.rows || data.rows.length === 0) {
+    log('  No results.');
+    return;
+  }
+
+  const keys = Object.keys(data.rows[0]);
+  log(`  ${BOLD}${keys.join('\t')}${RESET}`);
+  for (const row of data.rows) {
+    log(`  ${keys.map(k => row[k]).join('\t')}`);
+  }
+  log(`\n${DIM}${data.count} rows${RESET}`);
+  log('');
+});
+
+const cmdProject = withApi(async (api, id) => {
+  if (!id) error('Usage: npx @agent-analytics/cli project <project-id>');
+  const data = await api.getProject(id);
+
+  heading(`Project: ${data.name}`);
+  log('');
+  log(`  ${BOLD}ID:${RESET}      ${data.id}`);
+  log(`  ${BOLD}Token:${RESET}   ${data.project_token}`);
+  log(`  ${BOLD}Origins:${RESET} ${data.allowed_origins || '*'}`);
+  if (data.created_at) log(`  ${BOLD}Created:${RESET} ${new Date(data.created_at).toLocaleDateString()}`);
+  if (data.total_events != null) log(`  ${BOLD}Events:${RESET}  ${data.total_events}`);
+  log('');
+});
+
+const cmdUpdate = withApi(async (api, id, opts = {}) => {
+  if (!id) error('Usage: npx @agent-analytics/cli update <project-id> [--name new-name] [--origins "https://example.com"]');
+  if (!opts.name && !opts.allowed_origins) error('Provide --name and/or --origins to update');
+
+  const data = await api.updateProject(id, opts);
+  success(`Project ${data.name || id} updated`);
+  if (opts.name) log(`  ${DIM}name:${RESET} ${data.name}`);
+  if (opts.allowed_origins) log(`  ${DIM}origins:${RESET} ${data.allowed_origins}`);
+});
+
 const cmdDelete = withApi(async (api, id) => {
   if (!id) error('Usage: npx @agent-analytics/cli delete <project-id>');
   await api.deleteProject(id);
@@ -518,10 +626,15 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}create${RESET} <name>      Create a project and get your snippet
   ${CYAN}projects${RESET}           List your projects
   ${CYAN}init${RESET} <name>        Alias for create
+  ${CYAN}project${RESET} <id>       Get single project details
+  ${CYAN}update${RESET} <id>        Update a project (--name, --origins)
   ${CYAN}delete${RESET} <id>        Delete a project
   ${CYAN}stats${RESET} <name>       Get stats for a project
   ${CYAN}events${RESET} <name>      Get recent events
-  ${CYAN}properties-received${RESET} <name>  Show property keys per event
+  ${CYAN}query${RESET} <name>       Flexible analytics query
+  ${CYAN}properties${RESET} <name>  Discover event names & property keys
+  ${CYAN}properties-received${RESET} <name>  Property keys per event (sampled)
+  ${CYAN}sessions${RESET} <name>    List individual sessions
   ${CYAN}insights${RESET} <name>    Period-over-period comparison
   ${CYAN}breakdown${RESET} <name>   Property value distribution
   ${CYAN}pages${RESET} <name>       Entry/exit page performance
@@ -547,8 +660,15 @@ ${BOLD}OPTIONS${RESET}
   --sample <N>       Max events to sample (default: 5000)
   --period <P>       Period for insights: 1d, 7d, 14d, 30d, 90d (default: 7d)
   --property <key>   Property key for breakdown (required)
+  --metrics <m,m>    Comma-separated metrics for query (event_count, unique_users, etc.)
+  --group-by <g,g>   Comma-separated group by fields for query (date, event, etc.)
+  --from <date>      Start date for query (ISO or shorthand like 7d)
+  --to <date>        End date for query
+  --order-by <col>   Order by column for query
+  --order <dir>      asc or desc (default: desc)
   --event <name>     Filter by event name (breakdown only)
   --type <T>         Page type: entry, exit, both (default: entry)
+  --origins <url>    Allowed origins for update
   --name <name>      Experiment name (experiments create)
   --variants <a,b>   Comma-separated variant keys (experiments create)
   --goal <event>     Goal event name (experiments create)
@@ -609,10 +729,39 @@ try {
         limit: parseInt(getArg('--limit') || '100', 10),
       });
       break;
+    case 'properties':
+      await cmdProperties(args[1], parseInt(getArg('--days') || '30', 10));
+      break;
     case 'properties-received':
       await cmdPropertiesReceived(args[1], {
         since: getArg('--since'),
         sample: getArg('--sample') ? parseInt(getArg('--sample'), 10) : undefined,
+      });
+      break;
+    case 'sessions':
+      await cmdSessions(args[1], {
+        since: getArg('--since'),
+        limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+      });
+      break;
+    case 'query':
+      await cmdQuery(getArg('--project') || args[1], {
+        metrics: getArg('--metrics'),
+        group_by: getArg('--group-by'),
+        date_from: getArg('--from') || getArg('--days') ? `${getArg('--days')}d` : undefined,
+        date_to: getArg('--to'),
+        order_by: getArg('--order-by'),
+        order: getArg('--order'),
+        limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+      });
+      break;
+    case 'project':
+      await cmdProject(args[1]);
+      break;
+    case 'update':
+      await cmdUpdate(args[1], {
+        name: getArg('--name'),
+        allowed_origins: getArg('--origins'),
       });
       break;
     case 'insights':
