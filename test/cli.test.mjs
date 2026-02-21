@@ -24,8 +24,8 @@ describe('CLI', () => {
     it('shows help with --help flag', async () => {
       const { code, stdout } = await run(['--help']);
       assert.equal(code, 0);
-      assert.ok(stdout.includes('agent-analytics'));
-      assert.ok(stdout.includes('COMMANDS'));
+      assert.ok(stdout.includes('Agent Analytics'));
+      assert.ok(stdout.includes('ANALYTICS'));
       assert.ok(stdout.includes('login'));
       assert.ok(stdout.includes('stats'));
     });
@@ -39,7 +39,7 @@ describe('CLI', () => {
     it('shows help with -h flag', async () => {
       const { code, stdout } = await run(['-h']);
       assert.equal(code, 0);
-      assert.ok(stdout.includes('COMMANDS'));
+      assert.ok(stdout.includes('ANALYTICS'));
     });
 
     it('shows help with no arguments', async () => {

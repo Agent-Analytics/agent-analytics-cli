@@ -91,7 +91,7 @@ async function cmdLogin(token) {
     log(`  ${CYAN}export AGENT_ANALYTICS_API_KEY=aak_your_key_here${RESET}`);
     log('');
     log(`Get your API key at: ${CYAN}https://app.agentanalytics.sh${RESET}`);
-    log(`${DIM}Sign in with GitHub → your API key is shown once on first signup.${RESET}`);
+    log(`${DIM}Sign in with GitHub or Google — your API key is on the settings page.${RESET}`);
     return;
   }
 
@@ -105,9 +105,12 @@ async function cmdLogin(token) {
     config.github_login = account.github_login;
     saveConfig(config);
 
-    success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET}`);
+    success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET} (${account.tier})`);
     log(`${DIM}API key saved to ~/.config/agent-analytics/config.json${RESET}`);
-    log(`\nNext: ${CYAN}npx @agent-analytics/cli create my-site${RESET}`);
+    log('');
+    log(`Next steps:`);
+    log(`  ${CYAN}npx @agent-analytics/cli create my-site --domain https://mysite.com${RESET}`);
+    log(`  ${CYAN}npx @agent-analytics/cli live${RESET}  ${DIM}— real-time view across all projects${RESET}`);
   } catch (err) {
     error(`Invalid API key: ${err.message}`);
   }
@@ -133,6 +136,9 @@ const cmdCreate = withApi(async (api, name, domain) => {
 
   heading('Project token (for the snippet):');
   log(`${YELLOW}${data.project_token}${RESET}\n`);
+
+  log(`${DIM}Your AI agent can now track, analyze, and run experiments on ${name}.${RESET}`);
+  log(`${DIM}Watch it live: ${CYAN}npx @agent-analytics/cli live ${name}${RESET}\n`);
 });
 
 const cmdProjects = withApi(async (api) => {
@@ -575,10 +581,10 @@ const cmdLive = withApi(async (api, project, opts = {}) => {
     const lines = [];
 
     lines.push('');
-    lines.push(`  ${BOLD}Agent Analytics — Live View${RESET}  ${DIM}${now}  (${interval}s refresh, ${windowSec}s window)${RESET}`);
-    lines.push(`  ${DIM}${'─'.repeat(52)}${RESET}`);
+    lines.push(`  ${BOLD}Agent Analytics${RESET} ${DIM}— Live${RESET}  ${DIM}${now}  (${interval}s refresh, ${windowSec}s window)${RESET}`);
+    lines.push(`  ${DIM}${'─'.repeat(56)}${RESET}`);
     lines.push('');
-    lines.push(`  ${BOLD}${CYAN}${totalVisitors}${RESET} visitors  ${BOLD}${YELLOW}${totalSessions}${RESET} sessions  ${BOLD}${MAGENTA}${totalEpm}${RESET} events/min  ${DIM}across ${projectNames.length} project${projectNames.length !== 1 ? 's' : ''}${RESET}`);
+    lines.push(`  ${BOLD}${CYAN}${totalVisitors}${RESET} visitors  ${BOLD}${YELLOW}${totalSessions}${RESET} sessions  ${BOLD}${MAGENTA}${totalEpm}${RESET} events/min  ${DIM}${projectNames.length} project${projectNames.length !== 1 ? 's' : ''}${RESET}`);
     lines.push('');
 
     // Per-project
@@ -745,86 +751,71 @@ const cmdExperiments = withApi(async (api, sub, ...rest) => {
 
 function showHelp() {
   log(`
-${BOLD}agent-analytics${RESET} — Web analytics your AI agent can read
+${BOLD}Agent Analytics${RESET} — Stop juggling dashboards. Let your agent do it.
+${DIM}Analytics your AI agent can actually use. Track, analyze, experiment, optimize.${RESET}
 
 ${BOLD}USAGE${RESET}
   npx @agent-analytics/cli <command> [options]
 
-${BOLD}COMMANDS${RESET}
-  ${CYAN}login${RESET} --token <key> Save your API key
-  ${CYAN}create${RESET} <name>      Create a project and get your snippet
-  ${CYAN}projects${RESET}           List your projects
-  ${CYAN}init${RESET} <name>        Alias for create
-  ${CYAN}project${RESET} <id>       Get single project details
-  ${CYAN}update${RESET} <id>        Update a project (--name, --origins)
-  ${CYAN}delete${RESET} <id>        Delete a project
-  ${CYAN}stats${RESET} <name>       Get stats for a project
-  ${CYAN}events${RESET} <name>      Get recent events
-  ${CYAN}query${RESET} <name>       Flexible analytics query
-  ${CYAN}properties${RESET} <name>  Discover event names & property keys
-  ${CYAN}properties-received${RESET} <name>  Property keys per event (sampled)
-  ${CYAN}sessions${RESET} <name>    List individual sessions
-  ${CYAN}insights${RESET} <name>    Period-over-period comparison
-  ${CYAN}breakdown${RESET} <name>   Property value distribution
-  ${CYAN}pages${RESET} <name>       Entry/exit page performance
-  ${CYAN}sessions-dist${RESET} <name>  Session duration distribution
-  ${CYAN}heatmap${RESET} <name>     Peak hours & busiest days
-  ${CYAN}live${RESET} [name]        Real-time live view across projects (pro only)
-  ${CYAN}experiments${RESET} <sub>  A/B testing (pro only)
-    ${DIM}list <project>${RESET}      List experiments
-    ${DIM}create <project>${RESET}    Create experiment
-    ${DIM}get <id>${RESET}            Get experiment with results
-    ${DIM}pause <id>${RESET}          Pause experiment
-    ${DIM}resume <id>${RESET}         Resume experiment
-    ${DIM}complete <id>${RESET}       Complete experiment
-    ${DIM}delete <id>${RESET}         Delete experiment
-  ${CYAN}whoami${RESET}             Show current account
-  ${CYAN}revoke-key${RESET}         Revoke and regenerate API key
-  ${CYAN}delete-account${RESET}     Delete your account (opens dashboard)
+${BOLD}SETUP${RESET}
+  ${CYAN}login${RESET} --token <key>   Save your API key
+  ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
+  ${CYAN}projects${RESET}               List all your projects
 
-${BOLD}OPTIONS${RESET}
-  --days <N>         Days of data (default: 7)
-  --limit <N>        Max events/rows to return (default: 100)
-  --domain <url>     Your site domain (required for create)
-  --since <date>     ISO date for properties-received (default: 7 days)
-  --sample <N>       Max events to sample (default: 5000)
-  --period <P>       Period for insights: 1d, 7d, 14d, 30d, 90d (default: 7d)
-  --property <key>   Property key for breakdown (required)
-  --metrics <m,m>    Comma-separated metrics for query (event_count, unique_users, etc.)
-  --group-by <g,g>   Comma-separated group by fields for query (date, event, etc.)
-  --from <date>      Start date for query (ISO or shorthand like 7d)
-  --to <date>        End date for query
-  --order-by <col>   Order by column for query
-  --order <dir>      asc or desc (default: desc)
-  --event <name>     Filter by event name (breakdown only)
-  --type <T>         Page type: entry, exit, both (default: entry)
-  --origins <url>    Allowed origins for update
-  --name <name>      Experiment name (experiments create)
-  --variants <a,b>   Comma-separated variant keys (experiments create)
-  --goal <event>     Goal event name (experiments create)
-  --weights <50,50>  Comma-separated weights (experiments create, optional)
-  --winner <variant> Winning variant (experiments complete, optional)
-  --interval <N>     Refresh interval for live view in seconds (default: 5)
-  --window <N>       Time window for live view in seconds (default: 60)
+${BOLD}ANALYTICS${RESET}
+  ${CYAN}stats${RESET} <name>           Overview: events, users, daily trends
+  ${CYAN}live${RESET} [name]            Real-time terminal dashboard across all projects
+  ${CYAN}insights${RESET} <name>        Period-over-period comparison with trends
+  ${CYAN}breakdown${RESET} <name>       Top pages, referrers, UTM sources, countries
+  ${CYAN}pages${RESET} <name>           Entry/exit page performance & bounce rates
+  ${CYAN}heatmap${RESET} <name>         Peak hours & busiest days
+  ${CYAN}sessions-dist${RESET} <name>   Session duration distribution
+  ${CYAN}events${RESET} <name>          Raw event log
+  ${CYAN}sessions${RESET} <name>        Individual session records
+  ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters)
+  ${CYAN}properties${RESET} <name>      Discover event names & property keys
 
-${BOLD}ENVIRONMENT${RESET}
-  AGENT_ANALYTICS_API_KEY    API key (overrides config file)
-  AGENT_ANALYTICS_URL    Custom API URL
+${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RESET}
+  ${CYAN}experiments list${RESET} <project>     List experiments
+  ${CYAN}experiments create${RESET} <project>   Create experiment
+  ${CYAN}experiments get${RESET} <id>           Get experiment with results & significance
+  ${CYAN}experiments pause${RESET} <id>         Pause experiment
+  ${CYAN}experiments resume${RESET} <id>        Resume experiment
+  ${CYAN}experiments complete${RESET} <id>      Ship the winner
+  ${CYAN}experiments delete${RESET} <id>        Delete experiment
 
-${BOLD}EXAMPLES${RESET}
-  ${DIM}# First time: save your API key (from app.agentanalytics.sh)${RESET}
+${BOLD}ACCOUNT${RESET}
+  ${CYAN}whoami${RESET}                 Show current account & tier
+  ${CYAN}revoke-key${RESET}             Revoke and regenerate API key
+  ${CYAN}project${RESET} <id>           Get single project details
+  ${CYAN}update${RESET} <id>            Update a project (--name, --origins)
+  ${CYAN}delete${RESET} <id>            Delete a project
+
+${BOLD}KEY OPTIONS${RESET}
+  --days <N>         Lookback window in days (default: 7)
+  --limit <N>        Max results (default: 100)
+  --domain <url>     Site domain (required for create)
+  --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
+  --property <key>   Property to break down (path, referrer, utm_source, country)
+  --event <name>     Filter by event name
+  --interval <N>     Live view refresh in seconds (default: 5)
+  --window <N>       Live view time window in seconds (default: 60)
+
+${BOLD}QUICK START${RESET}
+  ${DIM}# 1. Save your API key${RESET}
   npx @agent-analytics/cli login --token aak_your_key
 
-  ${DIM}# Create a project${RESET}
+  ${DIM}# 2. Create a project${RESET}
   npx @agent-analytics/cli create my-site --domain https://mysite.com
 
-  ${DIM}# Check how your site is doing${RESET}
-  npx @agent-analytics/cli stats my-site --days 30
+  ${DIM}# 3. Check how all your projects are doing — live${RESET}
+  npx @agent-analytics/cli live
 
-  ${DIM}# Your agent can also use the API directly${RESET}
+  ${DIM}# 4. Or let your AI agent query the API directly${RESET}
   curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \\
     -H "X-API-Key: \$AGENT_ANALYTICS_API_KEY"
 
+${DIM}Works with Claude Code, OpenClaw, Cursor, Codex — any agent that speaks HTTP or MCP.${RESET}
 ${DIM}https://agentanalytics.sh${RESET}
 `);
 }
