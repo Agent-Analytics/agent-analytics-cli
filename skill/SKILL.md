@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
-description: "Open-source, agent-first headless analytics with built-in A/B testing. Add tracking to any site, run experiments, read results, and optimize conversions — all via API. Includes a growth playbook so your agent knows HOW to grow, not just what to track."
-version: 2.6.0
+description: "Stop juggling dashboards. Let your agent do it. Analytics your AI agent can actually use — track, analyze, experiment, optimize across all your projects via CLI. Includes a growth playbook so your agent knows HOW to grow, not just what to track."
+version: 3.0.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
@@ -10,12 +10,14 @@ tags:
   - tracking
   - web
   - events
+  - experiments
+  - live
 metadata: {"openclaw":{"requires":{"env":["AGENT_ANALYTICS_API_KEY"],"anyBins":["npx"]},"primaryEnv":"AGENT_ANALYTICS_API_KEY"}}
 ---
 
-# Agent Analytics — Add tracking to any website
+# Agent Analytics — Stop juggling dashboards. Let your agent do it.
 
-You are adding analytics tracking using Agent Analytics — a lightweight platform built for developers who ship lots of projects and want their AI agent to monitor them.
+You are adding analytics tracking using Agent Analytics — the analytics platform your AI agent can actually use. Built for developers who ship lots of projects and want their AI agent to track, analyze, experiment, and optimize across all of them.
 
 ## Philosophy
 
@@ -236,41 +238,42 @@ npx @agent-analytics/cli events PROJECT_NAME
 
 ## Querying the data
 
+All commands use `npx @agent-analytics/cli`. Your agent uses the CLI directly — no curl needed.
+
 ### CLI reference
 
 ```bash
-# List all your projects (do this first)
-npx @agent-analytics/cli projects
+# Setup
+npx @agent-analytics/cli login --token aak_YOUR_KEY    # Save API key (one time)
+npx @agent-analytics/cli projects                       # List all projects
+npx @agent-analytics/cli create my-site --domain https://mysite.com  # Create project
 
-# Aggregated stats for a project
-npx @agent-analytics/cli stats my-site --days 7
+# Real-time
+npx @agent-analytics/cli live                           # Live terminal dashboard across ALL projects
+npx @agent-analytics/cli live my-site                   # Live view for one project
 
-# Recent events (raw log)
-npx @agent-analytics/cli events my-site --days 30 --limit 50
+# Analytics
+npx @agent-analytics/cli stats my-site --days 7         # Overview: events, users, daily trends
+npx @agent-analytics/cli insights my-site --period 7d   # Period-over-period comparison
+npx @agent-analytics/cli breakdown my-site --property path --event page_view --limit 10  # Top pages/referrers/UTM
+npx @agent-analytics/cli pages my-site --type entry     # Landing page performance & bounce rates
+npx @agent-analytics/cli sessions-dist my-site          # Session engagement histogram
+npx @agent-analytics/cli heatmap my-site                # Peak hours & busiest days
+npx @agent-analytics/cli events my-site --days 30       # Raw event log
+npx @agent-analytics/cli sessions my-site               # Individual session records
+npx @agent-analytics/cli properties my-site             # Discover event names & property keys
+npx @agent-analytics/cli properties-received my-site    # Property keys per event type (sampled)
+npx @agent-analytics/cli query my-site --metrics event_count,unique_users --group-by date  # Flexible query
 
-# What property keys exist per event type?
-npx @agent-analytics/cli properties-received my-site --since 2025-01-01
-
-# Period-over-period comparison (this week vs last week)
-npx @agent-analytics/cli insights my-site --period 7d
-
-# Top pages, referrers, UTM sources (any property key)
-npx @agent-analytics/cli breakdown my-site --property path --event page_view --limit 10
-
-# Landing page performance
-npx @agent-analytics/cli pages my-site --type entry
-
-# Session engagement histogram
-npx @agent-analytics/cli sessions-dist my-site
-
-# Traffic patterns by day & hour
-npx @agent-analytics/cli heatmap my-site
-
-# A/B experiments (pro only)
+# A/B experiments (pro)
 npx @agent-analytics/cli experiments list my-site
 npx @agent-analytics/cli experiments create my-site --name signup_cta --variants control,new_cta --goal signup
 npx @agent-analytics/cli experiments get exp_abc123
 npx @agent-analytics/cli experiments complete exp_abc123 --winner new_cta
+
+# Account
+npx @agent-analytics/cli whoami                         # Show account & tier
+npx @agent-analytics/cli revoke-key                     # Rotate API key
 ```
 
 **Key flags**:
@@ -281,39 +284,12 @@ npx @agent-analytics/cli experiments complete exp_abc123 --winner new_cta
 - `--property <key>` — property key to group by (`breakdown`, required)
 - `--event <name>` — filter by event name (`breakdown` only)
 - `--type <T>` — page type: `entry`, `exit`, `both` (`pages` only, default: entry)
+- `--interval <N>` — live refresh in seconds (default: 5)
+- `--window <N>` — live time window in seconds (default: 60)
 
-### Analytics API endpoints
+### The `live` command
 
-These endpoints return pre-computed aggregations — use them instead of downloading raw events and computing client-side. All require `X-API-Key` header or `?key=` param.
-
-```bash
-# Period-over-period comparison (replaces manual 2x /stats calls)
-# period: 1d, 7d, 14d, 30d, or 90d
-curl "https://api.agentanalytics.sh/insights?project=my-site&period=7d" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
-# → { metrics: { total_events: { current, previous, change, change_pct }, ... }, trend }
-
-# Property value breakdown (top pages, referrers, UTM sources, etc.)
-curl "https://api.agentanalytics.sh/breakdown?project=my-site&property=path&event=page_view&limit=10" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
-# → { values: [{ value: "/home", count: 523, unique_users: 312 }, ...] }
-
-# Entry & exit page performance
-# type: entry, exit, or both
-curl "https://api.agentanalytics.sh/pages?project=my-site&type=entry" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
-# → { entry_pages: [{ page, sessions, bounces, bounce_rate, avg_duration, avg_events }] }
-
-# Session duration distribution (engagement histogram)
-curl "https://api.agentanalytics.sh/sessions/distribution?project=my-site" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
-# → { distribution: [{ bucket: "0s", sessions, pct }, ...], engaged_pct, median_bucket }
-
-# Traffic heatmap (peak hours & busiest days)
-curl "https://api.agentanalytics.sh/heatmap?project=my-site&since=2025-01-01" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
-# → { heatmap: [{ day, day_name, hour, events, users }], peak, busiest_day, busiest_hour }
-```
+`npx @agent-analytics/cli live` opens a real-time TUI dashboard that refreshes every 5 seconds. It shows active visitors, sessions, and events/min across all your projects, plus top pages and recent events. Note: this is an interactive terminal UI — it clears the screen on each refresh, so it works best when run directly in a terminal rather than captured as output.
 
 ## Which endpoint for which question
 
@@ -322,16 +298,17 @@ Match the user's question to the right call(s):
 | User asks | Call | Why |
 |-----------|------|-----|
 | "How's my site doing?" | `insights` + `breakdown` + `pages` (parallel) | Full weekly picture in one turn |
+| "Is anyone visiting right now?" | `live` | Real-time visitors, sessions, events across all projects |
 | "Is anyone visiting?" | `insights --period 7d` | Quick alive-or-dead check |
 | "What are my top pages?" | `breakdown --property path --event page_view` | Ranked page list with unique users |
 | "Where's my traffic coming from?" | `breakdown --property referrer --event page_view` | Referrer sources |
 | "Which landing page is best?" | `pages --type entry` | Bounce rate + session depth per page |
 | "Are people actually engaging?" | `sessions-dist` | Bounce vs engaged split |
 | "When should I deploy/post?" | `heatmap` | Find low-traffic windows or peak hours |
-| "Give me a summary of all projects" | Loop: `projects` then `insights` per project | Multi-project overview |
+| "Give me a summary of all projects" | `live` or loop: `projects` then `insights` per project | Multi-project overview |
 | "Which CTA converts better?" | `experiments create` + implement + `experiments get <id>` | Full A/B test lifecycle |
 
-For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint.
+For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint. For real-time "who's on the site right now", use `live`.
 
 ## Analyze, don't just query
 
@@ -439,7 +416,9 @@ Trend: Growing.
 
 ### Multi-project overview
 
-Call `projects` to list all projects, then call `insights --period 7d` for each. Present one line per project:
+For a quick real-time check, use `live` — it shows all projects in one view with active visitors, sessions, and events/min.
+
+For a historical summary, call `projects` to list all projects, then call `insights --period 7d` for each. Present one line per project:
 
 ```
 my-site         142 views (+23% ↑)  12 signups   healthy
@@ -572,7 +551,7 @@ Don't wait for the user to ask. If your agent has scheduled checks, proactively 
 
 ## What this skill does NOT do
 
-- No dashboards — your agent IS the dashboard
+- No GUI dashboards — your agent IS the dashboard (or use `live` for a real-time TUI)
 - No user management or billing
 - No complex funnels or cohort analysis
 - No PII stored — IP addresses are not logged or retained. Privacy-first by design
