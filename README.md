@@ -1,11 +1,13 @@
-# agent-analytics
+# Agent Analytics CLI
 
-Web analytics your AI agent can read. Drop a JS snippet on your site, query the data via API.
+Stop juggling dashboards. Let your agent do it.
+
+Analytics your AI agent can actually use — track, analyze, experiment, optimize.
 
 ## Quick Start
 
 ```bash
-# 1. Get your API key from https://api.agentanalytics.sh (sign in with GitHub)
+# 1. Get your API key from https://app.agentanalytics.sh (sign in with GitHub or Google)
 
 # 2. Save your key
 npx @agent-analytics/cli login --token aak_your_key
@@ -13,35 +15,40 @@ npx @agent-analytics/cli login --token aak_your_key
 # 3. Create a project
 npx @agent-analytics/cli create my-site --domain https://mysite.com
 
-# 4. Check your stats
-npx @agent-analytics/cli stats my-site
+# 4. Watch it live
+npx @agent-analytics/cli live
 ```
 
 ## Commands
 
 ```bash
-# Auth
-npx @agent-analytics/cli login --token <key>    # Save your API key
-npx @agent-analytics/cli whoami                  # Show current account
-
-# Projects
-npx @agent-analytics/cli create <name> --domain <url>    # Create a project
-npx @agent-analytics/cli projects                        # List your projects
-npx @agent-analytics/cli delete <id>                     # Delete a project
+# Setup
+login --token <key>              Save your API key
+create <name> --domain <url>     Create a project and get your tracking snippet
+projects                         List all your projects
 
 # Analytics
-npx @agent-analytics/cli stats <name>              # Stats (last 7 days)
-npx @agent-analytics/cli stats <name> --days 30    # Stats (last 30 days)
-npx @agent-analytics/cli events <name>             # Recent events
-npx @agent-analytics/cli properties-received <name>  # Property keys per event
-npx @agent-analytics/cli insights <name>           # Period-over-period comparison (--period 7d)
-npx @agent-analytics/cli breakdown <name> --property path  # Top values for a property
-npx @agent-analytics/cli pages <name>              # Landing page performance (--type entry|exit|both)
-npx @agent-analytics/cli sessions-dist <name>      # Session duration histogram
-npx @agent-analytics/cli heatmap <name>            # Peak hours & busiest days
+stats <name>                     Overview: events, users, daily trends
+live [name]                      Real-time terminal dashboard across all projects
+insights <name>                  Period-over-period comparison with trends
+breakdown <name> --property path Top pages, referrers, UTM sources, countries
+pages <name>                     Entry/exit page performance & bounce rates
+heatmap <name>                   Peak hours & busiest days
+sessions-dist <name>             Session duration distribution
+events <name>                    Raw event log
+sessions <name>                  Individual session records
+query <name>                     Flexible analytics query (metrics, group_by, filters)
+properties <name>                Discover event names & property keys
 
-# Security
-npx @agent-analytics/cli revoke-key     # Revoke and regenerate API key
+# Experiments — A/B testing your agent can actually use
+experiments list <project>       List experiments
+experiments create <project>     Create experiment
+experiments get <id>             Get experiment with results & significance
+experiments complete <id>        Ship the winner
+
+# Account
+whoami                           Show current account & tier
+revoke-key                       Revoke and regenerate API key
 ```
 
 ## For AI Agents
@@ -55,12 +62,11 @@ export AGENT_ANALYTICS_API_KEY=aak_your_key
 curl "https://api.agentanalytics.sh/stats?project=my-site&days=7" \
   -H "X-API-Key: $AGENT_ANALYTICS_API_KEY"
 
-# Create a project
-curl -X POST "https://api.agentanalytics.sh/projects" \
-  -H "X-API-Key: $AGENT_ANALYTICS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "new-site", "allowed_origins": "https://mysite.com"}'
+# Or use the MCP server with Claude Code
+claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mcp
 ```
+
+Works with Claude Code, OpenClaw, Cursor, Codex — any agent that speaks HTTP or MCP.
 
 ## Environment Variables
 
@@ -69,13 +75,10 @@ curl -X POST "https://api.agentanalytics.sh/projects" \
 | `AGENT_ANALYTICS_API_KEY` | API key (overrides config file) |
 | `AGENT_ANALYTICS_URL` | Custom API URL (for self-hosted) |
 
-## Config
-
-Stored at `~/.config/agent-analytics/config.json` (file permissions: 600).
-
 ## Links
 
-- **Dashboard:** https://api.agentanalytics.sh
+- **Dashboard:** https://app.agentanalytics.sh
+- **Docs:** https://docs.agentanalytics.sh
 - **Website:** https://agentanalytics.sh
 - **GitHub:** https://github.com/Agent-Analytics
 - **Self-host:** https://github.com/Agent-Analytics/agent-analytics
