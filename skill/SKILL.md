@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
 description: "Stop juggling dashboards. Let your agent do it. Analytics your AI agent can actually use — track, analyze, experiment, optimize across all your projects via CLI. Includes a growth playbook so your agent knows HOW to grow, not just what to track."
-version: 3.1.1
+version: 3.2.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
@@ -630,7 +630,7 @@ Don't wait for the user to ask. If your agent has scheduled checks, proactively 
 
 - No GUI dashboards — your agent IS the dashboard (or use `live` for a real-time TUI)
 - No user management or billing
-- No saved funnels or cohort analysis (funnels are ad-hoc queries via `POST /funnel`)
+- Funnels and retention are ad-hoc queries (no saved/scheduled reports)
 - No PII stored — IP addresses are not logged or retained. Privacy-first by design
 
 ## Examples
