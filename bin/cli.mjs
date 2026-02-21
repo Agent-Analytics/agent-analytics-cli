@@ -19,6 +19,7 @@
  *   npx @agent-analytics/cli sessions-dist <name> — Session duration distribution
  *   npx @agent-analytics/cli heatmap <name>       — Peak hours & busiest days
  *   npx @agent-analytics/cli funnel <name>        — Funnel analysis: where users drop off
+ *   npx @agent-analytics/cli retention <name>     — Cohort retention: % of users who return
  *   npx @agent-analytics/cli init <name>          — Alias for create
  *   npx @agent-analytics/cli project <id>          — Get single project details
  *   npx @agent-analytics/cli update <id>           — Update a project
@@ -398,6 +399,60 @@ const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
 
   log('');
   log(`  ${BOLD}Overall conversion:${RESET} ${Math.round(data.overall_conversion_rate * 100)}%`);
+  log('');
+});
+
+const cmdRetention = withApi(async (api, project, opts = {}) => {
+  if (!project) error('Usage: npx @agent-analytics/cli retention <project-name> [--period week] [--cohorts 8] [--event signup] [--returning-event purchase]');
+
+  const data = await api.getRetention(project, {
+    period: opts.period,
+    cohorts: opts.cohorts ? parseInt(opts.cohorts, 10) : undefined,
+    event: opts.event,
+    returning_event: opts.returning_event,
+  });
+
+  const periodLabel = data.period === 'day' ? 'daily' : data.period + 'ly';
+  heading(`Retention: ${project} (${periodLabel} cohorts)`);
+  log('');
+
+  if (!data.cohorts || data.cohorts.length === 0) {
+    log('  No retention data (no users with user_id in this period).');
+    return;
+  }
+
+  // Header row
+  const maxOffsets = data.cohorts[0].rates.length;
+  const prefix = data.period === 'day' ? 'D' : data.period === 'month' ? 'M' : 'W';
+  const header = '  ' + 'Cohort'.padEnd(14) + 'Users'.padStart(7) + '  ' + Array.from({ length: maxOffsets }, (_, i) => (prefix + i).padStart(6)).join('');
+  log(`${DIM}${header}${RESET}`);
+
+  for (const c of data.cohorts) {
+    let row = '  ' + c.date.padEnd(14) + String(c.users).padStart(7) + '  ';
+    for (let i = 0; i < maxOffsets; i++) {
+      if (i < c.rates.length) {
+        const pctVal = Math.round(c.rates[i] * 100);
+        const color = pctVal >= 40 ? GREEN : pctVal >= 20 ? YELLOW : pctVal > 0 ? RED : DIM;
+        row += `${color}${(pctVal + '%').padStart(6)}${RESET}`;
+      } else {
+        row += '      ';
+      }
+    }
+    log(row);
+  }
+
+  if (data.average_rates && data.average_rates.length > 0) {
+    let avgRow = '  ' + `${BOLD}Avg${RESET}`.padEnd(14 + 11) + '  '; // 11 accounts for BOLD+RESET escape codes
+    // Recalculate padding since escape codes have length
+    avgRow = '  ' + BOLD + 'Avg' + RESET + ' '.repeat(11) + '       ' + '  ';
+    for (const r of data.average_rates) {
+      avgRow += `${BOLD}${(Math.round(r * 100) + '%').padStart(6)}${RESET}`;
+    }
+    log(avgRow);
+  }
+
+  log('');
+  log(`  ${DIM}${data.users_analyzed} users analyzed${RESET}`);
   log('');
 });
 
@@ -806,6 +861,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}pages${RESET} <name>           Entry/exit page performance & bounce rates
   ${CYAN}heatmap${RESET} <name>         Peak hours & busiest days
   ${CYAN}funnel${RESET} <name>            Funnel analysis: where users drop off
+  ${CYAN}retention${RESET} <name>         Cohort retention: % of users who return
   ${CYAN}sessions-dist${RESET} <name>   Session duration distribution
   ${CYAN}events${RESET} <name>          Raw event log
   ${CYAN}sessions${RESET} <name>        Individual session records
@@ -949,6 +1005,14 @@ try {
         window: getArg('--window'),
         since: getArg('--since'),
         count_by: getArg('--count-by'),
+      });
+      break;
+    case 'retention':
+      await cmdRetention(args[1], {
+        period: getArg('--period'),
+        cohorts: getArg('--cohorts'),
+        event: getArg('--event'),
+        returning_event: getArg('--returning-event'),
       });
       break;
     case 'live': {
