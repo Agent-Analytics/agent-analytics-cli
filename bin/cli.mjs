@@ -23,6 +23,7 @@
  *   npx @agent-analytics/cli update <id>           — Update a project
  *   npx @agent-analytics/cli delete <id>           — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
+ *   npx @agent-analytics/cli live [name]          — Real-time live view (pro only)
  *   npx @agent-analytics/cli experiments list <project>   — List experiments
  *   npx @agent-analytics/cli experiments create <p> ...  — Create experiment
  *   npx @agent-analytics/cli experiments get <id>        — Get experiment with results
@@ -43,6 +44,8 @@ const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
 const CYAN = '\x1b[36m';
 const RED = '\x1b[31m';
+const MAGENTA = '\x1b[35m';
+const WHITE = '\x1b[37m';
 const RESET = '\x1b[0m';
 
 function log(msg = '') { console.log(msg); }
@@ -498,6 +501,132 @@ const cmdWhoami = withApi(async (api) => {
   log('');
 });
 
+// ==================== LIVE ====================
+
+const cmdLive = withApi(async (api, project, opts = {}) => {
+  const interval = parseInt(opts.interval || '5', 10);
+  const windowSec = parseInt(opts.window || '60', 10);
+
+  // Get project list
+  const { projects } = await api.listProjects();
+  if (!projects || projects.length === 0) {
+    error('No projects found. Create one first.');
+  }
+
+  // If a specific project given, filter to it
+  const targetProjects = project
+    ? projects.filter(p => p.name === project)
+    : projects;
+
+  if (project && targetProjects.length === 0) {
+    error(`Project "${project}" not found.`);
+  }
+
+  const projectNames = targetProjects.map(p => p.name);
+
+  // Hide cursor
+  process.stdout.write('\x1b[?25l');
+
+  // Restore cursor on exit
+  const cleanup = () => {
+    process.stdout.write('\x1b[?25h\n');
+    process.exit(0);
+  };
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
+
+  while (true) {
+    const snapshots = await Promise.all(
+      projectNames.map(async (name) => {
+        try {
+          const snap = await api.getLive(name, { window: windowSec });
+          return { name, ...snap };
+        } catch {
+          return { name, active_visitors: 0, active_sessions: 0, events_per_minute: 0, top_pages: [], top_events: [], recent_events: [] };
+        }
+      })
+    );
+
+    // Aggregate totals
+    let totalVisitors = 0, totalSessions = 0, totalEpm = 0;
+    const allPages = [];
+    const allRecent = [];
+
+    for (const snap of snapshots) {
+      totalVisitors += snap.active_visitors || 0;
+      totalSessions += snap.active_sessions || 0;
+      totalEpm += snap.events_per_minute || 0;
+
+      for (const p of (snap.top_pages || []).slice(0, 3)) {
+        allPages.push({ ...p, project: snap.name });
+      }
+      for (const e of (snap.recent_events || []).slice(0, 3)) {
+        allRecent.push({ ...e, project: snap.name });
+      }
+    }
+
+    // Sort recent by timestamp descending
+    allRecent.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    // Sort pages by visitors descending
+    allPages.sort((a, b) => (b.visitors || 0) - (a.visitors || 0));
+
+    // Render
+    const now = new Date().toLocaleTimeString();
+    const lines = [];
+
+    lines.push('');
+    lines.push(`  ${BOLD}Agent Analytics — Live View${RESET}  ${DIM}${now}  (${interval}s refresh, ${windowSec}s window)${RESET}`);
+    lines.push(`  ${DIM}${'─'.repeat(52)}${RESET}`);
+    lines.push('');
+    lines.push(`  ${BOLD}${CYAN}${totalVisitors}${RESET} visitors  ${BOLD}${YELLOW}${totalSessions}${RESET} sessions  ${BOLD}${MAGENTA}${totalEpm}${RESET} events/min  ${DIM}across ${projectNames.length} project${projectNames.length !== 1 ? 's' : ''}${RESET}`);
+    lines.push('');
+
+    // Per-project
+    lines.push(`  ${BOLD}Projects${RESET}`);
+    for (const snap of snapshots) {
+      if (snap.active_visitors > 0 || snap.events_per_minute > 0) {
+        lines.push(`  ${GREEN}●${RESET} ${BOLD}${snap.name}${RESET}  ${CYAN}${snap.active_visitors}${RESET} visitors  ${YELLOW}${snap.active_sessions}${RESET} sessions  ${MAGENTA}${snap.events_per_minute}${RESET} evt/min`);
+      } else {
+        lines.push(`  ${DIM}○ ${snap.name}  —${RESET}`);
+      }
+    }
+    lines.push('');
+
+    // Top pages
+    if (allPages.length > 0) {
+      lines.push(`  ${BOLD}Top Pages${RESET}`);
+      for (const p of allPages.slice(0, 8)) {
+        const proj = p.project.padEnd(22);
+        const path = (p.path || '/').padEnd(20);
+        lines.push(`    ${WHITE}${proj}${RESET} ${DIM}${path}${RESET} ${CYAN}${p.visitors}${RESET}`);
+      }
+      lines.push('');
+    }
+
+    // Recent events
+    if (allRecent.length > 0) {
+      lines.push(`  ${BOLD}Recent Events${RESET}`);
+      for (const e of allRecent.slice(0, 10)) {
+        const ts = new Date(e.timestamp).toLocaleTimeString();
+        const proj = (e.project || '').padEnd(20);
+        const evt = (e.event || '').padEnd(16);
+        const path = (e.properties?.path || '').padEnd(20);
+        const uid = e.user_id ? e.user_id.slice(0, 12) : '';
+        lines.push(`    ${DIM}${ts}${RESET}  ${WHITE}${proj}${RESET} ${GREEN}${evt}${RESET} ${DIM}${path}${RESET} ${DIM}${uid}${RESET}`);
+      }
+      lines.push('');
+    }
+
+    lines.push(`  ${DIM}Press Ctrl+C to exit${RESET}`);
+
+    // Clear and write
+    process.stdout.write('\x1b[2J\x1b[H');
+    process.stdout.write(lines.join('\n') + '\n');
+
+    await new Promise(r => setTimeout(r, interval * 1000));
+  }
+});
+
 // ==================== EXPERIMENTS ====================
 
 const cmdExperiments = withApi(async (api, sub, ...rest) => {
@@ -640,6 +769,7 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}pages${RESET} <name>       Entry/exit page performance
   ${CYAN}sessions-dist${RESET} <name>  Session duration distribution
   ${CYAN}heatmap${RESET} <name>     Peak hours & busiest days
+  ${CYAN}live${RESET} [name]        Real-time live view across projects (pro only)
   ${CYAN}experiments${RESET} <sub>  A/B testing (pro only)
     ${DIM}list <project>${RESET}      List experiments
     ${DIM}create <project>${RESET}    Create experiment
@@ -674,6 +804,8 @@ ${BOLD}OPTIONS${RESET}
   --goal <event>     Goal event name (experiments create)
   --weights <50,50>  Comma-separated weights (experiments create, optional)
   --winner <variant> Winning variant (experiments complete, optional)
+  --interval <N>     Refresh interval for live view in seconds (default: 5)
+  --window <N>       Time window for live view in seconds (default: 60)
 
 ${BOLD}ENVIRONMENT${RESET}
   AGENT_ANALYTICS_API_KEY    API key (overrides config file)
@@ -784,6 +916,14 @@ try {
     case 'heatmap':
       await cmdHeatmap(args[1]);
       break;
+    case 'live': {
+      const liveProject = args[1] && !args[1].startsWith('--') ? args[1] : null;
+      await cmdLive(liveProject, {
+        interval: getArg('--interval'),
+        window: getArg('--window'),
+      });
+      break;
+    }
     case 'experiments':
       await cmdExperiments(args[1], args[2]);
       break;
