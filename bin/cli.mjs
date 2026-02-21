@@ -18,6 +18,7 @@
  *   npx @agent-analytics/cli pages <name>         — Entry/exit page stats
  *   npx @agent-analytics/cli sessions-dist <name> — Session duration distribution
  *   npx @agent-analytics/cli heatmap <name>       — Peak hours & busiest days
+ *   npx @agent-analytics/cli funnel <name>        — Funnel analysis: where users drop off
  *   npx @agent-analytics/cli init <name>          — Alias for create
  *   npx @agent-analytics/cli project <id>          — Get single project details
  *   npx @agent-analytics/cli update <id>           — Update a project
@@ -362,6 +363,41 @@ const cmdHeatmap = withApi(async (api, project) => {
   }
   log(`  ${BOLD}Busiest day:${RESET} ${data.busiest_day}`);
   log(`  ${BOLD}Busiest hour:${RESET} ${data.busiest_hour}:00`);
+  log('');
+});
+
+const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
+  if (!project || !stepsStr) error('Usage: npx @agent-analytics/cli funnel <project-name> --steps "page_view,signup,purchase" [--window 168] [--since 30d] [--count-by user_id]');
+
+  const steps = stepsStr.split(',').map(s => ({ event: s.trim() }));
+  if (steps.length < 2) error('At least 2 steps required');
+
+  const data = await api.getFunnel(project, {
+    steps,
+    conversion_window_hours: opts.window ? parseInt(opts.window, 10) : undefined,
+    since: opts.since,
+    count_by: opts.count_by,
+  });
+
+  heading(`Funnel: ${project}`);
+  log('');
+
+  if (!data.steps || data.steps.length === 0) {
+    log('  No funnel data.');
+    return;
+  }
+
+  const maxUsers = Math.max(...data.steps.map(s => s.users));
+  for (const step of data.steps) {
+    const barLen = maxUsers > 0 ? Math.max(1, Math.round((step.users / maxUsers) * 30)) : 1;
+    const bar = '█'.repeat(barLen);
+    const rate = step.step === 1 ? '' : `  ${DIM}${Math.round(step.conversion_rate * 100)}% conversion${RESET}`;
+    const time = step.avg_time_to_next_ms != null ? `  ${DIM}→ ${Math.round(step.avg_time_to_next_ms / 1000)}s to next${RESET}` : '';
+    log(`  ${step.step}. ${BOLD}${step.event.padEnd(20)}${RESET}  ${GREEN}${bar}${RESET}  ${step.users} users${rate}${time}`);
+  }
+
+  log('');
+  log(`  ${BOLD}Overall conversion:${RESET} ${Math.round(data.overall_conversion_rate * 100)}%`);
   log('');
 });
 
@@ -769,6 +805,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}breakdown${RESET} <name>       Top pages, referrers, UTM sources, countries
   ${CYAN}pages${RESET} <name>           Entry/exit page performance & bounce rates
   ${CYAN}heatmap${RESET} <name>         Peak hours & busiest days
+  ${CYAN}funnel${RESET} <name>            Funnel analysis: where users drop off
   ${CYAN}sessions-dist${RESET} <name>   Session duration distribution
   ${CYAN}events${RESET} <name>          Raw event log
   ${CYAN}sessions${RESET} <name>        Individual session records
@@ -906,6 +943,13 @@ try {
       break;
     case 'heatmap':
       await cmdHeatmap(args[1]);
+      break;
+    case 'funnel':
+      await cmdFunnel(args[1], getArg('--steps'), {
+        window: getArg('--window'),
+        since: getArg('--since'),
+        count_by: getArg('--count-by'),
+      });
       break;
     case 'live': {
       const liveProject = args[1] && !args[1].startsWith('--') ? args[1] : null;

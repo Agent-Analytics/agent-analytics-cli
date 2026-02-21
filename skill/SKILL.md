@@ -264,6 +264,7 @@ npx @agent-analytics/cli sessions my-site               # Individual session rec
 npx @agent-analytics/cli properties my-site             # Discover event names & property keys
 npx @agent-analytics/cli properties-received my-site    # Property keys per event type (sampled)
 npx @agent-analytics/cli query my-site --metrics event_count,unique_users --group-by date  # Flexible query
+npx @agent-analytics/cli funnel my-site --steps "page_view,signup,purchase"  # Funnel drop-off analysis
 
 # A/B experiments (pro)
 npx @agent-analytics/cli experiments list my-site
@@ -284,8 +285,10 @@ npx @agent-analytics/cli revoke-key                     # Rotate API key
 - `--property <key>` — property key to group by (`breakdown`, required)
 - `--event <name>` — filter by event name (`breakdown` only)
 - `--type <T>` — page type: `entry`, `exit`, `both` (`pages` only, default: entry)
+- `--steps <csv>` — comma-separated event names (`funnel`, required)
+- `--window <N>` — conversion window in hours (`funnel`, default: 168) or live time window in seconds (`live`, default: 60)
+- `--count-by <field>` — `user_id` or `session_id` (`funnel` only)
 - `--interval <N>` — live refresh in seconds (default: 5)
-- `--window <N>` — live time window in seconds (default: 60)
 
 ### The `live` command
 
@@ -307,6 +310,7 @@ Match the user's question to the right call(s):
 | "When should I deploy/post?" | `heatmap` | Find low-traffic windows or peak hours |
 | "Give me a summary of all projects" | `live` or loop: `projects` then `insights` per project | Multi-project overview |
 | "Which CTA converts better?" | `experiments create` + implement + `experiments get <id>` | Full A/B test lifecycle |
+| "Where do users drop off?" | `funnel --steps "page_view,signup,purchase"` | Step-by-step conversion with drop-off rates |
 
 For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint. For real-time "who's on the site right now", use `live`.
 
@@ -400,6 +404,36 @@ API returns `heatmap: [{ day, day_name, hour, events, users }]`, `peak`, `busies
 Peak: Friday at 11 PM UTC (35 events, 33 users). Busiest day overall: Sunday.
 Traffic is heaviest on weekends — your audience browses on personal time.
 Deploy on weekday mornings for minimal disruption.
+```
+
+### `/funnel` → Where users drop off
+
+CLI: `funnel my-site --steps "page_view,signup,purchase"`. API: `POST /funnel` with JSON body.
+
+API returns `steps: [{ step, event, users, conversion_rate, drop_off_rate, avg_time_to_next_ms }]` and `overall_conversion_rate`.
+
+**How to interpret:**
+- Each step shows how many users progressed from the previous step
+- `conversion_rate` is step-to-step (step 2 users / step 1 users)
+- `drop_off_rate` is 1 - conversion_rate at each step
+- The biggest `drop_off_rate` is the bottleneck — focus optimization there
+- `avg_time_to_next_ms` shows how long users take between steps (convert to hours/minutes)
+- `overall_conversion_rate` is end-to-end (last step users / first step users)
+
+**Options:**
+- `--steps "event1,event2,event3"` — 2-8 step events (required)
+- `--window <hours>` — max time from step 1 to last step (default: 168 = 7 days)
+- `--since <days>` — lookback period, e.g. `30d` (default: 30d)
+- `--count-by <field>` — `user_id` (default) or `session_id`
+
+**API-only: per-step filters** — each step can have a `filters` array with `{ property, op, value }` (ops: `eq`, `neq`, `contains`). Example: filter step 1 to `path=/pricing` to see conversions from the pricing page specifically.
+
+**Example output:**
+```
+page_view → signup → purchase
+  500 users → 80 (16%) → 12 (15%) — 2.4% overall
+  Biggest drop-off: page_view → signup (84%). Focus on signup CTA visibility.
+  Avg time to signup: 4.2 hours. Avg time to purchase: 2.1 days.
 ```
 
 ### Weekly summary recipe (3 parallel calls)
@@ -553,7 +587,7 @@ Don't wait for the user to ask. If your agent has scheduled checks, proactively 
 
 - No GUI dashboards — your agent IS the dashboard (or use `live` for a real-time TUI)
 - No user management or billing
-- No complex funnels or cohort analysis
+- No saved funnels or cohort analysis (funnels are ad-hoc queries via `POST /funnel`)
 - No PII stored — IP addresses are not logged or retained. Privacy-first by design
 
 ## Examples
