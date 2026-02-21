@@ -1,7 +1,7 @@
 ---
 name: agent-analytics
 description: "Stop juggling dashboards. Let your agent do it. Analytics your AI agent can actually use — track, analyze, experiment, optimize across all your projects via CLI. Includes a growth playbook so your agent knows HOW to grow, not just what to track."
-version: 3.0.0
+version: 3.1.0
 author: dannyshmueli
 repository: https://github.com/Agent-Analytics/agent-analytics-cli
 homepage: https://agentanalytics.sh
