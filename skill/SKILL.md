@@ -265,6 +265,7 @@ npx @agent-analytics/cli properties my-site             # Discover event names &
 npx @agent-analytics/cli properties-received my-site    # Property keys per event type (sampled)
 npx @agent-analytics/cli query my-site --metrics event_count,unique_users --group-by date  # Flexible query
 npx @agent-analytics/cli funnel my-site --steps "page_view,signup,purchase"  # Funnel drop-off analysis
+npx @agent-analytics/cli retention my-site --period week --cohorts 8        # Cohort retention analysis
 
 # A/B experiments (pro)
 npx @agent-analytics/cli experiments list my-site
@@ -281,9 +282,11 @@ npx @agent-analytics/cli revoke-key                     # Rotate API key
 - `--days <N>` — lookback window (default: 7; for `stats`, `events`)
 - `--limit <N>` — max rows returned (default: 100)
 - `--since <date>` — ISO date cutoff (`properties-received` only)
-- `--period <P>` — comparison period: `1d`, `7d`, `14d`, `30d`, `90d` (`insights` only)
+- `--period <P>` — comparison period: `1d`, `7d`, `14d`, `30d`, `90d` (`insights`) or cohort grouping: `day`, `week`, `month` (`retention`)
 - `--property <key>` — property key to group by (`breakdown`, required)
-- `--event <name>` — filter by event name (`breakdown` only)
+- `--event <name>` — filter by event name (`breakdown`) or first-seen event filter (`retention`)
+- `--returning-event <name>` — what counts as "returned" (`retention`, defaults to same as `--event`)
+- `--cohorts <N>` — number of cohort periods, 1-30 (`retention`, default: 8)
 - `--type <T>` — page type: `entry`, `exit`, `both` (`pages` only, default: entry)
 - `--steps <csv>` — comma-separated event names, 2-8 steps max (`funnel`, required)
 - `--window <N>` — conversion window in hours (`funnel`, default: 168) or live time window in seconds (`live`, default: 60)
@@ -311,6 +314,7 @@ Match the user's question to the right call(s):
 | "Give me a summary of all projects" | `live` or loop: `projects` then `insights` per project | Multi-project overview |
 | "Which CTA converts better?" | `experiments create` + implement + `experiments get <id>` | Full A/B test lifecycle |
 | "Where do users drop off?" | `funnel --steps "page_view,signup,purchase"` | Step-by-step conversion with drop-off rates |
+| "Are users coming back?" | `retention --period week --cohorts 8` | Cohort retention: % returning per period |
 
 For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint. For real-time "who's on the site right now", use `live`.
 
@@ -434,6 +438,37 @@ page_view → signup → purchase
   500 users → 80 (16%) → 12 (15%) — 2.4% overall
   Biggest drop-off: page_view → signup (84%). Focus on signup CTA visibility.
   Avg time to signup: 4.2 hours. Avg time to purchase: 2.1 days.
+```
+
+### `/retention` → Are users coming back?
+
+CLI: `retention my-site --period week --cohorts 8`. API: `GET /retention?project=X&period=week&cohorts=8`.
+
+API returns `cohorts: [{ date, users, retained: [...], rates: [...] }]`, `average_rates: [...]`, and `users_analyzed`.
+
+**How to interpret:**
+- Each cohort row = users who first appeared in that period
+- `rates[0]` is always 1.0 (100% — the cohort itself)
+- `rates[1]` = % who came back the next period — this is the critical number
+- Declining rates across offsets is normal; the slope matters more than absolutes
+- `average_rates` is weighted by cohort size — larger cohorts count more
+- Compare recent cohorts vs older ones: improving rates = product is getting stickier
+
+**Options:**
+- `--period <P>` — `day`, `week`, `month` (default: week)
+- `--cohorts <N>` — number of cohort periods, 1-30 (default: 8)
+- `--event <name>` — first-seen event filter (e.g. `signup`). Switches to event-based retention
+- `--returning-event <name>` — what counts as "returned" (defaults to same as `--event`)
+
+**Event-based retention:** Set `--event signup --returning-event purchase` to answer "of users who signed up, what % made a purchase in subsequent weeks?"
+
+**Example output:**
+```
+Cohort W0 (2026-01-27): 142 users → W1: 45% → W2: 39% → W3: 32%
+Cohort W0 (2026-02-03): 128 users → W1: 42% → W2: 36%
+Weighted avg: W1 = 44%, W2 = 37%, W3 = 32%
+Week-1 retention of 44% is strong — nearly half of new users return.
+Slight decline in recent cohorts — investigate onboarding changes.
 ```
 
 ### Weekly summary recipe (3 parallel calls)
