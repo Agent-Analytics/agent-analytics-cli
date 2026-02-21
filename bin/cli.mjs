@@ -23,7 +23,7 @@
  *   npx @agent-analytics/cli update <id>           — Update a project
  *   npx @agent-analytics/cli delete <id>           — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
- *   npx @agent-analytics/cli live [name]          — Real-time live view (pro only)
+ *   npx @agent-analytics/cli live [name]          — Real-time live view
  *   npx @agent-analytics/cli experiments list <project>   — List experiments
  *   npx @agent-analytics/cli experiments create <p> ...  — Create experiment
  *   npx @agent-analytics/cli experiments get <id>        — Get experiment with results
