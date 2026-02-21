@@ -265,6 +265,7 @@ npx @agent-analytics/cli properties my-site             # Discover event names &
 npx @agent-analytics/cli properties-received my-site    # Property keys per event type (sampled)
 npx @agent-analytics/cli query my-site --metrics event_count,unique_users --group-by date  # Flexible query
 npx @agent-analytics/cli funnel my-site --steps "page_view,signup,purchase"  # Funnel drop-off analysis
+npx @agent-analytics/cli funnel my-site --steps "page_view,signup" --breakdown country  # Funnel segmented by country
 npx @agent-analytics/cli retention my-site --period week --cohorts 8        # Cohort retention analysis
 
 # A/B experiments (pro)
@@ -291,6 +292,8 @@ npx @agent-analytics/cli revoke-key                     # Rotate API key
 - `--steps <csv>` — comma-separated event names, 2-8 steps max (`funnel`, required)
 - `--window <N>` — conversion window in hours (`funnel`, default: 168) or live time window in seconds (`live`, default: 60)
 - `--count-by <field>` — `user_id` or `session_id` (`funnel` only)
+- `--breakdown <key>` — segment funnel by a property (e.g. `country`, `variant`) — extracted from step 1 events (`funnel` only)
+- `--breakdown-limit <N>` — max breakdown groups, 1-50 (`funnel`, default: 10)
 - `--interval <N>` — live refresh in seconds (default: 5)
 
 ### The `live` command
@@ -314,6 +317,7 @@ Match the user's question to the right call(s):
 | "Give me a summary of all projects" | `live` or loop: `projects` then `insights` per project | Multi-project overview |
 | "Which CTA converts better?" | `experiments create` + implement + `experiments get <id>` | Full A/B test lifecycle |
 | "Where do users drop off?" | `funnel --steps "page_view,signup,purchase"` | Step-by-step conversion with drop-off rates |
+| "Which variant converts better through the funnel?" | `funnel --steps "page_view,signup" --breakdown variant` | Funnel segmented by experiment variant |
 | "Are users coming back?" | `retention --period week --cohorts 8` | Cohort retention: % returning per period |
 
 For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint. For real-time "who's on the site right now", use `live`.
@@ -429,6 +433,10 @@ API returns `steps: [{ step, event, users, conversion_rate, drop_off_rate, avg_t
 - `--window <hours>` — max time from step 1 to last step (default: 168 = 7 days)
 - `--since <days>` — lookback period, e.g. `30d` (default: 30d)
 - `--count-by <field>` — `user_id` (default) or `session_id`
+- `--breakdown <property>` — segment funnel by a property (e.g. `country`, `variant`). Property is extracted from step 1 events. Returns overall + per-group results.
+- `--breakdown-limit <N>` — max groups returned (default: 10, max: 50). Groups ordered by step 1 users descending.
+
+**Breakdown use case — A/B experiments:** `funnel my-site --steps "page_view,signup" --breakdown variant` shows which experiment variant converts better through the funnel.
 
 **API-only: per-step filters** — each step can have a `filters` array with `{ property, op, value }` (ops: `eq`, `neq`, `contains`). Example: filter step 1 to `path=/pricing` to see conversions from the pricing page specifically.
 

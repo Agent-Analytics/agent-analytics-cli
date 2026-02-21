@@ -368,7 +368,7 @@ const cmdHeatmap = withApi(async (api, project) => {
 });
 
 const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
-  if (!project || !stepsStr) error('Usage: npx @agent-analytics/cli funnel <project-name> --steps "page_view,signup,purchase" [--window 168] [--since 30d] [--count-by user_id]');
+  if (!project || !stepsStr) error('Usage: npx @agent-analytics/cli funnel <project-name> --steps "page_view,signup,purchase" [--window 168] [--since 30d] [--count-by user_id] [--breakdown country] [--breakdown-limit 10]');
 
   const steps = stepsStr.split(',').map(s => ({ event: s.trim() }));
   if (steps.length < 2) error('At least 2 steps required');
@@ -378,6 +378,8 @@ const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
     conversion_window_hours: opts.window ? parseInt(opts.window, 10) : undefined,
     since: opts.since,
     count_by: opts.count_by,
+    breakdown: opts.breakdown || undefined,
+    breakdown_limit: opts.breakdown_limit ? parseInt(opts.breakdown_limit, 10) : undefined,
   });
 
   heading(`Funnel: ${project}`);
@@ -399,6 +401,26 @@ const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
 
   log('');
   log(`  ${BOLD}Overall conversion:${RESET} ${Math.round(data.overall_conversion_rate * 100)}%`);
+
+  // Breakdown groups
+  if (data.breakdowns && data.breakdowns.length > 0) {
+    log('');
+    heading(`Breakdown by ${opts.breakdown} (${data.breakdowns.length} groups)`);
+    log('');
+    for (const bd of data.breakdowns) {
+      const label = bd.value ?? '(none)';
+      const bdMax = Math.max(...bd.steps.map(s => s.users));
+      log(`  ${BOLD}${CYAN}${label}${RESET}  ${DIM}${Math.round(bd.overall_conversion_rate * 100)}% overall${RESET}`);
+      for (const step of bd.steps) {
+        const barLen = bdMax > 0 ? Math.max(1, Math.round((step.users / bdMax) * 25)) : 1;
+        const bar = '█'.repeat(barLen);
+        const rate = step.step === 1 ? '' : `  ${DIM}${Math.round(step.conversion_rate * 100)}%${RESET}`;
+        log(`    ${step.step}. ${step.event.padEnd(18)}  ${GREEN}${bar}${RESET}  ${step.users}${rate}`);
+      }
+      log('');
+    }
+  }
+
   log('');
 });
 
@@ -1005,6 +1027,8 @@ try {
         window: getArg('--window'),
         since: getArg('--since'),
         count_by: getArg('--count-by'),
+        breakdown: getArg('--breakdown'),
+        breakdown_limit: getArg('--breakdown-limit'),
       });
       break;
     case 'retention':
