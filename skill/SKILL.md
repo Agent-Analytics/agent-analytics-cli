@@ -452,6 +452,8 @@ page_view → signup → purchase
 
 CLI: `retention my-site --period week --cohorts 8`. API: `GET /retention?project=X&period=week&cohorts=8`.
 
+By default uses session-based retention — a user is "retained" if they have any return visit (session) in a subsequent period. Pass `--event` to switch to event-based retention.
+
 API returns `cohorts: [{ date, users, retained: [...], rates: [...] }]`, `average_rates: [...]`, and `users_analyzed`.
 
 **How to interpret:**

@@ -425,7 +425,7 @@ const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
 });
 
 const cmdRetention = withApi(async (api, project, opts = {}) => {
-  if (!project) error('Usage: npx @agent-analytics/cli retention <project-name> [--period week] [--cohorts 8] [--event signup] [--returning-event purchase]');
+  if (!project) error('Usage: npx @agent-analytics/cli retention <project-name> [--period week] [--cohorts 8] [--event signup] [--returning-event purchase]\n\nBy default uses session-based retention (any return visit counts). Pass --event to switch to event-based retention.');
 
   const data = await api.getRetention(project, {
     period: opts.period,
