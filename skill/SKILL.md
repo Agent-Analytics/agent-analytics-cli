@@ -150,6 +150,18 @@ npx @agent-analytics/cli experiments complete exp_abc123 --winner new_cta
 npx @agent-analytics/cli experiments delete exp_abc123
 ```
 
+### Forcing variants via URL param
+
+Force a specific variant with `?aa_variant_<experiment_name>=<variant_key>`. Useful for ad landing pages that should always show the matching headline, QA testing, or sharing a specific variant.
+
+```
+https://yoursite.com/pricing/?aa_variant_signup_cta=new_cta&utm_campaign=new-cta-ad
+```
+
+- The variant must exist in the experiment config — invalid values fall through to normal hash assignment
+- Works with both declarative and programmatic experiments
+- Exposure events include `forced: true` so you can filter them in analytics
+
 ### Best practices
 - Name experiments with snake_case: `signup_cta`, `pricing_layout`, `hero_copy`
 - Use 2 variants (A/B) unless you have high traffic — more variants need more data
