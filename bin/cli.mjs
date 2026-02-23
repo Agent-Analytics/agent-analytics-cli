@@ -521,7 +521,22 @@ const cmdSessions = withApi(async (api, project, opts = {}) => {
 });
 
 const cmdQuery = withApi(async (api, project, opts = {}) => {
-  if (!project) error('Usage: npx @agent-analytics/cli query --project <name> [--metrics event_count,unique_users] [--group-by date] [--days N] [--filter JSON] [--limit N]');
+  if (!project) error(`Usage: npx @agent-analytics/cli query <name> [options]
+
+  --metrics   event_count,unique_users,session_count,bounce_rate,avg_duration
+  --group-by  event,date,user_id,session_id,country
+  --filter    JSON array of filters (operators: eq, neq, gt, lt, gte, lte, contains)
+  --from      Start date (ISO, e.g. 2026-01-01)
+  --to        End date (ISO)
+  --days      Shorthand for --from (e.g. --days 30)
+  --order-by  event_count, unique_users, session_count, date, event
+  --order     asc or desc
+  --limit     Max rows (default 100, max 1000)
+
+${BOLD}Examples:${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}`);
 
   const metrics = opts.metrics ? opts.metrics.split(',').map(m => m.trim()) : undefined;
   const group_by = opts.group_by ? opts.group_by.split(',').map(g => g.trim()) : undefined;
@@ -897,7 +912,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}sessions-dist${RESET} <name>   Session duration distribution
   ${CYAN}events${RESET} <name>          Raw event log
   ${CYAN}sessions${RESET} <name>        Individual session records
-  ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters)
+  ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, country)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
 
 ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RESET}
@@ -923,7 +938,7 @@ ${BOLD}KEY OPTIONS${RESET}
   --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
   --property <key>   Property to break down (path, referrer, utm_source, country)
   --event <name>     Filter by event name
-  --filter <json>    Filters for query command (JSON array)
+  --filter <json>    Filters for query (e.g. '[{"field":"country","op":"eq","value":"US"}]')
   --interval <N>     Live view refresh in seconds (default: 5)
   --window <N>       Live view time window in seconds (default: 60)
 
