@@ -187,6 +187,35 @@ npx @agent-analytics/cli events PROJECT_NAME
 
 All commands use `npx @agent-analytics/cli`. Your agent uses the CLI directly — no curl needed.
 
+### Ad-hoc queries — talk to your analytics
+
+The `query` command is the most powerful tool. It answers any analytics question by combining metrics, filters, grouping, and date ranges. **Use this when pre-built commands don't answer the question.**
+
+```bash
+# "How many signups from Germany this week?"
+npx @agent-analytics/cli query my-site \
+  --filter '[{"field":"event","op":"eq","value":"signup"},{"field":"country","op":"eq","value":"DE"}]' \
+  --metrics event_count,unique_users --days 7
+
+# "Which events contain 'click' in the name?"
+npx @agent-analytics/cli query my-site \
+  --filter '[{"field":"event","op":"contains","value":"click"}]' \
+  --group-by event
+
+# "Traffic breakdown by country, top 10"
+npx @agent-analytics/cli query my-site \
+  --group-by country --metrics event_count,unique_users --limit 10
+
+# "Daily unique users for the last 30 days"
+npx @agent-analytics/cli query my-site \
+  --metrics unique_users --group-by date --days 30
+```
+
+**Filter operators:** `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains`
+**Filterable fields:** `event`, `user_id`, `date`, `country`, `session_id`, `timestamp`, and any `properties.*` field
+**Group by:** `event`, `date`, `user_id`, `session_id`, `country`
+**Metrics:** `event_count`, `unique_users`, `session_count`, `bounce_rate`, `avg_duration`
+
 ### CLI reference
 
 ```bash
@@ -211,6 +240,9 @@ npx @agent-analytics/cli sessions my-site               # Individual session rec
 npx @agent-analytics/cli properties my-site             # Discover event names & property keys
 npx @agent-analytics/cli properties-received my-site    # Property keys per event type (sampled)
 npx @agent-analytics/cli query my-site --metrics event_count,unique_users --group-by date  # Flexible query
+npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users  # Events per country
+npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'  # Filter by country
+npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event  # Substring match
 npx @agent-analytics/cli funnel my-site --steps "page_view,signup,purchase"  # Funnel drop-off analysis
 npx @agent-analytics/cli funnel my-site --steps "page_view,signup" --breakdown country  # Funnel segmented by country
 npx @agent-analytics/cli retention my-site --period week --cohorts 8        # Cohort retention analysis
@@ -235,6 +267,8 @@ npx @agent-analytics/cli revoke-key                     # Rotate API key
 - `--event <name>` — filter by event name (`breakdown`) or first-seen event filter (`retention`)
 - `--returning-event <name>` — what counts as "returned" (`retention`, defaults to same as `--event`)
 - `--cohorts <N>` — number of cohort periods, 1-30 (`retention`, default: 8)
+- `--filter <json>` — JSON array of filters for `query` (e.g. `'[{"field":"country","op":"eq","value":"US"}]'`). Operators: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains`
+- `--group-by <fields>` — comma-separated group_by fields: `event`, `date`, `user_id`, `session_id`, `country` (`query`)
 - `--type <T>` — page type: `entry`, `exit`, `both` (`pages` only, default: entry)
 - `--steps <csv>` — comma-separated event names, 2-8 steps max (`funnel`, required)
 - `--window <N>` — conversion window in hours (`funnel`, default: 168) or live time window in seconds (`live`, default: 60)
@@ -266,8 +300,12 @@ Match the user's question to the right call(s):
 | "Where do users drop off?" | `funnel --steps "page_view,signup,purchase"` | Step-by-step conversion with drop-off rates |
 | "Which variant converts better through the funnel?" | `funnel --steps "page_view,signup" --breakdown variant` | Funnel segmented by experiment variant |
 | "Are users coming back?" | `retention --period week --cohorts 8` | Cohort retention: % returning per period |
+| "How many signups from Germany?" | `query --filter '[{"field":"event","op":"eq","value":"signup"},{"field":"country","op":"eq","value":"DE"}]'` | Ad-hoc filter by event + country |
+| "Events per country" | `query --group-by country --metrics event_count,unique_users` | Country breakdown |
+| "Pages with pricing in the URL?" | `query --filter '[{"field":"properties.path","op":"contains","value":"pricing"}]' --group-by event` | Substring match on properties |
+| "How many sessions this week?" | `query --metrics session_count --days 7` | Count distinct sessions |
 
-For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint. For real-time "who's on the site right now", use `live`.
+For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint. For real-time "who's on the site right now", use `live`. For any specific question that the pre-built commands don't directly answer (filtering by country, substring matching, combining multiple filters), use `query`.
 
 ## Analyze, don't just query
 
