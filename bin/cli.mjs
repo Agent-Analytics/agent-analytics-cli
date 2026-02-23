@@ -521,14 +521,24 @@ const cmdSessions = withApi(async (api, project, opts = {}) => {
 });
 
 const cmdQuery = withApi(async (api, project, opts = {}) => {
-  if (!project) error('Usage: npx @agent-analytics/cli query --project <name> [--metrics event_count,unique_users] [--group-by date] [--days N] [--limit N]');
+  if (!project) error('Usage: npx @agent-analytics/cli query --project <name> [--metrics event_count,unique_users] [--group-by date] [--days N] [--filter JSON] [--limit N]');
 
   const metrics = opts.metrics ? opts.metrics.split(',').map(m => m.trim()) : undefined;
   const group_by = opts.group_by ? opts.group_by.split(',').map(g => g.trim()) : undefined;
 
+  let filters;
+  if (opts.filter) {
+    try {
+      filters = JSON.parse(opts.filter);
+    } catch {
+      error('Invalid --filter JSON. Example: --filter \'[{"field":"country","op":"eq","value":"US"}]\'');
+    }
+  }
+
   const data = await api.query(project, {
     metrics,
     group_by,
+    filters,
     date_from: opts.date_from,
     date_to: opts.date_to,
     order_by: opts.order_by,
@@ -913,6 +923,7 @@ ${BOLD}KEY OPTIONS${RESET}
   --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
   --property <key>   Property to break down (path, referrer, utm_source, country)
   --event <name>     Filter by event name
+  --filter <json>    Filters for query command (JSON array)
   --interval <N>     Live view refresh in seconds (default: 5)
   --window <N>       Live view time window in seconds (default: 60)
 
@@ -986,7 +997,8 @@ try {
       await cmdQuery(getArg('--project') || args[1], {
         metrics: getArg('--metrics'),
         group_by: getArg('--group-by'),
-        date_from: getArg('--from') || getArg('--days') ? `${getArg('--days')}d` : undefined,
+        filter: getArg('--filter'),
+        date_from: getArg('--from') || (getArg('--days') ? `${getArg('--days')}d` : undefined),
         date_to: getArg('--to'),
         order_by: getArg('--order-by'),
         order: getArg('--order'),
