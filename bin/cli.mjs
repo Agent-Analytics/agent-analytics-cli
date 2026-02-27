@@ -193,7 +193,7 @@ const cmdStats = withApi(async (api, project, days = 7) => {
     heading('Daily:');
     for (const d of data.timeSeries) {
       const bar = '█'.repeat(Math.min(Math.ceil(d.total_events / 5), 40));
-      log(`  ${d.date}  ${GREEN}${bar}${RESET}  ${d.total_events} events`);
+      log(`  ${d.bucket || d.date}  ${GREEN}${bar}${RESET}  ${d.total_events} events`);
     }
   }
 

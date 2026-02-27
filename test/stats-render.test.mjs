@@ -35,8 +35,8 @@ describe('stats command rendering', () => {
       totals: { total_events: 100, unique_users: 10 },
       events: [{ event: 'page_view', count: 100, unique_users: 10 }],
       timeSeries: [
-        { date: '2026-02-25', total_events: 40, unique_users: 5 },
-        { date: '2026-02-26', total_events: 60, unique_users: 8 },
+        { bucket: '2026-02-25', total_events: 40, unique_users: 5 },
+        { bucket: '2026-02-26', total_events: 60, unique_users: 8 },
       ],
     });
 
