@@ -139,7 +139,7 @@ describe('AgentAnalyticsAPI', () => {
 
     it('getStats → GET /stats with query params', async () => {
       await api.getStats('my-site', 30);
-      assert.equal(lastUrl, 'https://api.test/stats?project=my-site&days=30');
+      assert.equal(lastUrl, 'https://api.test/stats?project=my-site&since=30d');
     });
 
     it('getStats encodes project name', async () => {
@@ -149,17 +149,17 @@ describe('AgentAnalyticsAPI', () => {
 
     it('getEvents → GET /events with defaults', async () => {
       await api.getEvents('my-site');
-      assert.equal(lastUrl, 'https://api.test/events?project=my-site&days=7&limit=100');
+      assert.equal(lastUrl, 'https://api.test/events?project=my-site&since=7d&limit=100');
     });
 
     it('getEvents with event filter', async () => {
       await api.getEvents('my-site', { event: 'page_view', days: 14, limit: 50 });
-      assert.equal(lastUrl, 'https://api.test/events?project=my-site&days=14&limit=50&event=page_view');
+      assert.equal(lastUrl, 'https://api.test/events?project=my-site&since=14d&limit=50&event=page_view');
     });
 
     it('getProperties → GET /properties', async () => {
       await api.getProperties('my-site', 60);
-      assert.equal(lastUrl, 'https://api.test/properties?project=my-site&days=60');
+      assert.equal(lastUrl, 'https://api.test/properties?project=my-site&since=60d');
     });
   });
 

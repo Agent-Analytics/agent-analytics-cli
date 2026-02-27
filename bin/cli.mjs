@@ -188,10 +188,10 @@ const cmdStats = withApi(async (api, project, days = 7) => {
     }
   }
 
-  if (data.daily && data.daily.length > 0) {
+  if (data.timeSeries && data.timeSeries.length > 0) {
     log('');
     heading('Daily:');
-    for (const d of data.daily) {
+    for (const d of data.timeSeries) {
       const bar = '█'.repeat(Math.min(Math.ceil(d.total_events / 5), 40));
       log(`  ${d.date}  ${GREEN}${bar}${RESET}  ${d.total_events} events`);
     }
