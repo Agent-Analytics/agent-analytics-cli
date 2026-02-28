@@ -243,6 +243,31 @@ npx @agent-analytics/cli query my-site \
   --group-by properties.source --metrics event_count
 ```
 
+## Step 2d: Set global properties
+
+Use `aa.set()` to attach properties to ALL subsequent events without repeating them in every `track()` call:
+
+```js
+// After login, tag all future events with the user's plan
+window.aa?.set({ plan: 'pro', team: 'acme' });
+
+// These events now include plan='pro' and team='acme' automatically
+window.aa?.track('feature_used', { feature: 'export' });
+window.aa?.track('cta_click', { id: 'upgrade' });
+```
+
+**How it works:**
+- Merge order: auto-collected < UTM < global (set) < event-specific. Event-specific properties always win.
+- Multiple `set()` calls merge — `set({a:1}); set({b:2})` results in `{a:1, b:2}`
+- Remove a key: `aa.set({ plan: null })`
+- In-memory only — does not persist across page reloads (use `identify()` for cross-session user identity)
+- Zero overhead when not used
+
+**When to use:**
+- After login/signup: `aa.set({ plan: user.plan, role: user.role })`
+- Feature flags: `aa.set({ feature_flag_x: 'variant_b' })`
+- Any context that applies to all events for the rest of the session
+
 ## Step 3: Test immediately
 
 After adding tracking, verify it works:
