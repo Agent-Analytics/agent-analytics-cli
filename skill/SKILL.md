@@ -206,6 +206,43 @@ https://yoursite.com/pricing/?aa_variant_signup_cta=new_cta&utm_campaign=new-cta
 - Let experiments run until `sufficient_data: true` before picking a winner
 - Complete the experiment when done: `experiments complete <id> --winner new_cta`
 
+## Step 2c: Track JS errors
+
+Add `data-track-errors="true"` to the tracking snippet to automatically capture JavaScript errors:
+
+```html
+<script defer src="https://api.agentanalytics.sh/tracker.js"
+  data-project="my-site" data-token="aat_..."
+  data-track-errors="true"></script>
+```
+
+**What it tracks:**
+- Uncaught exceptions (`window.addEventListener('error')`)
+- Unhandled promise rejections (`window.addEventListener('unhandledrejection')`)
+- Each error becomes a `$error` event with `{ message, source, line, col }`
+
+**Safety features:**
+- Max 5 errors per page view (prevents runaway logging)
+- Deduplicates by message+source+line (same error on same line only tracked once)
+- Resets on SPA navigation
+- Does not interfere with other error handlers (additive, not overwriting)
+- No stack traces (keeps payloads small)
+
+**Querying error data:**
+
+```bash
+# Recent errors
+npx @agent-analytics/cli events my-site --event '$error' --days 7
+
+# Error breakdown by message
+npx @agent-analytics/cli breakdown my-site --property message --event '$error'
+
+# Errors per source file
+npx @agent-analytics/cli query my-site \
+  --filter '[{"field":"event","op":"eq","value":"$error"}]' \
+  --group-by properties.source --metrics event_count
+```
+
 ## Step 3: Test immediately
 
 After adding tracking, verify it works:
@@ -342,6 +379,7 @@ Match the user's question to the right call(s):
 | "Events per country" | `query --group-by country --metrics event_count,unique_users` | Country breakdown |
 | "Pages with pricing in the URL?" | `query --filter '[{"field":"properties.path","op":"contains","value":"pricing"}]' --group-by event` | Substring match on properties |
 | "How many sessions this week?" | `query --metrics session_count --days 7` | Count distinct sessions |
+| "Are there JS errors?" | `events --event '$error'` or `breakdown --property message --event '$error'` | Error log or grouped by message |
 
 For any "how is X doing" question, **always call `insights` first** — it's the single most useful endpoint. For real-time "who's on the site right now", use `live`. For any specific question that the pre-built commands don't directly answer (filtering by country, substring matching, combining multiple filters), use `query`.
 
@@ -536,7 +574,7 @@ Proactively flag — don't wait to be asked:
 - **Spike**: any metric >2× its previous period → "unusual surge, check referrers"
 - **Drop**: any metric <50% of previous → "significant decline, worth investigating"
 - **Dead project**: zero `page_view` events → "⚠ no traffic detected"
-- **Errors**: any `error` events in the window → surface the `message` property
+- **Errors**: any `error` or `$error` events in the window → surface the `message` property
 
 ### Visualizing results
 
