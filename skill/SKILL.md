@@ -69,6 +69,15 @@ Use `onclick` handlers on the elements that matter:
 
 The `?.` operator ensures no error if the tracker hasn't loaded yet.
 
+**Declarative alternative (no JavaScript needed):**
+
+```html
+<button data-aa-event="cta_click" data-aa-event-id="hero_get_started">Get Started</button>
+<a href="/pricing" data-aa-event="cta_click" data-aa-event-id="nav_pricing">Pricing</a>
+```
+
+Add `data-aa-event` to any element and the tracker fires the event on click. Properties are added with `data-aa-event-*` attributes. Use this for simple click tracking on static elements. Use `window.aa?.track()` when the event isn't a click or when properties need to be computed dynamically.
+
 ### Standard events for 80% of SaaS sites
 
 Pick the ones that apply. Most sites need 2-4:
