@@ -112,9 +112,9 @@ Only buttons that indicate conversion intent:
 - Name IDs as `section_action`: `hero_signup`, `pricing_pro`, `nav_dashboard`
 - Don't encode data the page_view already captures (path, referrer, browser)
 
-## Step 2a: Measure engagement with heartbeat
+## Step 2a: Measure time-on-page
 
-Add `data-heartbeat="15"` to the tracking snippet to measure actual time-on-page:
+Add `data-heartbeat="15"` to the tracking snippet to get accurate time-on-page:
 
 ```html
 <script defer src="https://api.agentanalytics.sh/tracker.js"
@@ -122,30 +122,23 @@ Add `data-heartbeat="15"` to the tracking snippet to measure actual time-on-page
   data-heartbeat="15"></script>
 ```
 
-This sends `$heartbeat` events every 15 seconds while the tab is actively visible. When the user switches tabs or minimizes, the timer pauses automatically.
-
-**Why it matters:** Without heartbeat, time-on-page is just the gap between two page views. If someone reads a 10-minute article and closes the tab, the recorded time is 0 seconds. Heartbeat fixes this by measuring actual engaged time.
+**Why it matters:** Without this, time-on-page is just the gap between two page views. If someone reads a 10-minute article and closes the tab, the recorded time is 0 seconds. This fixes it by measuring actual engaged time.
 
 **How it works:**
-- `$heartbeat` events fire with `{ count: 1 }`, `{ count: 2 }`, etc.
-- Time on page = `count × interval` (e.g. count 20 at 15s interval = 5 minutes)
-- Each heartbeat includes the current `path`, so the backend knows which page the user was on
+- The tracker silently counts seconds while the tab is visible (no events sent during)
+- When the user leaves the page (tab hidden, closes tab, or SPA navigation), the `time_on_page` property is added to the original `page_view` event — zero extra events
 - The timer pauses when the tab is hidden and resumes when visible
-- Minimum interval is 5 seconds (values below 5 are clamped)
+- Minimum interval is 15 seconds (values below 15 are clamped)
+- Works with SPA navigation — each page gets its own time_on_page
 
-**Querying heartbeat data:**
+**Querying time-on-page data:**
 
 ```bash
-# See raw heartbeat events
-npx @agent-analytics/cli events my-site --event '$heartbeat' --days 7
-
-# Average engagement per page (count × interval = seconds on page)
+# Pages with time_on_page data
 npx @agent-analytics/cli query my-site \
-  --filter '[{"field":"event","op":"eq","value":"$heartbeat"}]' \
+  --filter '[{"field":"event","op":"eq","value":"page_view"},{"field":"properties.time_on_page","op":"gt","value":"0"}]' \
   --group-by properties.path --metrics event_count,unique_users
 ```
-
-**Trade-off:** Each heartbeat = 1 event. A 15s heartbeat on a 5-minute session = 20 extra events. On free tier (1,000 lifetime events), use 30s intervals. On pro tier, 15s is fine.
 
 ## Step 2b: Run A/B experiments (Pro)
 
@@ -337,8 +330,8 @@ Match the user's question to the right call(s):
 | "What are my top pages?" | `breakdown --property path --event page_view` | Ranked page list with unique users |
 | "Where's my traffic coming from?" | `breakdown --property referrer --event page_view` | Referrer sources |
 | "Which landing page is best?" | `pages --type entry` | Bounce rate + session depth per page |
-| "Are people actually engaging?" | `sessions-dist` + heartbeat query | Bounce vs engaged split; heartbeat shows actual time-on-page |
-| "How long do people spend on X page?" | `query --filter '$heartbeat' --group-by properties.path` | Count × heartbeat interval = seconds spent |
+| "Are people actually engaging?" | `sessions-dist` | Bounce vs engaged split; time_on_page on page_views shows real engagement |
+| "How long do people spend on X page?" | `query --filter 'page_view + time_on_page > 0' --group-by properties.path` | time_on_page property (seconds) on page_view events |
 | "When should I deploy/post?" | `heatmap` | Find low-traffic windows or peak hours |
 | "Give me a summary of all projects" | `live` or loop: `projects` then `insights` per project | Multi-project overview |
 | "Which CTA converts better?" | `experiments create` + implement + `experiments get <id>` | Full A/B test lifecycle |
