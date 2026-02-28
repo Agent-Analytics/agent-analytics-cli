@@ -991,6 +991,7 @@ try {
       await cmdEvents(args[1], {
         days: parseInt(getArg('--days') || '7', 10),
         limit: parseInt(getArg('--limit') || '100', 10),
+        event: getArg('--event'),
       });
       break;
     case 'properties':
