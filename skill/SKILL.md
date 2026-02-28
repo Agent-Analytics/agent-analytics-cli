@@ -112,6 +112,41 @@ Only buttons that indicate conversion intent:
 - Name IDs as `section_action`: `hero_signup`, `pricing_pro`, `nav_dashboard`
 - Don't encode data the page_view already captures (path, referrer, browser)
 
+## Step 2a: Measure engagement with heartbeat
+
+Add `data-heartbeat="15"` to the tracking snippet to measure actual time-on-page:
+
+```html
+<script defer src="https://api.agentanalytics.sh/tracker.js"
+  data-project="my-site" data-token="aat_..."
+  data-heartbeat="15"></script>
+```
+
+This sends `$heartbeat` events every 15 seconds while the tab is actively visible. When the user switches tabs or minimizes, the timer pauses automatically.
+
+**Why it matters:** Without heartbeat, time-on-page is just the gap between two page views. If someone reads a 10-minute article and closes the tab, the recorded time is 0 seconds. Heartbeat fixes this by measuring actual engaged time.
+
+**How it works:**
+- `$heartbeat` events fire with `{ count: 1 }`, `{ count: 2 }`, etc.
+- Time on page = `count × interval` (e.g. count 20 at 15s interval = 5 minutes)
+- Each heartbeat includes the current `path`, so the backend knows which page the user was on
+- The timer pauses when the tab is hidden and resumes when visible
+- Minimum interval is 5 seconds (values below 5 are clamped)
+
+**Querying heartbeat data:**
+
+```bash
+# See raw heartbeat events
+npx @agent-analytics/cli events my-site --event '$heartbeat' --days 7
+
+# Average engagement per page (count × interval = seconds on page)
+npx @agent-analytics/cli query my-site \
+  --filter '[{"field":"event","op":"eq","value":"$heartbeat"}]' \
+  --group-by properties.path --metrics event_count,unique_users
+```
+
+**Trade-off:** Each heartbeat = 1 event. A 15s heartbeat on a 5-minute session = 20 extra events. On free tier (1,000 lifetime events), use 30s intervals. On pro tier, 15s is fine.
+
 ## Step 2b: Run A/B experiments (Pro)
 
 Experiments let you test which variant of a page element converts better. The full lifecycle is API-driven — no dashboard UI needed.
@@ -302,7 +337,8 @@ Match the user's question to the right call(s):
 | "What are my top pages?" | `breakdown --property path --event page_view` | Ranked page list with unique users |
 | "Where's my traffic coming from?" | `breakdown --property referrer --event page_view` | Referrer sources |
 | "Which landing page is best?" | `pages --type entry` | Bounce rate + session depth per page |
-| "Are people actually engaging?" | `sessions-dist` | Bounce vs engaged split |
+| "Are people actually engaging?" | `sessions-dist` + heartbeat query | Bounce vs engaged split; heartbeat shows actual time-on-page |
+| "How long do people spend on X page?" | `query --filter '$heartbeat' --group-by properties.path` | Count × heartbeat interval = seconds spent |
 | "When should I deploy/post?" | `heatmap` | Find low-traffic windows or peak hours |
 | "Give me a summary of all projects" | `live` or loop: `projects` then `insights` per project | Multi-project overview |
 | "Which CTA converts better?" | `experiments create` + implement + `experiments get <id>` | Full A/B test lifecycle |
