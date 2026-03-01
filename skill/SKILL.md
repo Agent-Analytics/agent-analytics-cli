@@ -268,6 +268,41 @@ window.aa?.track('cta_click', { id: 'upgrade' });
 - Feature flags: `aa.set({ feature_flag_x: 'variant_b' })`
 - Any context that applies to all events for the rest of the session
 
+## Step 2e: Consent management (GDPR/CCPA)
+
+For sites that require user consent before tracking, use the consent management API:
+
+```html
+<!-- Add data-require-consent to the script tag -->
+<script defer data-project="mysite" data-token="aat_..." data-require-consent="true"
+  src="https://api.agentanalytics.sh/tracker.js"></script>
+```
+
+```js
+// Events buffer in-memory until consent is granted — nothing is sent
+// When the user accepts cookies/tracking:
+window.aa?.grantConsent();   // flushes buffer + persists to localStorage
+
+// If the user declines or revokes:
+window.aa?.revokeConsent();  // discards buffer + blocks future sends
+```
+
+**How it works:**
+- `data-require-consent="true"` or `aa.requireConsent()` → events queue in-memory but never send
+- `aa.grantConsent()` → flushes buffered events, saves `aa_consent=granted` in localStorage, normal tracking resumes
+- `aa.revokeConsent()` → clears buffer, removes localStorage consent, blocks sends
+- On next page load, prior consent auto-detected from localStorage — no re-consent needed
+- Pre-consent events are preserved (not discarded) so nothing is lost
+
+**Programmatic alternative** (no script attribute needed):
+```js
+// Call before any events are tracked
+window.aa?.requireConsent();
+
+// Later, when user consents
+window.aa?.grantConsent();
+```
+
 ## Step 3: Test immediately
 
 After adding tracking, verify it works:
