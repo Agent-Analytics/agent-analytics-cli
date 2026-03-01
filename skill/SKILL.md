@@ -303,6 +303,38 @@ window.aa?.requireConsent();
 window.aa?.grantConsent();
 ```
 
+## Step 2f: Performance timing
+
+Collect page load performance metrics automatically:
+
+```html
+<script defer data-project="mysite" data-token="aat_..."
+  data-track-performance="true"
+  src="https://api.agentanalytics.sh/tracker.js"></script>
+```
+
+After `window.load`, the tracker reads the Navigation Timing API and merges these properties into the `page_view` event (no extra events stored):
+
+| Property | What it measures |
+|----------|------------------|
+| `perf_dns` | DNS lookup (ms) |
+| `perf_tcp` | TCP handshake (ms) |
+| `perf_ttfb` | Time to first byte (ms) |
+| `perf_dom_interactive` | DOM ready for interaction (ms) |
+| `perf_dom_complete` | DOM fully loaded (ms) |
+| `perf_load` | Full page load (ms) |
+
+Query performance data:
+```bash
+npx @agent-analytics/cli events mysite --event page_view --days 7
+# Look for perf_dns, perf_ttfb, perf_load in event properties
+
+npx @agent-analytics/cli breakdown mysite --property perf_ttfb --event page_view
+# See TTFB distribution across page views
+```
+
+Only fires once per page load — SPA navigations via pushState don't create new Navigation Timing entries.
+
 ## Step 3: Test immediately
 
 After adding tracking, verify it works:
