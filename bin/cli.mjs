@@ -23,7 +23,7 @@
  *   npx @agent-analytics/cli init <name>          — Alias for create
  *   npx @agent-analytics/cli project <id>          — Get single project details
  *   npx @agent-analytics/cli update <id>           — Update a project
- *   npx @agent-analytics/cli delete <id>           — Delete a project
+ *   npx @agent-analytics/cli delete <name-or-id>    — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
  *   npx @agent-analytics/cli live [name]          — Real-time live view
  *   npx @agent-analytics/cli experiments list <project>   — List experiments
@@ -606,10 +606,23 @@ const cmdUpdate = withApi(async (api, id, opts = {}) => {
   if (opts.allowed_origins) log(`  ${DIM}origins:${RESET} ${data.allowed_origins}`);
 });
 
-const cmdDelete = withApi(async (api, id) => {
-  if (!id) error('Usage: npx @agent-analytics/cli delete <project-id>');
+const cmdDelete = withApi(async (api, nameOrId) => {
+  if (!nameOrId) error('Usage: npx @agent-analytics/cli delete <project-name-or-id>');
+
+  let id = nameOrId;
+  let name = nameOrId;
+
+  // If it doesn't look like a UUID, resolve name → id
+  if (!nameOrId.includes('-') || nameOrId.length < 36) {
+    const { projects } = await api.listProjects();
+    const match = projects.find(p => p.name === nameOrId);
+    if (!match) error(`Project "${nameOrId}" not found. Run: npx @agent-analytics/cli projects`);
+    id = match.id;
+    name = match.name;
+  }
+
   await api.deleteProject(id);
-  success(`Project ${id} deleted`);
+  success(`Project ${name} deleted`);
 });
 
 function cmdDeleteAccount() {
@@ -929,7 +942,7 @@ ${BOLD}ACCOUNT${RESET}
   ${CYAN}revoke-key${RESET}             Revoke and regenerate API key
   ${CYAN}project${RESET} <id>           Get single project details
   ${CYAN}update${RESET} <id>            Update a project (--name, --origins)
-  ${CYAN}delete${RESET} <id>            Delete a project
+  ${CYAN}delete${RESET} <name>          Delete a project
 
 ${BOLD}KEY OPTIONS${RESET}
   --days <N>         Lookback window in days (default: 7)
