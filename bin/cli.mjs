@@ -651,7 +651,7 @@ const cmdWhoami = withApi(async (api) => {
   log(`  ${BOLD}Email:${RESET}    ${data.email}`);
   log(`  ${BOLD}GitHub:${RESET}   ${data.github_login || 'N/A'}`);
   log(`  ${BOLD}Tier:${RESET}     ${data.tier}`);
-  log(`  ${BOLD}Projects:${RESET} ${data.projects_count}/${data.projects_limit}`);
+  log(`  ${BOLD}Projects:${RESET} ${data.projects_count}`);
   if (data.tier === 'pro' && data.monthly_spend_cap_dollars != null) {
     log(`  ${BOLD}Spend cap:${RESET} $${data.monthly_spend_cap_dollars.toFixed(2)}/month`);
   }
