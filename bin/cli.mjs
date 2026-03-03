@@ -132,6 +132,7 @@ const cmdCreate = withApi(async (api, name, domain) => {
 
   heading('1. Add this snippet to your site:');
   log(`${CYAN}${data.snippet}${RESET}\n`);
+  if (data.snippet_note) log(`  ${DIM}${data.snippet_note}${RESET}\n`);
 
   heading('2. Your agent queries stats with:');
   log(`${CYAN}${data.api_example}${RESET}\n`);
