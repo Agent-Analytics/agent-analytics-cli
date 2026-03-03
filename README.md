@@ -51,6 +51,9 @@ whoami                           Show current account & tier
 revoke-key                       Revoke and regenerate API key
 ```
 
+Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
+`page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
+
 ## Works With
 
 Claude Code, OpenClaw, Cursor, Codex — any AI agent that can run `npx`. Or add the MCP server for rich charts in Claude Desktop:
