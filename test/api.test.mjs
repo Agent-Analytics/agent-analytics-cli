@@ -161,6 +161,12 @@ describe('AgentAnalyticsAPI', () => {
       await api.getProperties('my-site', 60);
       assert.equal(lastUrl, 'https://api.test/properties?project=my-site&since=60d');
     });
+
+    it('getAllSitesOverview → GET /account/all-sites', async () => {
+      await api.getAllSitesOverview({ period: '30d', limit: 5 });
+      assert.equal(lastUrl, 'https://api.test/account/all-sites?period=30d&limit=5');
+      assert.equal(lastMethod, 'GET');
+    });
   });
 
 });

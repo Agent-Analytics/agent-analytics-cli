@@ -28,6 +28,7 @@ create <name> --domain <url>     Create a project and get your tracking snippet
 projects                         List all your projects
 
 # Analytics
+all-sites                        Historical summary across all projects
 stats <name>                     Overview: events, users, daily trends
 live [name]                      Real-time terminal dashboard across all projects
 insights <name>                  Period-over-period comparison with trends

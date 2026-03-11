@@ -7,6 +7,7 @@
  *   npx @agent-analytics/cli login --token <key>  — Save your API key
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
  *   npx @agent-analytics/cli projects             — List your projects
+ *   npx @agent-analytics/cli all-sites            — Historical summary across all projects
  *   npx @agent-analytics/cli stats <name>         — Get stats for a project
  *   npx @agent-analytics/cli events <name>        — Get recent events
  *   npx @agent-analytics/cli query <name>         — Flexible analytics query
@@ -164,6 +165,57 @@ const cmdProjects = withApi(async (api) => {
     log(`  ${DIM}origins:${RESET} ${p.allowed_origins || '*'}`);
     log('');
   }
+});
+
+const cmdAllSites = withApi(async (api, opts = {}) => {
+  const period = opts.period || '7d';
+  const limit = parseInt(opts.limit || '10', 10);
+  const data = await api.getAllSitesOverview({ period, limit });
+
+  heading(`All Sites (${data.period?.label || period} vs previous)`);
+  log('');
+
+  const totalEvents = data.summary?.total_events || { current: 0, previous: 0, change: 0, change_pct: 0 };
+  const changeLabel = totalEvents.change_pct === null
+    ? `${GREEN}new${RESET}`
+    : `${totalEvents.change_pct > 0 ? '+' : ''}${totalEvents.change_pct}%`;
+  const changeArrow = totalEvents.change > 0 ? `${GREEN}↑${RESET}`
+    : totalEvents.change < 0 ? `${RED}↓${RESET}`
+    : `${DIM}—${RESET}`;
+
+  log(`  ${BOLD}Total events:${RESET}   ${totalEvents.current} ${changeArrow} ${changeLabel}${RESET}  ${DIM}was ${totalEvents.previous}${RESET}`);
+  log(`  ${BOLD}Active projects:${RESET} ${data.summary?.active_projects || 0} of ${data.summary?.total_projects || 0}`);
+  if (data.period) {
+    log(`  ${DIM}${data.period.from} → ${data.period.to}${RESET}`);
+  }
+
+  if (data.time_series && data.time_series.length > 0) {
+    log('');
+    heading('Daily:');
+    const maxEvents = Math.max(...data.time_series.map((row) => row.events || 0), 0);
+    for (const row of data.time_series) {
+      const barLen = maxEvents > 0 ? Math.min(Math.max(Math.ceil((row.events / maxEvents) * 24), row.events > 0 ? 1 : 0), 24) : 0;
+      const bar = '█'.repeat(barLen);
+      log(`  ${row.date}  ${GREEN}${bar}${RESET}  ${row.events} events`);
+    }
+  }
+
+  log('');
+  heading('Top Projects:');
+  if (!data.projects || data.projects.length === 0) {
+    log('  No active projects in this period.');
+  } else {
+    for (const project of data.projects) {
+      const share = Number.isFinite(project.share_pct) ? `${project.share_pct}%` : '0%';
+      const lastActive = project.last_active_date ? `  ${DIM}last active ${project.last_active_date}${RESET}` : '';
+      log(`  ${BOLD}${project.name}${RESET}  ${project.events} events  ${DIM}${share}${RESET}${lastActive}`);
+    }
+    if (data.remaining_projects > 0) {
+      log(`  ${DIM}+${data.remaining_projects} more active project${data.remaining_projects === 1 ? '' : 's'}${RESET}`);
+    }
+  }
+
+  log('');
 });
 
 const cmdStats = withApi(async (api, project, days = 7) => {
@@ -915,6 +967,7 @@ ${BOLD}SETUP${RESET}
   ${CYAN}projects${RESET}               List all your projects
 
 ${BOLD}ANALYTICS${RESET}
+  ${CYAN}all-sites${RESET}              Historical summary across all projects
   ${CYAN}stats${RESET} <name>           Overview: events, users, daily trends
   ${CYAN}live${RESET} [name]            Real-time terminal dashboard across all projects
   ${CYAN}insights${RESET} <name>        Period-over-period comparison with trends
@@ -997,6 +1050,12 @@ try {
     case 'projects':
     case 'list':
       await cmdProjects();
+      break;
+    case 'all-sites':
+      await cmdAllSites({
+        period: getArg('--period') || '7d',
+        limit: getArg('--limit') || '10',
+      });
       break;
     case 'stats':
       await cmdStats(args[1], parseInt(getArg('--days') || '7', 10));
