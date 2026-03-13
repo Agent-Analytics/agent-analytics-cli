@@ -8,6 +8,7 @@
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
  *   npx @agent-analytics/cli projects             — List your projects
  *   npx @agent-analytics/cli all-sites            — Historical summary across all projects
+ *   npx @agent-analytics/cli bot-traffic <name>   — Automated traffic filtered from tracking
  *   npx @agent-analytics/cli stats <name>         — Get stats for a project
  *   npx @agent-analytics/cli events <name>        — Get recent events
  *   npx @agent-analytics/cli query <name>         — Flexible analytics query
@@ -212,6 +213,59 @@ const cmdAllSites = withApi(async (api, opts = {}) => {
     }
     if (data.remaining_projects > 0) {
       log(`  ${DIM}+${data.remaining_projects} more active project${data.remaining_projects === 1 ? '' : 's'}${RESET}`);
+    }
+  }
+
+  log('');
+});
+
+const cmdBotTraffic = withApi(async (api, target, opts = {}) => {
+  const period = opts.period || '7d';
+  const limit = parseInt(opts.limit || '10', 10);
+
+  if (!target) error('Usage: npx @agent-analytics/cli bot-traffic <project-name> [--period 7d] [--limit 10]\n       npx @agent-analytics/cli bot-traffic --all [--period 7d] [--limit 10]');
+
+  const data = target === '--all'
+    ? await api.getAllSitesBotTraffic({ period, limit })
+    : await api.getBotTraffic(target, { period, limit });
+
+  if (target === '--all') {
+    heading(`All Sites Bot Traffic (${data.period?.label || period})`);
+    log('');
+    log(`  ${BOLD}Automated requests:${RESET} ${data.summary?.automated_requests?.current || 0}`);
+    log(`  ${BOLD}Dropped events:${RESET}    ${data.summary?.dropped_events?.current || 0}`);
+    log(`  ${BOLD}Projects:${RESET}          ${data.summary?.active_projects || 0} active / ${data.summary?.total_projects || 0} total`);
+
+    if (data.projects?.length) {
+      log('');
+      heading('Top Projects:');
+      for (const project of data.projects) {
+        log(`  ${BOLD}${project.name}${RESET}  ${project.requests} requests  ${DIM}${project.share_pct}% share${RESET}`);
+      }
+    }
+
+    log('');
+    return;
+  }
+
+  heading(`Bot Traffic: ${target}`);
+  log('');
+  log(`  ${BOLD}Automated requests:${RESET} ${data.summary?.automated_requests?.current || 0}`);
+  log(`  ${BOLD}Dropped events:${RESET}    ${data.summary?.dropped_events?.current || 0}`);
+
+  if (data.categories?.length) {
+    log('');
+    heading('Categories:');
+    for (const category of data.categories) {
+      log(`  ${category.category}  ${category.requests} requests  ${DIM}${category.share_pct}% share${RESET}`);
+    }
+  }
+
+  if (data.actors?.length) {
+    log('');
+    heading('Top Actors:');
+    for (const actor of data.actors) {
+      log(`  ${BOLD}${actor.actor}${RESET}  ${actor.requests} requests  ${DIM}${actor.category}${RESET}`);
     }
   }
 
@@ -968,6 +1022,7 @@ ${BOLD}SETUP${RESET}
 
 ${BOLD}ANALYTICS${RESET}
   ${CYAN}all-sites${RESET}              Historical summary across all projects
+  ${CYAN}bot-traffic${RESET} <name>     Filtered automated traffic by project or --all
   ${CYAN}stats${RESET} <name>           Overview: events, users, daily trends
   ${CYAN}live${RESET} [name]            Real-time terminal dashboard across all projects
   ${CYAN}insights${RESET} <name>        Period-over-period comparison with trends
@@ -1057,6 +1112,14 @@ try {
         limit: getArg('--limit') || '10',
       });
       break;
+    case 'bot-traffic': {
+      const botTrafficTarget = args[1] || (args.includes('--all') ? '--all' : null);
+      await cmdBotTraffic(botTrafficTarget, {
+        period: getArg('--period') || '7d',
+        limit: getArg('--limit') || '10',
+      });
+      break;
+    }
     case 'stats':
       await cmdStats(args[1], parseInt(getArg('--days') || '7', 10));
       break;

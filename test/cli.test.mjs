@@ -29,6 +29,7 @@ describe('CLI', () => {
       assert.ok(stdout.includes('login'));
       assert.ok(stdout.includes('stats'));
       assert.ok(stdout.includes('all-sites'));
+      assert.ok(stdout.includes('bot-traffic'));
     });
 
     it('shows help with help command', async () => {

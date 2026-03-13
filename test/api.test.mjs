@@ -74,6 +74,20 @@ describe('AgentAnalyticsAPI', () => {
       );
     });
 
+    it('prefers human-readable message over error code', async () => {
+      globalThis.fetch = async () => ({
+        ok: false,
+        status: 403,
+        json: async () => ({ error: 'PRO_REQUIRED', message: 'experiments require pro tier' }),
+      });
+
+      const api = new AgentAnalyticsAPI('aak_free', 'https://test.example.com');
+      await assert.rejects(
+        () => api.request('POST', '/experiments'),
+        { message: 'experiments require pro tier' }
+      );
+    });
+
     it('throws with HTTP status when no error message', async () => {
       globalThis.fetch = async () => ({
         ok: false,
@@ -165,6 +179,18 @@ describe('AgentAnalyticsAPI', () => {
     it('getAllSitesOverview → GET /account/all-sites', async () => {
       await api.getAllSitesOverview({ period: '30d', limit: 5 });
       assert.equal(lastUrl, 'https://api.test/account/all-sites?period=30d&limit=5');
+      assert.equal(lastMethod, 'GET');
+    });
+
+    it('getBotTraffic → GET /bot-traffic', async () => {
+      await api.getBotTraffic('my-site', { period: '14d', limit: 3 });
+      assert.equal(lastUrl, 'https://api.test/bot-traffic?project=my-site&period=14d&limit=3');
+      assert.equal(lastMethod, 'GET');
+    });
+
+    it('getAllSitesBotTraffic → GET /account/bot-traffic', async () => {
+      await api.getAllSitesBotTraffic({ period: '30d', limit: 8 });
+      assert.equal(lastUrl, 'https://api.test/account/bot-traffic?period=30d&limit=8');
       assert.equal(lastMethod, 'GET');
     });
   });
