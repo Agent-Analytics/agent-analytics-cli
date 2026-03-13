@@ -29,12 +29,15 @@ projects                         List all your projects
 
 # Analytics
 all-sites                        Historical summary across all projects
+bot-traffic <name>               Filtered automated traffic by project or --all
 stats <name>                     Overview: events, users, daily trends
 live [name]                      Real-time terminal dashboard across all projects
 insights <name>                  Period-over-period comparison with trends
 breakdown <name> --property path Top pages, referrers, UTM sources, countries
 pages <name>                     Entry/exit page performance & bounce rates
 heatmap <name>                   Peak hours & busiest days
+funnel <name>                    Funnel analysis: where users drop off
+retention <name>                 Cohort retention: % of users who return
 sessions-dist <name>             Session duration distribution
 events <name>                    Raw event log
 sessions <name>                  Individual session records
