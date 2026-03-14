@@ -5,6 +5,7 @@
  * 
  * Usage:
  *   npx @agent-analytics/cli login --token <key>  — Save your API key
+ *   npx @agent-analytics/cli logout               — Clear your saved API key
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
  *   npx @agent-analytics/cli projects             — List your projects
  *   npx @agent-analytics/cli all-sites            — Historical summary across all projects
@@ -40,7 +41,15 @@
  */
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
-import { getApiKey, setApiKey, getBaseUrl, getConfig, saveConfig } from '../lib/config.mjs';
+import {
+  clearStoredAuth,
+  getApiKey,
+  getBaseUrl,
+  getConfig,
+  getConfigFile,
+  saveConfig,
+  setApiKey,
+} from '../lib/config.mjs';
 
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -110,13 +119,31 @@ async function cmdLogin(token) {
     saveConfig(config);
 
     success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET} (${account.tier})`);
-    log(`${DIM}API key saved to ~/.config/agent-analytics/config.json${RESET}`);
+    log(`${DIM}API key saved to ${getConfigFile()}${RESET}`);
     log('');
     log(`Next steps:`);
     log(`  ${CYAN}npx @agent-analytics/cli create my-site --domain https://mysite.com${RESET}`);
     log(`  ${CYAN}npx @agent-analytics/cli live${RESET}  ${DIM}— real-time view across all projects${RESET}`);
   } catch (err) {
     error(`Invalid API key: ${err.message}`);
+  }
+}
+
+function cmdLogout() {
+  const cleared = clearStoredAuth();
+
+  if (cleared) {
+    success('Logged out locally');
+  } else {
+    success('Already logged out locally');
+  }
+
+  log(`${DIM}Cleared saved auth from ${getConfigFile()}${RESET}`);
+
+  if (process.env.AGENT_ANALYTICS_API_KEY) {
+    log('');
+    warn('AGENT_ANALYTICS_API_KEY is still set in this shell, so the CLI will keep authenticating.');
+    log(`  ${CYAN}unset AGENT_ANALYTICS_API_KEY${RESET}`);
   }
 }
 
@@ -748,7 +775,7 @@ const cmdRevokeKey = withApi(async (api) => {
   success('New API key generated and saved\n');
   heading('New API key:');
   log(`${YELLOW}${data.api_key}${RESET}`);
-  log(`${DIM}Saved to ~/.config/agent-analytics/config.json${RESET}\n`);
+  log(`${DIM}Saved to ${getConfigFile()}${RESET}\n`);
   warn('Update your agent with this new key!');
 });
 
@@ -1017,6 +1044,7 @@ ${BOLD}USAGE${RESET}
 
 ${BOLD}SETUP${RESET}
   ${CYAN}login${RESET} --token <key>   Save your API key
+  ${CYAN}logout${RESET}                Clear your saved API key
   ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
   ${CYAN}projects${RESET}               List all your projects
 
@@ -1097,6 +1125,9 @@ try {
   switch (command) {
     case 'login':
       await cmdLogin(getArg('--token'));
+      break;
+    case 'logout':
+      cmdLogout();
       break;
     case 'create':
     case 'init':

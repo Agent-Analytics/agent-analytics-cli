@@ -1,6 +1,45 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getConfig, saveConfig, getApiKey, setApiKey, getBaseUrl } from '../lib/config.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  clearStoredAuth,
+  getApiKey,
+  getBaseUrl,
+  getConfig,
+  saveConfig,
+  setApiKey,
+} from '../lib/config.mjs';
+
+const ORIGINAL_XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
+const ORIGINAL_API_KEY = process.env.AGENT_ANALYTICS_API_KEY;
+const ORIGINAL_API_URL = process.env.AGENT_ANALYTICS_URL;
+
+let tempConfigHome;
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
+}
+
+beforeEach(() => {
+  tempConfigHome = mkdtempSync(join(tmpdir(), 'agent-analytics-config-'));
+  process.env.XDG_CONFIG_HOME = tempConfigHome;
+  delete process.env.AGENT_ANALYTICS_API_KEY;
+  delete process.env.AGENT_ANALYTICS_URL;
+});
+
+afterEach(() => {
+  restoreEnv('XDG_CONFIG_HOME', ORIGINAL_XDG_CONFIG_HOME);
+  restoreEnv('AGENT_ANALYTICS_API_KEY', ORIGINAL_API_KEY);
+  restoreEnv('AGENT_ANALYTICS_URL', ORIGINAL_API_URL);
+  rmSync(tempConfigHome, { recursive: true, force: true });
+});
 
 describe('config', () => {
   describe('getConfig', () => {
@@ -12,16 +51,6 @@ describe('config', () => {
   });
 
   describe('saveConfig / getConfig roundtrip', () => {
-    let originalConfig;
-
-    before(() => {
-      originalConfig = getConfig();
-    });
-
-    after(() => {
-      saveConfig(originalConfig);
-    });
-
     it('persists and reads back config', () => {
       const testKey = `test_roundtrip_${Date.now()}`;
       const config = getConfig();
@@ -34,42 +63,17 @@ describe('config', () => {
   });
 
   describe('getApiKey', () => {
-    const originalEnv = process.env.AGENT_ANALYTICS_API_KEY;
-
-    after(() => {
-      if (originalEnv === undefined) {
-        delete process.env.AGENT_ANALYTICS_API_KEY;
-      } else {
-        process.env.AGENT_ANALYTICS_API_KEY = originalEnv;
-      }
-    });
-
     it('returns env var when set', () => {
       process.env.AGENT_ANALYTICS_API_KEY = 'aak_from_env';
       assert.equal(getApiKey(), 'aak_from_env');
     });
 
     it('returns null when no env var and no config key', () => {
-      delete process.env.AGENT_ANALYTICS_API_KEY;
-      const orig = getConfig();
-      const backup = orig.api_key;
-      delete orig.api_key;
-      saveConfig(orig);
-
-      const key = getApiKey();
-      // Restore
-      if (backup) { orig.api_key = backup; saveConfig(orig); }
-
-      assert.equal(key, null);
+      assert.equal(getApiKey(), null);
     });
   });
 
   describe('setApiKey', () => {
-    let originalConfig;
-
-    before(() => { originalConfig = getConfig(); });
-    after(() => { saveConfig(originalConfig); });
-
     it('stores key in config file', () => {
       setApiKey('aak_test_set');
       const config = getConfig();
@@ -78,16 +82,6 @@ describe('config', () => {
   });
 
   describe('getBaseUrl', () => {
-    const originalEnv = process.env.AGENT_ANALYTICS_URL;
-
-    after(() => {
-      if (originalEnv === undefined) {
-        delete process.env.AGENT_ANALYTICS_URL;
-      } else {
-        process.env.AGENT_ANALYTICS_URL = originalEnv;
-      }
-    });
-
     it('returns env var when set', () => {
       process.env.AGENT_ANALYTICS_URL = 'https://custom.example.com';
       assert.equal(getBaseUrl(), 'https://custom.example.com');
@@ -96,6 +90,38 @@ describe('config', () => {
     it('returns default URL when no env var or config', () => {
       delete process.env.AGENT_ANALYTICS_URL;
       assert.equal(getBaseUrl(), 'https://api.agentanalytics.sh');
+    });
+  });
+
+  describe('clearStoredAuth', () => {
+    it('removes saved auth fields and preserves base_url', () => {
+      saveConfig({
+        api_key: 'aak_saved',
+        email: 'dev@example.com',
+        github_login: 'devuser',
+        base_url: 'https://custom.example.com',
+      });
+
+      assert.equal(clearStoredAuth(), true);
+      assert.deepEqual(getConfig(), {
+        base_url: 'https://custom.example.com',
+      });
+    });
+
+    it('returns false when config file is missing', () => {
+      assert.equal(clearStoredAuth(), false);
+      assert.deepEqual(getConfig(), {});
+    });
+
+    it('returns false when auth keys are absent', () => {
+      saveConfig({
+        base_url: 'https://custom.example.com',
+      });
+
+      assert.equal(clearStoredAuth(), false);
+      assert.deepEqual(getConfig(), {
+        base_url: 'https://custom.example.com',
+      });
     });
   });
 });

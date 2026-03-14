@@ -17,6 +17,9 @@ npx @agent-analytics/cli create my-site --domain https://mysite.com
 
 # 4. Watch it live
 npx @agent-analytics/cli live
+
+# Optional: clear your saved local auth later
+npx @agent-analytics/cli logout
 ```
 
 ## Commands
@@ -24,6 +27,7 @@ npx @agent-analytics/cli live
 ```bash
 # Setup
 login --token <key>              Save your API key
+logout                           Clear your saved API key
 create <name> --domain <url>     Create a project and get your tracking snippet
 projects                         List all your projects
 
@@ -52,6 +56,7 @@ experiments complete <id>        Ship the winner
 
 # Account
 whoami                           Show current account & tier
+logout                           Clear saved local auth (does not revoke your key)
 revoke-key                       Revoke and regenerate API key
 ```
 
