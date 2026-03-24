@@ -106,11 +106,13 @@ describe('AgentAnalyticsAPI', () => {
   describe('API methods build correct URLs', () => {
     let lastUrl;
     let lastMethod;
+    let lastOpts;
 
     before(() => {
       globalThis.fetch = async (url, opts) => {
         lastUrl = url;
         lastMethod = opts.method;
+        lastOpts = opts;
         return { ok: true, json: async () => ({}) };
       };
     });
@@ -151,7 +153,7 @@ describe('AgentAnalyticsAPI', () => {
         command: 'agent-analytics feedback',
         context: null,
       });
-      assert.equal(lastFetchOpts.body, JSON.stringify({
+      assert.equal(lastOpts.body, JSON.stringify({
         message: 'helpful feedback',
         command: 'agent-analytics feedback',
       }));
