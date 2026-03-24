@@ -144,6 +144,19 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastMethod, 'POST');
     });
 
+    it('sendFeedback omits null optional fields', async () => {
+      await api.sendFeedback({
+        message: 'helpful feedback',
+        project: null,
+        command: 'agent-analytics feedback',
+        context: null,
+      });
+      assert.equal(lastFetchOpts.body, JSON.stringify({
+        message: 'helpful feedback',
+        command: 'agent-analytics feedback',
+      }));
+    });
+
     it('createProject → POST /projects', async () => {
       await api.createProject('my-site', 'https://my.site');
       assert.equal(lastUrl, 'https://api.test/projects');
