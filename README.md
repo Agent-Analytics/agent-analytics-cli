@@ -71,6 +71,16 @@ Claude Code, OpenClaw, Cursor, Codex — any AI agent that can run `npx`. Or add
 claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mcp
 ```
 
+## Agent Skill
+
+The installable Agent Skill lives in the canonical public repo:
+
+```bash
+npx skills add Agent-Analytics/agent-analytics-skill@agent-analytics
+```
+
+Do not install the skill from this CLI repo. This package is the runtime CLI; the public skill definition is maintained separately so install instructions stay consistent across Codex, Cursor, Claude Code, and other Agent Skills-compatible tools.
+
 ## Environment Variables
 
 | Variable | Description |
@@ -85,6 +95,7 @@ claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mc
 - **Website:** https://agentanalytics.sh
 - **GitHub:** https://github.com/Agent-Analytics
 - **Self-host:** https://github.com/Agent-Analytics/agent-analytics
+- **Agent Skill:** https://github.com/Agent-Analytics/agent-analytics-skill
 
 ## License
 
