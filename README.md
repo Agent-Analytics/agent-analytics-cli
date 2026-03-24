@@ -56,12 +56,27 @@ experiments complete <id>        Ship the winner
 
 # Account
 whoami                           Show current account & tier
+feedback --message "..."         Send product/process feedback
 logout                           Clear saved local auth (does not revoke your key)
 revoke-key                       Revoke and regenerate API key
 ```
 
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
+
+## Feedback
+
+Use the CLI feedback command when Agent Analytics was confusing, a task took too long, or the agent had to do manual analysis that the product should have handled:
+
+```bash
+npx @agent-analytics/cli feedback \
+  --message "The agent had to calculate the funnel drop-off manually" \
+  --project my-site \
+  --command "agent-analytics funnel my-site --steps page_view,signup,purchase" \
+  --context "Share the use case and friction, but avoid private owner details, secrets, or raw customer data."
+```
+
+Feedback goes to a real agent via Telegram, every request is seen and auto-approved, and useful fixes can land quickly, sometimes within hours.
 
 ## Works With
 

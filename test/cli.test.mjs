@@ -59,6 +59,7 @@ describe('CLI', () => {
       assert.ok(stdout.includes('stats'));
       assert.ok(stdout.includes('all-sites'));
       assert.ok(stdout.includes('bot-traffic'));
+      assert.ok(stdout.includes('feedback'));
     });
 
     it('shows help with help command', async () => {
@@ -95,6 +96,19 @@ describe('CLI', () => {
       assert.equal(code, 0);
       assert.ok(stdout.includes('API key'));
       assert.ok(stdout.includes('--token'));
+    });
+  });
+
+  describe('feedback', () => {
+    it('shows usage guidance when message is missing', async () => {
+      const { code, stdout } = await run(['feedback'], {
+        env: {
+          AGENT_ANALYTICS_API_KEY: 'aak_test123',
+        },
+      });
+
+      assert.notEqual(code, 0);
+      assert.ok(stdout.includes('Usage: npx @agent-analytics/cli feedback'));
     });
   });
 

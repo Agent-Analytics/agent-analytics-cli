@@ -37,6 +37,7 @@
  *   npx @agent-analytics/cli experiments complete <id>   — Complete experiment
  *   npx @agent-analytics/cli experiments delete <id>     — Delete experiment
  *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
+ *   npx @agent-analytics/cli feedback --message "..." — Send product/process feedback
  *   npx @agent-analytics/cli whoami               — Show current account
  */
 
@@ -779,6 +780,24 @@ const cmdRevokeKey = withApi(async (api) => {
   warn('Update your agent with this new key!');
 });
 
+const cmdFeedback = withApi(async (api, opts = {}) => {
+  if (!opts.message) {
+    error('Usage: npx @agent-analytics/cli feedback --message "What was hard?" [--project my-site] [--command "agent-analytics ..."] [--context "sanitized context"]');
+  }
+
+  await api.sendFeedback({
+    message: opts.message,
+    project: opts.project,
+    command: opts.command,
+    context: opts.context,
+  });
+
+  success('Feedback sent');
+  log(`${DIM}A real agent reads these Telegram messages, every request is seen and auto-approved, and useful fixes can land quickly — sometimes within hours.${RESET}`);
+  log(`${DIM}Share the struggle or missing capability, not private owner details, secrets, or raw customer data.${RESET}`);
+  log('');
+});
+
 const cmdWhoami = withApi(async (api) => {
   const data = await api.getAccount();
   heading('Account');
@@ -1077,6 +1096,7 @@ ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RE
 ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show current account & tier
   ${CYAN}revoke-key${RESET}             Revoke and regenerate API key
+  ${CYAN}feedback${RESET}               Send product/process feedback
   ${CYAN}project${RESET} <id>           Get single project details
   ${CYAN}update${RESET} <id>            Update a project (--name, --origins)
   ${CYAN}delete${RESET} <name>          Delete a project
@@ -1088,6 +1108,7 @@ ${BOLD}KEY OPTIONS${RESET}
   --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
   --property <key>   Property to break down (path, referrer, utm_source, country)
   --event <name>     Filter by event name
+  --message <text>   Feedback message for the product team
   --filter <json>    Filters for query (e.g. '[{"field":"country","op":"eq","value":"US"}]')
   --interval <N>     Live view refresh in seconds (default: 5)
   --window <N>       Live view time window in seconds (default: 60)
@@ -1105,6 +1126,9 @@ ${BOLD}QUICK START${RESET}
   ${DIM}# 4. Run an A/B test${RESET}
   npx @agent-analytics/cli experiments create my-site --name hero_test \\
     --variants control,new_headline --goal signup
+
+  ${DIM}# 5. Send product feedback if a workflow was confusing or too manual${RESET}
+  npx @agent-analytics/cli feedback --message "The agent had to calculate funnel drop-off manually"
 
 ${DIM}Works with Claude Code, OpenClaw, Cursor, Codex — any agent that can run npx.${RESET}
 ${DIM}https://agentanalytics.sh${RESET}
@@ -1250,6 +1274,14 @@ try {
       break;
     case 'revoke-key':
       await cmdRevokeKey();
+      break;
+    case 'feedback':
+      await cmdFeedback({
+        message: getArg('--message'),
+        project: getArg('--project'),
+        command: getArg('--command'),
+        context: getArg('--context'),
+      });
       break;
     case 'delete-account':
       cmdDeleteAccount();

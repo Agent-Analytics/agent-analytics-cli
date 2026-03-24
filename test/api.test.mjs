@@ -133,6 +133,17 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastMethod, 'POST');
     });
 
+    it('sendFeedback → POST /account/feedback', async () => {
+      await api.sendFeedback({
+        message: 'helpful feedback',
+        project: 'my-site',
+        command: 'agent-analytics feedback',
+        context: 'sanitized context',
+      });
+      assert.equal(lastUrl, 'https://api.test/account/feedback');
+      assert.equal(lastMethod, 'POST');
+    });
+
     it('createProject → POST /projects', async () => {
       await api.createProject('my-site', 'https://my.site');
       assert.equal(lastUrl, 'https://api.test/projects');
