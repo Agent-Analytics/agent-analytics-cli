@@ -664,7 +664,7 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
   --from      Start date (ISO, e.g. 2026-01-01)
   --to        End date (ISO)
   --days      Shorthand for --from (e.g. --days 30)
-  --count-mode raw or session_then_user (default: session_then_user when event_count is requested)
+  --count-mode raw or session_then_user (default for event_count; mixed session/no-session duplicates collapse by user)
   --order-by  event_count, unique_users, session_count, date, event
   --order     asc or desc
   --limit     Max rows (default 100, max 1000)
