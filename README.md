@@ -64,6 +64,12 @@ revoke-key                       Revoke and regenerate API key
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
 
+`query` keeps `/events` raw and lossless, but `/query` now defaults `event_count` to activation-safe dedupe (`session_then_user`) when requested. Use `--count-mode raw` when you need the old ingested-row count for debugging or audit work:
+
+```bash
+npx @agent-analytics/cli query my-site --metrics event_count --count-mode raw
+```
+
 ## Feedback
 
 Use the CLI feedback command when Agent Analytics was confusing, a task took too long, or the agent had to do manual analysis that the product should have handled:

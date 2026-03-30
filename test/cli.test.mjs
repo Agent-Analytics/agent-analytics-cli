@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -109,6 +110,61 @@ describe('CLI', () => {
 
       assert.notEqual(code, 0);
       assert.ok(stdout.includes('Usage: npx @agent-analytics/cli feedback'));
+    });
+  });
+
+  describe('query', () => {
+    it('forwards --count-mode to the /query payload', async () => {
+      let requestBody;
+      const server = createServer((req, res) => {
+        if (req.method !== 'POST' || req.url !== '/query') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          requestBody = JSON.parse(body);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            period: { from: '2026-03-01', to: '2026-03-30' },
+            rows: [],
+            count: 0,
+          }));
+        });
+      });
+
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      try {
+        const { code, stdout } = await run([
+          'query',
+          'my-site',
+          '--metrics', 'event_count',
+          '--count-mode', 'raw',
+          '--limit', '25',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(stdout.includes('Query: my-site'));
+        assert.deepEqual(requestBody, {
+          project: 'my-site',
+          metrics: ['event_count'],
+          limit: 25,
+          count_mode: 'raw',
+        });
+      } finally {
+        await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      }
     });
   });
 

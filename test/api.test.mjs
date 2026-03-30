@@ -219,6 +219,24 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastUrl, 'https://api.test/account/bot-traffic?period=30d&limit=8');
       assert.equal(lastMethod, 'GET');
     });
+
+    it('query → POST /query forwards count_mode', async () => {
+      await api.query('my-site', {
+        metrics: ['event_count'],
+        group_by: ['country'],
+        count_mode: 'raw',
+        limit: 25,
+      });
+      assert.equal(lastUrl, 'https://api.test/query');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        metrics: ['event_count'],
+        group_by: ['country'],
+        limit: 25,
+        count_mode: 'raw',
+      }));
+    });
   });
 
 });

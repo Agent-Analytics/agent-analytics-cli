@@ -664,12 +664,14 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
   --from      Start date (ISO, e.g. 2026-01-01)
   --to        End date (ISO)
   --days      Shorthand for --from (e.g. --days 30)
+  --count-mode raw or session_then_user (default: session_then_user when event_count is requested)
   --order-by  event_count, unique_users, session_count, date, event
   --order     asc or desc
   --limit     Max rows (default 100, max 1000)
 
 ${BOLD}Examples:${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode raw${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}`);
 
@@ -689,10 +691,11 @@ ${BOLD}Examples:${RESET}
     metrics,
     group_by,
     filters,
-    date_from: opts.date_from,
-    date_to: opts.date_to,
-    order_by: opts.order_by,
-    order: opts.order,
+    date_from: opts.date_from || undefined,
+    date_to: opts.date_to || undefined,
+    count_mode: opts.count_mode || undefined,
+    order_by: opts.order_by || undefined,
+    order: opts.order || undefined,
     limit: opts.limit,
   });
 
@@ -1207,6 +1210,7 @@ try {
         filter: getArg('--filter'),
         date_from: getArg('--from') || (getArg('--days') ? `${getArg('--days')}d` : undefined),
         date_to: getArg('--to'),
+        count_mode: getArg('--count-mode'),
         order_by: getArg('--order-by'),
         order: getArg('--order'),
         limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
