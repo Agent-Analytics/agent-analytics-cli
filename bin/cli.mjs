@@ -171,7 +171,8 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
           onPending(started) {
             log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
             log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
-            log(`${DIM}Approve in the browser. If polling is blocked, finish manually with:${RESET}`);
+            log(`${DIM}Approve in the browser, then reply with the finish code if this runtime cannot pick it up automatically.${RESET}`);
+            log(`${DIM}You can always resume later with:${RESET}`);
             log(`  ${CYAN}npx @agent-analytics/cli login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
             log('');
             stopWaiting = startWaitingIndicator('Waiting for browser approval...');
@@ -185,6 +186,8 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
         return;
       } catch (err) {
         stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
+        warn(err.message);
+        log(`Resume detached approval later: ${CYAN}npx @agent-analytics/cli login --auth-request <id> --exchange-code <code>${RESET}`);
         throw err;
       }
     }
@@ -777,11 +780,16 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
   --order     asc or desc
   --limit     Max rows (default 100, max 1000)
 
+Property filters must use the canonical properties.<key> form.
+Example: properties.referrer, properties.utm_source, properties.first_utm_source
+Invalid filter fields now fail loudly instead of being ignored.
+
 ${BOLD}Examples:${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode raw${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
-  ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}`);
+  ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'${RESET}`);
 
   const metrics = opts.metrics ? opts.metrics.split(',').map(m => m.trim()) : undefined;
   const group_by = opts.group_by ? opts.group_by.split(',').map(g => g.trim()) : undefined;

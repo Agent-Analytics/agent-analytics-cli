@@ -76,6 +76,14 @@ Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce whe
 npx @agent-analytics/cli query my-site --metrics event_count --count-mode raw
 ```
 
+Property filters must use canonical `properties.*` fields. Built-in filter fields are only `event`, `user_id`, `date`, `country`, `session_id`, and `timestamp`. Example:
+
+```bash
+npx @agent-analytics/cli query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'
+```
+
+Invalid filter fields now fail loudly and return property discovery guidance instead of being silently ignored.
+
 ## Feedback
 
 Use the CLI feedback command when Agent Analytics was confusing, a task took too long, or the agent had to do manual analysis that the product should have handled:
