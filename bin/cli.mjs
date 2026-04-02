@@ -4,8 +4,10 @@
  * agent-analytics CLI
  * 
  * Usage:
- *   npx @agent-analytics/cli login --token <key>  — Save your API key
- *   npx @agent-analytics/cli logout               — Clear your saved API key
+ *   npx @agent-analytics/cli login                — Start browser-based agent session login
+ *   npx @agent-analytics/cli login --detached     — Detached/browser approval flow
+ *   npx @agent-analytics/cli login --token <key>  — Advanced fallback: save a raw API key
+ *   npx @agent-analytics/cli logout               — Clear saved local auth
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
  *   npx @agent-analytics/cli projects             — List your projects
  *   npx @agent-analytics/cli all-sites            — Historical summary across all projects
@@ -42,14 +44,15 @@
  */
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
+import { finishManualExchange, loginDetached, loginInteractive } from '../lib/auth-flow.mjs';
 import {
   clearStoredAuth,
-  getApiKey,
   getBaseUrl,
-  getConfig,
   getConfigFile,
-  saveConfig,
+  getStoredAuth,
+  setAgentSession,
   setApiKey,
+  updateStoredAccount,
 } from '../lib/config.mjs';
 
 const BOLD = '\x1b[1m';
@@ -68,17 +71,67 @@ function warn(msg) { log(`${YELLOW}⚠${RESET} ${msg}`); }
 function error(msg) { log(`${RED}✗${RESET} ${msg}`); process.exit(1); }
 function heading(msg) { log(`\n${BOLD}${msg}${RESET}`); }
 
-function requireKey() {
-  const key = getApiKey();
-  if (!key) {
+function startWaitingIndicator(message, { interruptMessage = 'Stopped waiting for browser approval.' } = {}) {
+  if (!process.stdout.isTTY) {
+    log(`${DIM}${message}${RESET}`);
+    return () => {};
+  }
+
+  const frames = ['-', '\\', '|', '/'];
+  let index = 0;
+  let stopped = false;
+  const HIDE_CURSOR = '\x1b[?25l';
+  const SHOW_CURSOR = '\x1b[?25h';
+  const clearLine = () => process.stdout.write(`\r\x1b[2K${SHOW_CURSOR}`);
+  const render = () => {
+    if (stopped) return;
+    process.stdout.write(`\r${HIDE_CURSOR}${DIM}${frames[index]} ${message}${RESET}`);
+  };
+  const stop = (finalMessage = '') => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    process.removeListener('SIGINT', handleSigint);
+    clearLine();
+    if (finalMessage) {
+      log(finalMessage);
+    }
+  };
+  const handleSigint = () => {
+    stop(`${DIM}${interruptMessage}${RESET}`);
+    process.exit(130);
+  };
+
+  render();
+  const timer = setInterval(() => {
+    if (stopped) return;
+    index = (index + 1) % frames.length;
+    render();
+  }, 120);
+  process.once('SIGINT', handleSigint);
+
+  return stop;
+}
+
+function createApiClient(auth = getStoredAuth()) {
+  return new AgentAnalyticsAPI(auth, getBaseUrl(), {
+    onAuthUpdate(nextAuth) {
+      setAgentSession(nextAuth);
+    },
+  });
+}
+
+function requireClient() {
+  const auth = getStoredAuth();
+  if (!auth) {
     error('Not logged in. Run: npx @agent-analytics/cli login');
   }
-  return new AgentAnalyticsAPI(key, getBaseUrl());
+  return createApiClient(auth);
 }
 
 function withApi(fn) {
   return async (...args) => {
-    const api = requireKey();
+    const api = requireClient();
     try {
       return await fn(api, ...args);
     } catch (err) {
@@ -94,30 +147,85 @@ function ifEmpty(arr, label) {
 
 // ==================== COMMANDS ====================
 
-async function cmdLogin(token) {
+async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
   if (!token) {
+    const api = createApiClient(null);
+
+    if (exchangeCode) {
+      if (!authRequestId) {
+        error('Manual exchange requires --auth-request <id> together with --exchange-code <code>');
+      }
+      const result = await finishManualExchange(api, authRequestId, exchangeCode);
+      setAgentSession(result.agent_session);
+      updateStoredAccount(result.account);
+      success(`Connected as ${BOLD}${result.account.github_login || result.account.google_name || result.account.email}${RESET} (${result.account.tier})`);
+      log(`${DIM}Agent session saved to ${getConfigFile()}${RESET}`);
+      return;
+    }
+
+    if (detached) {
+      heading('Agent Analytics — Detached Login');
+      let stopWaiting = () => {};
+      try {
+        const { started, exchanged } = await loginDetached(api, {
+          onPending(started) {
+            log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
+            log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
+            log(`${DIM}Approve in the browser. If polling is blocked, finish manually with:${RESET}`);
+            log(`  ${CYAN}npx @agent-analytics/cli login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
+            log('');
+            stopWaiting = startWaitingIndicator('Waiting for browser approval...');
+          },
+        });
+        stopWaiting(`${DIM}Browser approval received.${RESET}`);
+        setAgentSession(exchanged.agent_session);
+        updateStoredAccount(exchanged.account);
+        success(`Connected as ${BOLD}${exchanged.account.github_login || exchanged.account.google_name || exchanged.account.email}${RESET} (${exchanged.account.tier})`);
+        log(`${DIM}Detached request ${started.auth_request_id} approved and saved to ${getConfigFile()}${RESET}`);
+        return;
+      } catch (err) {
+        stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
+        throw err;
+      }
+    }
+
     heading('Agent Analytics — Login');
     log('');
-    log('Pass your API key from the dashboard:');
-    log(`  ${CYAN}npx @agent-analytics/cli login --token aak_your_key_here${RESET}`);
-    log('');
-    log('Or set it as an environment variable:');
-    log(`  ${CYAN}export AGENT_ANALYTICS_API_KEY=aak_your_key_here${RESET}`);
-    log('');
-    log(`Get your API key at: ${CYAN}https://app.agentanalytics.sh${RESET}`);
-    log(`${DIM}Sign in with GitHub or Google — your API key is on the settings page.${RESET}`);
-    return;
+    let stopWaiting = () => {};
+    try {
+      const result = await loginInteractive(api, {
+        onPending(started) {
+          log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
+          log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
+          log(`${DIM}The browser should open automatically. If it does not, open the URL above.${RESET}`);
+          log('');
+          stopWaiting = startWaitingIndicator('Waiting for browser approval...');
+        },
+      });
+      stopWaiting(`${DIM}Browser approval received.${RESET}`);
+      setAgentSession(result.agent_session);
+      updateStoredAccount(result.account);
+      success(`Connected as ${BOLD}${result.account.github_login || result.account.google_name || result.account.email}${RESET} (${result.account.tier})`);
+      log(`${DIM}Agent session saved to ${getConfigFile()}${RESET}`);
+      log('');
+      log(`Fallbacks:`);
+      log(`  ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
+      log(`  ${CYAN}npx @agent-analytics/cli login --token aak_your_key_here${RESET}  ${DIM}advanced/manual fallback${RESET}`);
+      return;
+    } catch (err) {
+      stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
+      warn(`Interactive login failed: ${err.message}`);
+      log(`Retry with detached approval: ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
+      return;
+    }
   }
 
-  // Validate the token works
-  const api = new AgentAnalyticsAPI(token, getBaseUrl());
+  // Advanced/manual fallback: API key login
+  const api = createApiClient({ api_key: token });
   try {
     const account = await api.getAccount();
     setApiKey(token);
-    const config = getConfig();
-    config.email = account.email;
-    config.github_login = account.github_login;
-    saveConfig(config);
+    updateStoredAccount(account);
 
     success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET} (${account.tier})`);
     log(`${DIM}API key saved to ${getConfigFile()}${RESET}`);
@@ -1065,8 +1173,10 @@ ${BOLD}USAGE${RESET}
   npx @agent-analytics/cli <command> [options]
 
 ${BOLD}SETUP${RESET}
-  ${CYAN}login${RESET} --token <key>   Save your API key
-  ${CYAN}logout${RESET}                Clear your saved API key
+  ${CYAN}login${RESET}                  Browser-based agent session login
+  ${CYAN}login${RESET} --detached       Detached approval flow for remote/headless runtimes
+  ${CYAN}login${RESET} --token <key>    Advanced/manual API key fallback
+  ${CYAN}logout${RESET}                 Clear saved local auth
   ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
   ${CYAN}projects${RESET}               List all your projects
 
@@ -1117,8 +1227,8 @@ ${BOLD}KEY OPTIONS${RESET}
   --window <N>       Live view time window in seconds (default: 60)
 
 ${BOLD}QUICK START${RESET}
-  ${DIM}# 1. Save your API key${RESET}
-  npx @agent-analytics/cli login --token aak_your_key
+  ${DIM}# 1. Start agent login${RESET}
+  npx @agent-analytics/cli login
 
   ${DIM}# 2. Create a project${RESET}
   npx @agent-analytics/cli create my-site --domain https://mysite.com
@@ -1151,7 +1261,12 @@ function getArg(flag) {
 try {
   switch (command) {
     case 'login':
-      await cmdLogin(getArg('--token'));
+      await cmdLogin({
+        token: getArg('--token'),
+        detached: args.includes('--detached'),
+        exchangeCode: getArg('--exchange-code'),
+        authRequestId: getArg('--auth-request'),
+      });
       break;
     case 'logout':
       cmdLogout();

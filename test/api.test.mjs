@@ -6,7 +6,7 @@ describe('AgentAnalyticsAPI', () => {
   describe('constructor', () => {
     it('stores apiKey and baseUrl', () => {
       const api = new AgentAnalyticsAPI('aak_test', 'https://custom.example.com');
-      assert.equal(api.apiKey, 'aak_test');
+      assert.equal(api.auth.api_key, 'aak_test');
       assert.equal(api.baseUrl, 'https://custom.example.com');
     });
 

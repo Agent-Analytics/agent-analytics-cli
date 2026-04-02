@@ -92,11 +92,11 @@ describe('CLI', () => {
   });
 
   describe('login without token', () => {
-    it('shows login instructions when no token provided', async () => {
+    it('starts the new agent-session login flow when no token is provided', async () => {
       const { code, stdout } = await run(['login']);
       assert.equal(code, 0);
-      assert.ok(stdout.includes('API key'));
-      assert.ok(stdout.includes('--token'));
+      assert.ok(stdout.includes('Agent Analytics'));
+      assert.ok(stdout.includes('login --detached'));
     });
   });
 

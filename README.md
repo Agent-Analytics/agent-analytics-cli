@@ -7,16 +7,18 @@ Analytics your AI agent can actually use — track, analyze, experiment, optimiz
 ## Quick Start
 
 ```bash
-# 1. Get your API key from https://app.agentanalytics.sh (sign in with GitHub or Google)
+# 1. Start agent login or signup in the browser
+npx @agent-analytics/cli login
 
-# 2. Save your key
-npx @agent-analytics/cli login --token aak_your_key
-
-# 3. Create a project
+# 2. Create a project
 npx @agent-analytics/cli create my-site --domain https://mysite.com
 
-# 4. Watch it live
+# 3. Watch it live
 npx @agent-analytics/cli live
+
+# Optional fallbacks
+npx @agent-analytics/cli login --detached
+npx @agent-analytics/cli login --token aak_your_key   # advanced/manual fallback
 
 # Optional: clear your saved local auth later
 npx @agent-analytics/cli logout
@@ -26,8 +28,10 @@ npx @agent-analytics/cli logout
 
 ```bash
 # Setup
-login --token <key>              Save your API key
-logout                           Clear your saved API key
+login                            Browser approval flow for signup/login
+login --detached                 Detached approval flow with poll/manual exchange
+login --token <key>              Advanced fallback: save a raw API key
+logout                           Clear your saved local auth
 create <name> --domain <url>     Create a project and get your tracking snippet
 projects                         List all your projects
 
@@ -57,9 +61,11 @@ experiments complete <id>        Ship the winner
 # Account
 whoami                           Show current account & tier
 feedback --message "..."         Send product/process feedback
-logout                           Clear saved local auth (does not revoke your key)
+logout                           Clear saved local auth (does not revoke remote sessions)
 revoke-key                       Revoke and regenerate API key
 ```
+
+The CLI is agent-session-first. It stores a renewable Agent Analytics session locally after browser approval and uses that bearer auth for API calls. Raw `aak_*` API keys still work, but only as an advanced/manual fallback for direct HTTP-style usage.
 
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
@@ -92,6 +98,8 @@ Claude Code, OpenClaw, Cursor, Codex — any AI agent that can run `npx`. Or add
 claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mcp
 ```
 
+For managed or remote runtimes that cannot receive a localhost callback, use `npx @agent-analytics/cli login --detached` and complete approval in the browser or with manual exchange.
+
 ## Agent Skill
 
 The installable Agent Skill lives in the canonical public repo:
@@ -106,7 +114,7 @@ Do not install the skill from this CLI repo. This package is the runtime CLI; th
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_ANALYTICS_API_KEY` | API key (overrides config file) |
+| `AGENT_ANALYTICS_API_KEY` | Advanced fallback API key (overrides config file) |
 | `AGENT_ANALYTICS_URL` | Custom API URL (for self-hosted) |
 
 ## Links
