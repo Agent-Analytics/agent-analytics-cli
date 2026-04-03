@@ -10,10 +10,10 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cli.mjs');
 
-function run(args = [], { env = {} } = {}) {
+function run(args = [], { env = {}, timeout = 5000 } = {}) {
   return new Promise((resolve) => {
     execFile('node', [CLI, ...args], {
-      timeout: 5000,
+      timeout,
       env: { ...process.env, ...env },
     }, (err, stdout, stderr) => {
       resolve({
@@ -92,11 +92,49 @@ describe('CLI', () => {
   });
 
   describe('login without token', () => {
-    it('starts the new agent-session login flow when no token is provided', async () => {
-      const { code, stdout } = await run(['login']);
-      assert.equal(code, 0);
-      assert.ok(stdout.includes('Agent Analytics'));
-      assert.ok(stdout.includes('login --detached'));
+    it('starts the detached agent-session login flow and prints the manual resume command', async () => {
+      const server = createServer((req, res) => {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              auth_request_id: 'req-cli-detached',
+              authorize_url: 'https://approve.example/req-cli-detached',
+              approval_code: 'CLI12345',
+              poll_token: 'aap_cli_detached',
+            }));
+            return;
+          }
+          if (req.method === 'POST' && req.url === '/agent-sessions/poll') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'pending' }));
+            return;
+          }
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+        });
+      });
+
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      try {
+        const { code, stdout } = await run(['login', '--detached'], {
+          env: { AGENT_ANALYTICS_URL: baseUrl },
+          timeout: 1200,
+        });
+
+        assert.equal(code, null);
+        assert.ok(stdout.includes('Agent Analytics — Detached Login'));
+        assert.ok(stdout.includes('Approval URL:'));
+        assert.ok(stdout.includes('req-cli-detached'));
+        assert.ok(stdout.includes('login --auth-request req-cli-detached --exchange-code <code>'));
+      } finally {
+        await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      }
     });
   });
 

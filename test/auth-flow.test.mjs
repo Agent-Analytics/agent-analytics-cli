@@ -145,4 +145,38 @@ describe('auth flow helpers', () => {
       assert.equal(result.exchanged.agent_session.refresh_token, 'aar_detached');
     });
   });
+
+  it('reports a resumable command when detached approval times out', async () => {
+    await withServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-timeout',
+            authorize_url: 'https://approve.example/req-timeout',
+            approval_code: 'TIME1234',
+            poll_token: 'aap_timeout',
+          }));
+          return;
+        }
+        if (req.method === 'POST' && req.url === '/agent-sessions/poll') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'pending' }));
+          return;
+        }
+        res.writeHead(404).end();
+      });
+    }, async (baseUrl) => {
+      const api = new AgentAnalyticsAPI(null, baseUrl);
+      await assert.rejects(
+        () => loginDetached(api, {
+          timeoutMs: 30,
+          pollIntervalMs: 10,
+        }),
+        /Resume later with npx @agent-analytics\/cli login --auth-request req-timeout --exchange-code <code>/
+      );
+    });
+  });
 });
