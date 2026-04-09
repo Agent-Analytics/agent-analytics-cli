@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { completeManagedRuntimeAuth, startOpenClawAuth, startPaperclipAuth } from '../lib/platforms.mjs';
+import { DEFAULT_AGENT_SESSION_SCOPES } from '../lib/scopes.mjs';
 
 describe('managed runtime adapters', () => {
   it('starts a Paperclip detached auth request with platform metadata', async () => {
@@ -17,6 +18,7 @@ describe('managed runtime adapters', () => {
       platform: 'paperclip',
       workspace_id: 'workspace-1',
     });
+    assert.deepEqual(payload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
     assert.equal(payload.client_type, 'paperclip');
     assert.equal(payload.mode, 'detached');
   });
@@ -35,6 +37,7 @@ describe('managed runtime adapters', () => {
       platform: 'openclaw',
       runtime_id: 'runtime-99',
     });
+    assert.deepEqual(payload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
     assert.equal(payload.client_type, 'openclaw');
   });
 

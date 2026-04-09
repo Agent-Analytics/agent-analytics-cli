@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { loginDetached, loginInteractive } from '../lib/auth-flow.mjs';
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
+import { DEFAULT_AGENT_SESSION_SCOPES } from '../lib/scopes.mjs';
 
 async function withServer(handler, fn) {
   const server = createServer(handler);
@@ -79,6 +80,7 @@ describe('auth flow helpers', () => {
 
       assert.equal(startPayload.mode, 'interactive');
       assert.ok(startPayload.code_challenge);
+      assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
       assert.equal(pending.authorize_url, 'https://approve.example/req-1');
       assert.equal(pending.approval_code, 'ABC12345');
       assert.equal(exchangePayload.auth_request_id, 'req-1');
@@ -90,12 +92,14 @@ describe('auth flow helpers', () => {
 
   it('completes detached login by polling until approval', async () => {
     let pollCount = 0;
+    let startPayload = null;
     await withServer((req, res) => {
       let body = '';
       req.on('data', (chunk) => { body += chunk; });
       req.on('end', () => {
         const payload = body ? JSON.parse(body) : {};
         if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          startPayload = payload;
           res.writeHead(201, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             auth_request_id: 'req-detached',
@@ -141,6 +145,7 @@ describe('auth flow helpers', () => {
         timeoutMs: 2000,
         pollIntervalMs: 10,
       });
+      assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
       assert.equal(result.started.auth_request_id, 'req-detached');
       assert.equal(result.exchanged.agent_session.refresh_token, 'aar_detached');
     });
