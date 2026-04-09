@@ -108,10 +108,10 @@ claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mc
 
 For managed or remote runtimes that cannot receive a localhost callback, use `npx @agent-analytics/cli login --detached` and complete approval in the browser or with manual exchange.
 
-After upgrading to `0.5.6`, run a fresh `npx @agent-analytics/cli@0.5.6 login` before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
+After upgrading to `0.5.7`, run a fresh `npx @agent-analytics/cli@0.5.7 login` before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx @agent-analytics/cli@0.5.6 projects
+npx @agent-analytics/cli@0.5.7 projects
 ```
 
 ## Agent Skill
