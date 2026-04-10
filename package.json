@@ -3,7 +3,7 @@
   "version": "0.5.9",
   "description": "Stop juggling dashboards. Let your agent do it. Analytics your AI agent can actually use — track, analyze, experiment, optimize.",
   "bin": {
-    "agent-analytics": "./bin/cli.mjs"
+    "agent-analytics": "bin/cli.mjs"
   },
   "type": "module",
   "keywords": [
@@ -17,7 +17,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Agent-Analytics/agent-analytics-cli"
+    "url": "git+https://github.com/Agent-Analytics/agent-analytics-cli.git"
   },
   "homepage": "https://agentanalytics.sh",
   "engines": {
