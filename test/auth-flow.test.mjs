@@ -20,6 +20,8 @@ async function withServer(handler, fn) {
 describe('auth flow helpers', () => {
   it('completes interactive login with loopback callback + PKCE exchange', async () => {
     let callbackUrl = null;
+    let callbackHtml = '';
+    let callbackLogo = null;
     let startPayload = null;
     let exchangePayload = null;
     let pending = null;
@@ -72,9 +74,17 @@ describe('auth flow helpers', () => {
         timeoutMs: 2000,
         async openUrl() {
           const callback = new URL(callbackUrl);
+          const logoResponse = await fetch(new URL('/logo.png', callback));
+          callbackLogo = {
+            ok: logoResponse.ok,
+            contentType: logoResponse.headers.get('content-type'),
+            cacheControl: logoResponse.headers.get('cache-control'),
+            bytes: (await logoResponse.arrayBuffer()).byteLength,
+          };
           callback.searchParams.set('request_id', 'req-1');
           callback.searchParams.set('exchange_code', 'aae_exchange');
-          await fetch(callback);
+          const response = await fetch(callback);
+          callbackHtml = await response.text();
         },
       });
 
@@ -87,6 +97,23 @@ describe('auth flow helpers', () => {
       assert.equal(exchangePayload.exchange_code, 'aae_exchange');
       assert.ok(exchangePayload.code_verifier);
       assert.equal(result.agent_session.access_token, 'aas_access');
+      assert.match(callbackHtml, /<title>Agent Analytics Connected<\/title>/);
+      assert.match(callbackHtml, /<img src="\/logo\.png" alt="Agent Analytics"/);
+      assert.match(callbackHtml, /Agent Analytics<\/div>/);
+      assert.match(callbackHtml, /Agent-Ready Analytics<\/div>/);
+      assert.match(callbackHtml, /<h1>Your CLI is now connected\.<\/h1>/);
+      assert.match(callbackHtml, /Agent Analytics sent the finish code back to your CLI\./);
+      assert.match(callbackHtml, /You can close this tab\./);
+      assert.doesNotMatch(callbackHtml, /Open Management Page/);
+      assert.doesNotMatch(callbackHtml, /Cloud Pro/);
+      assert.doesNotMatch(callbackHtml, /free plan right now/i);
+      assert.doesNotMatch(callbackHtml, /Connected<\/div>/);
+      assert.doesNotMatch(callbackHtml, /If nothing happens/);
+      assert.ok(callbackLogo);
+      assert.equal(callbackLogo.ok, true);
+      assert.equal(callbackLogo.contentType, 'image/png');
+      assert.equal(callbackLogo.cacheControl, 'no-store');
+      assert.ok(callbackLogo.bytes > 0);
     });
   });
 
