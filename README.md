@@ -43,6 +43,7 @@ live [name]                      Real-time terminal dashboard across all project
 insights <name>                  Period-over-period comparison with trends
 breakdown <name> --property path Top pages, referrers, UTM sources, countries
 pages <name>                     Entry/exit page performance & bounce rates
+paths <name> --goal <event>      Bounded entry-to-goal/drop-off session paths
 heatmap <name>                   Peak hours & busiest days
 funnel <name>                    Funnel analysis: where users drop off
 retention <name>                 Cohort retention: % of users who return
@@ -108,10 +109,10 @@ claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mc
 
 For managed or remote runtimes that cannot receive a localhost callback, use `npx @agent-analytics/cli login --detached` and complete approval in the browser or with manual exchange.
 
-After upgrading to `0.5.8`, run a fresh `npx @agent-analytics/cli@0.5.8 login` before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
+After upgrading to `0.5.9`, run a fresh `npx @agent-analytics/cli@0.5.9 login` before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx @agent-analytics/cli@0.5.8 projects
+npx @agent-analytics/cli@0.5.9 projects
 ```
 
 ## Agent Skill

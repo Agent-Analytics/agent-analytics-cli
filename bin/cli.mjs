@@ -21,6 +21,7 @@
  *   npx @agent-analytics/cli insights <name>      — Period-over-period comparison
  *   npx @agent-analytics/cli breakdown <name>     — Property value distribution
  *   npx @agent-analytics/cli pages <name>         — Entry/exit page stats
+ *   npx @agent-analytics/cli paths <name>         — Session journey paths from entry to goal/drop-off
  *   npx @agent-analytics/cli sessions-dist <name> — Session duration distribution
  *   npx @agent-analytics/cli heatmap <name>       — Peak hours & busiest days
  *   npx @agent-analytics/cli funnel <name>        — Funnel analysis: where users drop off
@@ -573,6 +574,53 @@ const cmdPages = withApi(async (api, project, type = 'entry', opts = {}) => {
     }
   }
   log('');
+});
+
+function formatPathNodeLabel(node) {
+  if (node.type === 'goal') return `goal:${node.value}`;
+  if (node.type === 'drop_off') return `drop_off:${node.exit_page || node.value || 'unknown'}`;
+  if (node.type === 'truncated') return `truncated:${node.exit_page || node.value || 'unknown'}`;
+  return node.value;
+}
+
+function printPathsTree(nodes, prefix = '    ') {
+  for (const node of nodes || []) {
+    const ratePct = Math.round((node.conversion_rate || 0) * 100);
+    log(`${prefix}${formatPathNodeLabel(node)}  ${DIM}${node.sessions} sessions  ${node.conversions} conversions  ${ratePct}%${RESET}`);
+    printPathsTree(node.children, `${prefix}  `);
+  }
+}
+
+const cmdPaths = withApi(async (api, project, opts = {}) => {
+  if (!project || !opts.goal_event) {
+    error('Usage: npx @agent-analytics/cli paths <project-name> --goal <event> [--since 30d] [--max-steps 5] [--entry-limit 10] [--path-limit 5] [--candidate-session-cap 5000]');
+  }
+
+  const data = await api.getPaths(project, opts);
+
+  heading(`Paths: ${project}`);
+  log('');
+  log(`  ${BOLD}Goal:${RESET} ${data.goal_event}  ${DIM}${data.period?.from} → ${data.period?.to}${RESET}`);
+  log(`  ${BOLD}Bounds:${RESET} max_steps=${data.bounds?.max_steps} entry_limit=${data.bounds?.entry_limit} path_limit=${data.bounds?.path_limit} candidate_session_cap=${data.bounds?.candidate_session_cap}`);
+  log('');
+
+  if (ifEmpty(data.entry_paths, 'path data')) return;
+
+  for (const entry of data.entry_paths) {
+    const ratePct = Math.round((entry.conversion_rate || 0) * 100);
+    log(`  ${BOLD}${entry.entry_page}${RESET}  ${entry.sessions} sessions  ${entry.conversions} conversions  ${DIM}${ratePct}%${RESET}`);
+    if (entry.exit_pages?.length) {
+      log(`    ${BOLD}Exits:${RESET}`);
+      for (const exit of entry.exit_pages.slice(0, 5)) {
+        const dropPct = Math.round((exit.drop_off_rate || 0) * 100);
+        const convPct = Math.round((exit.conversion_rate || 0) * 100);
+        log(`      ${exit.exit_page}  ${DIM}${exit.sessions} sessions  ${exit.drop_offs} drop-offs (${dropPct}%)  ${exit.conversions} conversions (${convPct}%)${RESET}`);
+      }
+    }
+    log(`    ${BOLD}Path tree:${RESET}`);
+    printPathsTree(entry.tree);
+    log('');
+  }
 });
 
 const cmdSessionsDist = withApi(async (api, project) => {
@@ -1233,6 +1281,11 @@ ${BOLD}KEY OPTIONS${RESET}
   --filter <json>    Filters for query (e.g. '[{"field":"country","op":"eq","value":"US"}]')
   --interval <N>     Live view refresh in seconds (default: 5)
   --window <N>       Live view time window in seconds (default: 60)
+  --goal <event>     Goal event for paths and experiments
+  --max-steps <N>    Max path steps before truncation (1-5)
+  --entry-limit <N>  Max entry pages to include (1-20)
+  --path-limit <N>   Max children kept at each path branch (1-10)
+  --candidate-session-cap <N>  Max sessions scanned for /paths (100-10000)
 
 ${BOLD}QUICK START${RESET}
   ${DIM}# 1. Start agent login${RESET}
@@ -1360,6 +1413,16 @@ try {
     case 'pages':
       await cmdPages(args[1], getArg('--type') || 'entry', {
         limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+      });
+      break;
+    case 'paths':
+      await cmdPaths(args[1], {
+        goal_event: getArg('--goal'),
+        since: getArg('--since'),
+        max_steps: getArg('--max-steps') ? parseInt(getArg('--max-steps'), 10) : undefined,
+        entry_limit: getArg('--entry-limit') ? parseInt(getArg('--entry-limit'), 10) : undefined,
+        path_limit: getArg('--path-limit') ? parseInt(getArg('--path-limit'), 10) : undefined,
+        candidate_session_cap: getArg('--candidate-session-cap') ? parseInt(getArg('--candidate-session-cap'), 10) : undefined,
       });
       break;
     case 'sessions-dist':
