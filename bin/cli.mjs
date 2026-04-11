@@ -1244,6 +1244,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}insights${RESET} <name>        Period-over-period comparison with trends
   ${CYAN}breakdown${RESET} <name>       Top pages, referrers, UTM sources, countries
   ${CYAN}pages${RESET} <name>           Entry/exit page performance & bounce rates
+  ${CYAN}paths${RESET} <name>           Bounded entry-to-goal/drop-off session paths
   ${CYAN}heatmap${RESET} <name>         Peak hours & busiest days
   ${CYAN}funnel${RESET} <name>            Funnel analysis: where users drop off
   ${CYAN}retention${RESET} <name>         Cohort retention: % of users who return

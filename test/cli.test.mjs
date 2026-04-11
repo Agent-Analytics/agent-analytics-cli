@@ -48,10 +48,15 @@ function readJson(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
+function stripAnsi(text) {
+  return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 describe('CLI', () => {
   describe('help', () => {
     it('shows help with --help flag', async () => {
       const { code, stdout } = await run(['--help']);
+      const plain = stripAnsi(stdout);
       assert.equal(code, 0);
       assert.ok(stdout.includes('Agent Analytics'));
       assert.ok(stdout.includes('ANALYTICS'));
@@ -60,6 +65,7 @@ describe('CLI', () => {
       assert.ok(stdout.includes('stats'));
       assert.ok(stdout.includes('all-sites'));
       assert.ok(stdout.includes('bot-traffic'));
+      assert.ok(plain.includes('paths <name>'));
       assert.ok(stdout.includes('feedback'));
     });
 
