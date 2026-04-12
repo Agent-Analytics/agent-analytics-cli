@@ -27,9 +27,9 @@
  *   npx @agent-analytics/cli funnel <name>        — Funnel analysis: where users drop off
  *   npx @agent-analytics/cli retention <name>     — Cohort retention: % of users who return
  *   npx @agent-analytics/cli init <name>          — Alias for create
- *   npx @agent-analytics/cli project <id>          — Get single project details
- *   npx @agent-analytics/cli update <id>           — Update a project
- *   npx @agent-analytics/cli delete <name-or-id>    — Delete a project
+ *   npx @agent-analytics/cli project <name-or-id>  — Get single project details
+ *   npx @agent-analytics/cli update <name-or-id>   — Update a project
+ *   npx @agent-analytics/cli delete <name-or-id>   — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
  *   npx @agent-analytics/cli live [name]          — Real-time live view
  *   npx @agent-analytics/cli experiments list <project>   — List experiments
@@ -144,6 +144,13 @@ function withApi(fn) {
 function ifEmpty(arr, label) {
   if (!arr || arr.length === 0) { log(`  No ${label} found.`); return true; }
   return false;
+}
+
+async function resolveProject(api, target) {
+  const { projects } = await api.listProjects();
+  const match = projects?.find(p => p.id === target) || projects?.find(p => p.name === target);
+  if (!match) error(`Project "${target}" not found. Run: npx @agent-analytics/cli projects`);
+  return match;
 }
 
 // ==================== COMMANDS ====================
@@ -302,6 +309,7 @@ const cmdProjects = withApi(async (api) => {
   for (const p of projects) {
     const created = new Date(p.created_at).toLocaleDateString();
     log(`  ${BOLD}${p.name}${RESET}  ${DIM}created ${created}${RESET}`);
+    log(`  ${DIM}id:${RESET} ${p.id}`);
     log(`  ${DIM}token:${RESET} ${p.project_token}`);
     log(`  ${DIM}origins:${RESET} ${p.allowed_origins || '*'}`);
     log('');
@@ -884,9 +892,10 @@ ${BOLD}Examples:${RESET}
   log('');
 });
 
-const cmdProject = withApi(async (api, id) => {
-  if (!id) error('Usage: npx @agent-analytics/cli project <project-id>');
-  const data = await api.getProject(id);
+const cmdProject = withApi(async (api, target) => {
+  if (!target) error('Usage: npx @agent-analytics/cli project <project-name-or-id>');
+  const project = await resolveProject(api, target);
+  const data = await api.getProject(project.id);
 
   heading(`Project: ${data.name}`);
   log('');
@@ -898,12 +907,13 @@ const cmdProject = withApi(async (api, id) => {
   log('');
 });
 
-const cmdUpdate = withApi(async (api, id, opts = {}) => {
-  if (!id) error('Usage: npx @agent-analytics/cli update <project-id> [--name new-name] [--origins "https://example.com"]');
+const cmdUpdate = withApi(async (api, target, opts = {}) => {
+  if (!target) error('Usage: npx @agent-analytics/cli update <project-name-or-id> [--name new-name] [--origins "https://example.com"]');
   if (!opts.name && !opts.allowed_origins) error('Provide --name and/or --origins to update');
 
-  const data = await api.updateProject(id, opts);
-  success(`Project ${data.name || id} updated`);
+  const project = await resolveProject(api, target);
+  const data = await api.updateProject(project.id, opts);
+  success(`Project ${data.name || project.name || target} updated`);
   if (opts.name) log(`  ${DIM}name:${RESET} ${data.name}`);
   if (opts.allowed_origins) log(`  ${DIM}origins:${RESET} ${data.allowed_origins}`);
 });
@@ -911,20 +921,9 @@ const cmdUpdate = withApi(async (api, id, opts = {}) => {
 const cmdDelete = withApi(async (api, nameOrId) => {
   if (!nameOrId) error('Usage: npx @agent-analytics/cli delete <project-name-or-id>');
 
-  let id = nameOrId;
-  let name = nameOrId;
-
-  // If it doesn't look like a UUID, resolve name → id
-  if (!nameOrId.includes('-') || nameOrId.length < 36) {
-    const { projects } = await api.listProjects();
-    const match = projects.find(p => p.name === nameOrId);
-    if (!match) error(`Project "${nameOrId}" not found. Run: npx @agent-analytics/cli projects`);
-    id = match.id;
-    name = match.name;
-  }
-
-  await api.deleteProject(id);
-  success(`Project ${name} deleted`);
+  const project = await resolveProject(api, nameOrId);
+  await api.deleteProject(project.id);
+  success(`Project ${project.name} deleted`);
 });
 
 function cmdDeleteAccount() {
@@ -1282,9 +1281,9 @@ ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show current account & tier
   ${CYAN}revoke-key${RESET}             Rotate a saved raw API key fallback
   ${CYAN}feedback${RESET}               Send product/process feedback
-  ${CYAN}project${RESET} <id>           Get single project details
-  ${CYAN}update${RESET} <id>            Update a project (--name, --origins)
-  ${CYAN}delete${RESET} <name>          Delete a project
+  ${CYAN}project${RESET} <project>      Get single project details by name or id
+  ${CYAN}update${RESET} <project>       Update a project by name or id (--name, --origins)
+  ${CYAN}delete${RESET} <project>       Delete a project by name or id
 
 ${BOLD}KEY OPTIONS${RESET}
   --days <N>         Lookback window in days (default: 7)

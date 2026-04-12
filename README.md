@@ -33,7 +33,10 @@ login --detached                 Detached approval flow with poll/manual exchang
 login --token <key>              Advanced fallback: save a raw API key
 logout                           Clear your saved local auth
 create <name> --domain <url>     Create a project and get your tracking snippet
-projects                         List all your projects
+projects                         List all your projects with IDs
+project <project>                Get project details by exact name or ID
+update <project>                 Update project name or origins by exact name or ID
+delete <project>                 Delete a project by exact name or ID
 
 # Analytics
 all-sites                        Historical summary across all projects
@@ -68,6 +71,12 @@ revoke-key                       Rotate a saved raw API key fallback
 
 The CLI is agent-session-first. It stores a renewable Agent Analytics session locally after browser approval and uses that bearer auth for API calls. Raw `aak_*` API keys still work, but only as an advanced/manual fallback for direct HTTP-style usage.
 Raw API-key rotation is not available to scoped agent sessions; manage keys from the dashboard or from a CLI login created with `login --token`.
+
+Project management commands accept exact project names or project IDs. For local browser QA, update origins through the CLI while keeping the production origin:
+
+```bash
+npx @agent-analytics/cli update stylio --origins 'https://stylio.app,http://lvh.me:3101'
+```
 
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
@@ -110,10 +119,10 @@ claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mc
 
 For managed or remote runtimes that cannot receive a localhost callback, use `npx @agent-analytics/cli login --detached` and complete approval in the browser or with manual exchange.
 
-After upgrading to `0.5.9`, run a fresh `npx @agent-analytics/cli@0.5.9 login` before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
+If your saved session predates CLI `0.5.9`, run a fresh login before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx @agent-analytics/cli@0.5.9 projects
+npx @agent-analytics/cli@0.5.10 projects
 ```
 
 ## Agent Skill

@@ -52,6 +52,31 @@ function stripAnsi(text) {
   return text.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
+function readRequestJson(req) {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      resolve(body ? JSON.parse(body) : null);
+    });
+  });
+}
+
+function startServer(handler) {
+  const server = createServer(handler);
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      resolve({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        close() {
+          return new Promise((res, rej) => server.close((err) => err ? rej(err) : res()));
+        },
+      });
+    });
+  });
+}
+
 describe('CLI', () => {
   describe('help', () => {
     it('shows help with --help flag', async () => {
@@ -208,6 +233,200 @@ describe('CLI', () => {
         });
       } finally {
         await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      }
+    });
+  });
+
+  describe('projects', () => {
+    const stylioProject = {
+      id: 'proj-stylio',
+      name: 'stylio',
+      project_token: 'aat_stylio',
+      allowed_origins: 'https://stylio.app',
+      created_at: '2026-04-12T12:00:00.000Z',
+    };
+
+    it('prints project ids', async () => {
+      const server = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/projects') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ projects: [stylioProject] }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['projects'], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(stripAnsi(stdout).includes('id: proj-stylio'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('updates origins by resolving project name to id', async () => {
+      let patchBody;
+      let patchUrl;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'GET' && req.url === '/projects') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ projects: [stylioProject] }));
+          return;
+        }
+        if (req.method === 'PATCH' && req.url === '/projects/proj-stylio') {
+          patchUrl = req.url;
+          patchBody = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ...stylioProject,
+            allowed_origins: patchBody.allowed_origins,
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'update',
+          'stylio',
+          '--origins',
+          'https://stylio.app,http://lvh.me:3101',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(patchUrl, '/projects/proj-stylio');
+        assert.deepEqual(patchBody, {
+          allowed_origins: 'https://stylio.app,http://lvh.me:3101',
+        });
+        assert.ok(stdout.includes('Project stylio updated'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('updates origins by id without requiring name', async () => {
+      let patchBody;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'GET' && req.url === '/projects') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ projects: [stylioProject] }));
+          return;
+        }
+        if (req.method === 'PATCH' && req.url === '/projects/proj-stylio') {
+          patchBody = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ...stylioProject,
+            allowed_origins: patchBody.allowed_origins,
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code } = await run([
+          'update',
+          'proj-stylio',
+          '--origins',
+          'https://stylio.app,http://lvh.me:3101',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.deepEqual(patchBody, {
+          allowed_origins: 'https://stylio.app,http://lvh.me:3101',
+        });
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('gets a project by resolving project name to id', async () => {
+      let detailUrl;
+      const server = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/projects') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ projects: [stylioProject] }));
+          return;
+        }
+        if (req.method === 'GET' && req.url === '/projects/proj-stylio') {
+          detailUrl = req.url;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(stylioProject));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['project', 'stylio'], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(detailUrl, '/projects/proj-stylio');
+        assert.ok(stdout.includes('Project: stylio'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('deletes a project by resolving project name to id', async () => {
+      let deleteUrl;
+      const server = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/projects') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ projects: [stylioProject] }));
+          return;
+        }
+        if (req.method === 'DELETE' && req.url === '/projects/proj-stylio') {
+          deleteUrl = req.url;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['delete', 'stylio'], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(deleteUrl, '/projects/proj-stylio');
+        assert.ok(stdout.includes('Project stylio deleted'));
+      } finally {
+        await server.close();
       }
     });
   });

@@ -171,6 +171,33 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastMethod, 'GET');
     });
 
+    it('updateProject origins-only → PATCH /projects/:id without name', async () => {
+      await api.updateProject('proj_123', { allowed_origins: 'https://x.test' });
+      assert.equal(lastUrl, 'https://api.test/projects/proj_123');
+      assert.equal(lastMethod, 'PATCH');
+      assert.equal(lastOpts.body, JSON.stringify({
+        allowed_origins: 'https://x.test',
+      }));
+    });
+
+    it('updateProject name-only → PATCH /projects/:id without origins', async () => {
+      await api.updateProject('proj_123', { name: 'new-site' });
+      assert.equal(lastUrl, 'https://api.test/projects/proj_123');
+      assert.equal(lastMethod, 'PATCH');
+      assert.equal(lastOpts.body, JSON.stringify({
+        name: 'new-site',
+      }));
+    });
+
+    it('updateProject omits null optional fields', async () => {
+      await api.updateProject('proj_123', { name: null, allowed_origins: 'https://x.test' });
+      assert.equal(lastUrl, 'https://api.test/projects/proj_123');
+      assert.equal(lastMethod, 'PATCH');
+      assert.equal(lastOpts.body, JSON.stringify({
+        allowed_origins: 'https://x.test',
+      }));
+    });
+
     it('deleteProject → DELETE /projects/:id', async () => {
       await api.deleteProject('proj_123');
       assert.equal(lastUrl, 'https://api.test/projects/proj_123');
