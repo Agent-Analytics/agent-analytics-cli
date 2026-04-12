@@ -130,7 +130,7 @@ npx @agent-analytics/cli@0.5.10 projects
 The installable Agent Skill lives in the canonical public repo:
 
 ```bash
-npx skills add Agent-Analytics/agent-analytics-skill@agent-analytics
+npx skills add Agent-Analytics/agent-analytics-skill
 ```
 
 Do not install the skill from this CLI repo. This package is the runtime CLI; the public skill definition is maintained separately so install instructions stay consistent across Codex, Cursor, Claude Code, and other Agent Skills-compatible tools.
