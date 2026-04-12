@@ -63,10 +63,11 @@ experiments complete <id>        Ship the winner
 whoami                           Show current account & tier
 feedback --message "..."         Send product/process feedback
 logout                           Clear saved local auth (does not revoke remote sessions)
-revoke-key                       Revoke and regenerate API key
+revoke-key                       Rotate a saved raw API key fallback
 ```
 
 The CLI is agent-session-first. It stores a renewable Agent Analytics session locally after browser approval and uses that bearer auth for API calls. Raw `aak_*` API keys still work, but only as an advanced/manual fallback for direct HTTP-style usage.
+Raw API-key rotation is not available to scoped agent sessions; manage keys from the dashboard or from a CLI login created with `login --token`.
 
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.

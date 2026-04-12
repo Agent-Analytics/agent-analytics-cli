@@ -935,8 +935,23 @@ function cmdDeleteAccount() {
   log('');
 }
 
-const cmdRevokeKey = withApi(async (api) => {
-  const data = await api.revokeKey();
+async function cmdRevokeKey() {
+  const auth = getStoredAuth();
+  if (!auth) {
+    error('Not logged in. Run: npx @agent-analytics/cli login --token <api-key>');
+  }
+  if (auth.access_token || auth.refresh_token) {
+    error('revoke-key only rotates a saved raw API key. Manage API keys from https://app.agentanalytics.sh/settings or log in with --token for the API-key fallback.');
+  }
+
+  const api = createApiClient(auth);
+  let data;
+  try {
+    data = await api.revokeKey();
+  } catch (err) {
+    error(err.message);
+  }
+
   setApiKey(data.api_key);
 
   warn('Old API key revoked');
@@ -945,7 +960,7 @@ const cmdRevokeKey = withApi(async (api) => {
   log(`${YELLOW}${data.api_key}${RESET}`);
   log(`${DIM}Saved to ${getConfigFile()}${RESET}\n`);
   warn('Update your agent with this new key!');
-});
+}
 
 const cmdFeedback = withApi(async (api, opts = {}) => {
   if (!opts.message) {
@@ -1265,7 +1280,7 @@ ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RE
 
 ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show current account & tier
-  ${CYAN}revoke-key${RESET}             Revoke and regenerate API key
+  ${CYAN}revoke-key${RESET}             Rotate a saved raw API key fallback
   ${CYAN}feedback${RESET}               Send product/process feedback
   ${CYAN}project${RESET} <id>           Get single project details
   ${CYAN}update${RESET} <id>            Update a project (--name, --origins)
