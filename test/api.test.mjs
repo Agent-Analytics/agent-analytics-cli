@@ -229,6 +229,17 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastUrl, 'https://api.test/properties?project=my-site&since=60d');
     });
 
+    it('getBreakdown → GET /breakdown with since', async () => {
+      await api.getBreakdown('my-site', {
+        property: 'path',
+        event: 'page_view',
+        since: '1d',
+        limit: 10,
+      });
+      assert.equal(lastUrl, 'https://api.test/breakdown?project=my-site&property=path&event=page_view&since=1d&limit=10');
+      assert.equal(lastMethod, 'GET');
+    });
+
     it('getAllSitesOverview → GET /account/all-sites', async () => {
       await api.getAllSitesOverview({ period: '30d', limit: 5 });
       assert.equal(lastUrl, 'https://api.test/account/all-sites?period=30d&limit=5');

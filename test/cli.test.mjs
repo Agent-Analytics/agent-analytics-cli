@@ -237,6 +237,77 @@ describe('CLI', () => {
     });
   });
 
+  describe('breakdown', () => {
+    async function runBreakdown(args) {
+      let requestUrl;
+      const server = createServer((req, res) => {
+        requestUrl = req.url;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          property: 'path',
+          event: 'page_view',
+          values: [],
+          total_events: 0,
+          total_with_property: 0,
+        }));
+      });
+
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      try {
+        const result = await run(args, {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: baseUrl,
+          },
+        });
+        return { ...result, requestUrl };
+      } finally {
+        await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      }
+    }
+
+    it('forwards --days as since to /breakdown', async () => {
+      const { code, requestUrl } = await runBreakdown([
+        'breakdown',
+        'my-site',
+        '--property', 'path',
+        '--event', 'page_view',
+        '--days', '1',
+      ]);
+
+      assert.equal(code, 0);
+      assert.equal(requestUrl, '/breakdown?project=my-site&property=path&event=page_view&since=1d&limit=20');
+    });
+
+    it('forwards --since directly to /breakdown', async () => {
+      const { code, requestUrl } = await runBreakdown([
+        'breakdown',
+        'my-site',
+        '--property', 'path',
+        '--since', '2026-04-13',
+      ]);
+
+      assert.equal(code, 0);
+      assert.equal(requestUrl, '/breakdown?project=my-site&property=path&since=2026-04-13&limit=20');
+    });
+
+    it('prefers --since over --days for /breakdown', async () => {
+      const { code, requestUrl } = await runBreakdown([
+        'breakdown',
+        'my-site',
+        '--property', 'path',
+        '--since', '2026-04-13',
+        '--days', '1',
+      ]);
+
+      assert.equal(code, 0);
+      assert.equal(requestUrl, '/breakdown?project=my-site&property=path&since=2026-04-13&limit=20');
+    });
+  });
+
   describe('projects', () => {
     const stylioProject = {
       id: 'proj-stylio',

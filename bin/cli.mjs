@@ -541,7 +541,7 @@ const cmdInsights = withApi(async (api, project, period = '7d') => {
 });
 
 const cmdBreakdown = withApi(async (api, project, property, opts = {}) => {
-  if (!project || !property) error('Usage: npx @agent-analytics/cli breakdown <project-name> --property <key> [--event page_view] [--limit 20]');
+  if (!project || !property) error('Usage: npx @agent-analytics/cli breakdown <project-name> --property <key> [--event page_view] [--days N] [--since 7d|YYYY-MM-DD] [--limit 20]');
 
   const data = await api.getBreakdown(project, { property, ...opts });
 
@@ -1290,6 +1290,7 @@ ${BOLD}KEY OPTIONS${RESET}
   --limit <N>        Max results (default: 100)
   --domain <url>     Site domain (required for create)
   --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
+  --since <VALUE>    Lookback start for commands that support explicit ranges
   --property <key>   Property to break down (path, referrer, utm_source, country)
   --event <name>     Filter by event name
   --message <text>   Feedback message for the product team
@@ -1422,6 +1423,7 @@ try {
     case 'breakdown':
       await cmdBreakdown(args[1], getArg('--property'), {
         event: getArg('--event'),
+        since: getArg('--since') || (getArg('--days') ? `${getArg('--days')}d` : undefined),
         limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
       });
       break;
