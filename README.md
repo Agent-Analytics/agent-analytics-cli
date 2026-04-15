@@ -122,7 +122,7 @@ For managed or remote runtimes that cannot receive a localhost callback, use `np
 If your saved session predates CLI `0.5.9`, run a fresh login before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx @agent-analytics/cli@0.5.11 projects
+npx @agent-analytics/cli@0.5.12 projects
 ```
 
 ## Agent Skill
