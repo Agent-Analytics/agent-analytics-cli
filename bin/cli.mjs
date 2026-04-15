@@ -831,7 +831,7 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
   --from      Start date (ISO, e.g. 2026-01-01)
   --to        End date (ISO)
   --days      Shorthand for --from (e.g. --days 30)
-  --count-mode raw or session_then_user (default for event_count; mixed session/no-session duplicates collapse by user)
+  --count-mode raw or session_then_user (default: raw event rows)
   --order-by  event_count, unique_users, session_count, date, event
   --order     asc or desc
   --limit     Max rows (default 100, max 1000)
@@ -842,7 +842,7 @@ Invalid filter fields now fail loudly instead of being ignored.
 
 ${BOLD}Examples:${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
-  ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode raw${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode session_then_user${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'${RESET}`);

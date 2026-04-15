@@ -183,7 +183,7 @@ describe('CLI', () => {
   });
 
   describe('query', () => {
-    it('forwards --count-mode to the /query payload', async () => {
+    it('forwards --count-mode session_then_user to the /query payload', async () => {
       let requestBody;
       const server = createServer((req, res) => {
         if (req.method !== 'POST' || req.url !== '/query') {
@@ -214,7 +214,7 @@ describe('CLI', () => {
           'query',
           'my-site',
           '--metrics', 'event_count',
-          '--count-mode', 'raw',
+          '--count-mode', 'session_then_user',
           '--limit', '25',
         ], {
           env: {
@@ -229,11 +229,25 @@ describe('CLI', () => {
           project: 'my-site',
           metrics: ['event_count'],
           limit: 25,
-          count_mode: 'raw',
+          count_mode: 'session_then_user',
         });
       } finally {
         await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
       }
+    });
+
+    it('documents raw event rows as the default count mode', async () => {
+      const { code, stdout } = await run(['query'], {
+        env: {
+          AGENT_ANALYTICS_API_KEY: 'aak_test123',
+        },
+      });
+      const output = stripAnsi(stdout);
+
+      assert.notEqual(code, 0);
+      assert.ok(output.includes('--count-mode raw or session_then_user (default: raw event rows)'));
+      assert.ok(output.includes('--count-mode session_then_user'));
+      assert.ok(!output.includes('mixed session/no-session duplicates collapse by user'));
     });
   });
 
