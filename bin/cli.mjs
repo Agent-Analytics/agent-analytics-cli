@@ -122,6 +122,38 @@ function createApiClient(auth = getStoredAuth()) {
   });
 }
 
+function accountDisplayName(account = {}) {
+  return account.github_login || account.google_name || account.email;
+}
+
+function logConnected(account, savedMessage = `Agent session saved to ${getConfigFile()}`) {
+  success(`Connected as ${BOLD}${accountDisplayName(account)}${RESET} (${account.tier})`);
+  log(`${DIM}${savedMessage}${RESET}`);
+}
+
+function isDetachedAlreadyExchangedError(err) {
+  const message = String(err?.message || '').toLowerCase();
+  return (
+    err?.code === 'AUTH_REQUEST_ALREADY_EXCHANGED' ||
+    (
+      err?.code === 'INVALID_STATE' &&
+      (message === 'auth request is not ready' || message === 'auth request already exchanged')
+    ) ||
+    message === 'auth request already exchanged'
+  );
+}
+
+async function verifyStoredAgentSession() {
+  const auth = getStoredAuth();
+  if (!auth?.access_token && !auth?.refresh_token) return null;
+  try {
+    const api = createApiClient(auth);
+    return await api.getAccount();
+  } catch {
+    return null;
+  }
+}
+
 function requireClient() {
   const auth = getStoredAuth();
   if (!auth) {
@@ -163,11 +195,22 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
       if (!authRequestId) {
         error('Manual exchange requires --auth-request <id> together with --exchange-code <code>');
       }
-      const result = await finishManualExchange(api, authRequestId, exchangeCode);
-      setAgentSession(result.agent_session);
-      updateStoredAccount(result.account);
-      success(`Connected as ${BOLD}${result.account.github_login || result.account.google_name || result.account.email}${RESET} (${result.account.tier})`);
-      log(`${DIM}Agent session saved to ${getConfigFile()}${RESET}`);
+      try {
+        const result = await finishManualExchange(api, authRequestId, exchangeCode);
+        setAgentSession(result.agent_session);
+        updateStoredAccount(result.account);
+        logConnected(result.account);
+      } catch (err) {
+        if (!isDetachedAlreadyExchangedError(err)) {
+          throw err;
+        }
+        const account = await verifyStoredAgentSession();
+        if (!account) {
+          throw err;
+        }
+        updateStoredAccount(account);
+        logConnected(account);
+      }
       return;
     }
 
@@ -189,11 +232,18 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
         stopWaiting(`${DIM}Browser approval received.${RESET}`);
         setAgentSession(exchanged.agent_session);
         updateStoredAccount(exchanged.account);
-        success(`Connected as ${BOLD}${exchanged.account.github_login || exchanged.account.google_name || exchanged.account.email}${RESET} (${exchanged.account.tier})`);
-        log(`${DIM}Detached request ${started.auth_request_id} approved and saved to ${getConfigFile()}${RESET}`);
+        logConnected(exchanged.account, `Detached request ${started.auth_request_id} approved and saved to ${getConfigFile()}`);
         return;
       } catch (err) {
         stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
+        if (isDetachedAlreadyExchangedError(err)) {
+          const account = await verifyStoredAgentSession();
+          if (account) {
+            updateStoredAccount(account);
+            logConnected(account);
+            return;
+          }
+        }
         warn(err.message);
         log(`Resume detached approval later: ${CYAN}npx @agent-analytics/cli login --auth-request <id> --exchange-code <code>${RESET}`);
         throw err;
@@ -216,8 +266,7 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
       stopWaiting(`${DIM}Browser approval received.${RESET}`);
       setAgentSession(result.agent_session);
       updateStoredAccount(result.account);
-      success(`Connected as ${BOLD}${result.account.github_login || result.account.google_name || result.account.email}${RESET} (${result.account.tier})`);
-      log(`${DIM}Agent session saved to ${getConfigFile()}${RESET}`);
+      logConnected(result.account);
       log('');
       log(`Fallbacks:`);
       log(`  ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);

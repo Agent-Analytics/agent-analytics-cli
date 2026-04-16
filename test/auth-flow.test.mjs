@@ -211,4 +211,41 @@ describe('auth flow helpers', () => {
       );
     });
   });
+
+  it('stops detached polling when the auth request was already exchanged', async () => {
+    await withServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-exchanged',
+            authorize_url: 'https://approve.example/req-exchanged',
+            approval_code: 'DONE1234',
+            poll_token: 'aap_exchanged',
+          }));
+          return;
+        }
+        if (req.method === 'POST' && req.url === '/agent-sessions/poll') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'exchanged', exchange_code: 'aae_exchanged' }));
+          return;
+        }
+        res.writeHead(404).end();
+      });
+    }, async (baseUrl) => {
+      const api = new AgentAnalyticsAPI(null, baseUrl);
+      await assert.rejects(
+        () => loginDetached(api, {
+          timeoutMs: 2000,
+          pollIntervalMs: 10,
+        }),
+        {
+          code: 'AUTH_REQUEST_ALREADY_EXCHANGED',
+          message: 'auth request already exchanged',
+        }
+      );
+    });
+  });
 });

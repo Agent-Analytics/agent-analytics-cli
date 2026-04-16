@@ -167,6 +167,155 @@ describe('CLI', () => {
         await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
       }
     });
+
+    async function runDetachedExchangeRace({ secondExchangeStatus = 400, secondExchangeMessage = 'auth request is not ready' } = {}) {
+      const tempHome = createTempConfigHome();
+      let pollCount = 0;
+      let exchangeCount = 0;
+      let exchanged = false;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          await readRequestJson(req);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-race',
+            authorize_url: 'https://approve.example/req-race',
+            approval_code: 'RACE1234',
+            poll_token: 'aap_race',
+          }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/poll') {
+          await readRequestJson(req);
+          pollCount += 1;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(
+            pollCount === 1
+              ? { status: 'pending' }
+              : { status: 'approved', exchange_code: 'aae_race' }
+          ));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/exchange') {
+          const payload = await readRequestJson(req);
+          exchangeCount += 1;
+          if (exchanged) {
+            res.writeHead(secondExchangeStatus, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ code: 'INVALID_STATE', message: secondExchangeMessage }));
+            return;
+          }
+
+          assert.equal(payload.auth_request_id, 'req-race');
+          assert.equal(payload.exchange_code, 'aae_race');
+          exchanged = true;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              id: 'sess-race',
+              access_token: 'aas_race',
+              refresh_token: 'aar_race',
+              access_expires_at: Date.now() + 60_000,
+              refresh_expires_at: Date.now() + 600_000,
+              scopes: ['account:read'],
+            },
+            account: {
+              email: 'race@example.com',
+              tier: 'pro',
+            },
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/account') {
+          if (req.headers.authorization === 'Bearer aas_race') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              email: 'race@example.com',
+              tier: 'pro',
+              projects_count: 4,
+            }));
+            return;
+          }
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ message: 'unauthorized' }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const env = {
+          AGENT_ANALYTICS_URL: server.baseUrl,
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+        };
+        const detached = await run(['login', '--detached'], { env });
+        const manual = await run(['login', '--auth-request', 'req-race', '--exchange-code', 'aae_race'], { env });
+        const config = readJson(tempHome.configFile);
+        return { detached, manual, config, pollCount, exchangeCount };
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    }
+
+    it('treats old already-exchanged detached failures as success when local agent session verifies', async () => {
+      const { detached, manual, config, pollCount, exchangeCount } = await runDetachedExchangeRace();
+
+      assert.equal(detached.code, 0);
+      assert.equal(manual.code, 0);
+      assert.ok(manual.stdout.includes('Connected as'));
+      assert.ok(manual.stdout.includes('race@example.com'));
+      assert.equal(config.agent_session.id, 'sess-race');
+      assert.equal(config.email, 'race@example.com');
+      assert.equal(pollCount, 2);
+      assert.equal(exchangeCount, 2);
+    });
+
+    it('treats explicit already-exchanged detached failures as success when local agent session verifies', async () => {
+      const { manual, config } = await runDetachedExchangeRace({
+        secondExchangeStatus: 409,
+        secondExchangeMessage: 'auth request already exchanged',
+      });
+
+      assert.equal(manual.code, 0);
+      assert.ok(manual.stdout.includes('Connected as'));
+      assert.ok(manual.stdout.includes('race@example.com'));
+      assert.equal(config.agent_session.id, 'sess-race');
+    });
+
+    it('keeps detached exchange failures when no valid local agent session exists', async () => {
+      const tempHome = createTempConfigHome();
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/exchange') {
+          await readRequestJson(req);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 'INVALID_STATE', message: 'auth request is not ready' }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const result = await run(['login', '--auth-request', 'req-race', '--exchange-code', 'aae_race'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          },
+        });
+
+        assert.notEqual(result.code, 0);
+        assert.ok(result.stdout.includes('auth request is not ready'));
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
   });
 
   describe('feedback', () => {
