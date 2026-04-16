@@ -5,7 +5,7 @@
  * 
  * Usage:
  *   npx @agent-analytics/cli login                — Start browser-based agent session login
- *   npx @agent-analytics/cli login --detached     — Detached/browser approval flow
+ *   npx @agent-analytics/cli login --detached     — Detached approval handoff
  *   npx @agent-analytics/cli login --token <key>  — Advanced fallback: save a raw API key
  *   npx @agent-analytics/cli logout               — Clear saved local auth
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
@@ -45,7 +45,7 @@
  */
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
-import { finishManualExchange, loginDetached, loginInteractive } from '../lib/auth-flow.mjs';
+import { finishManualExchange, loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
 import {
   clearStoredAuth,
   getBaseUrl,
@@ -154,6 +154,14 @@ async function verifyStoredAgentSession() {
   }
 }
 
+function logDetachedApproval(started) {
+  log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
+  log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
+  log(`${DIM}Send the approval URL to the user, then complete login with the finish code.${RESET}`);
+  log(`${DIM}Resume with:${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
+}
+
 function requireClient() {
   const auth = getStoredAuth();
   if (!auth) {
@@ -187,7 +195,7 @@ async function resolveProject(api, target) {
 
 // ==================== COMMANDS ====================
 
-async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
+async function cmdLogin({ token, detached, exchangeCode, authRequestId, waitForDetached }) {
   if (!token) {
     const api = createApiClient(null);
 
@@ -218,13 +226,18 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId }) {
       heading('Agent Analytics — Detached Login');
       let stopWaiting = () => {};
       try {
+        if (!waitForDetached) {
+          const started = await startDetachedLogin(api);
+          logDetachedApproval(started);
+          log('');
+          success(`Detached approval request created: ${started.auth_request_id}`);
+          return;
+        }
+
         const { started, exchanged } = await loginDetached(api, {
           onPending(started) {
-            log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
-            log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
-            log(`${DIM}Approve in the browser, then reply with the finish code if this runtime cannot pick it up automatically.${RESET}`);
-            log(`${DIM}You can always resume later with:${RESET}`);
-            log(`  ${CYAN}npx @agent-analytics/cli login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
+            logDetachedApproval(started);
+            log(`${DIM}Polling is enabled because --wait/--poll was passed.${RESET}`);
             log('');
             stopWaiting = startWaitingIndicator('Waiting for browser approval...');
           },
@@ -1293,7 +1306,8 @@ ${BOLD}USAGE${RESET}
 
 ${BOLD}SETUP${RESET}
   ${CYAN}login${RESET}                  Browser-based agent session login
-  ${CYAN}login${RESET} --detached       Detached approval flow for remote/headless runtimes
+  ${CYAN}login${RESET} --detached       Detached approval handoff; prints URL and exits
+  ${CYAN}login${RESET} --detached --wait  Detached approval with polling
   ${CYAN}login${RESET} --token <key>    Advanced/manual API key fallback
   ${CYAN}logout${RESET}                 Clear saved local auth
   ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
@@ -1392,6 +1406,7 @@ try {
         detached: args.includes('--detached'),
         exchangeCode: getArg('--exchange-code'),
         authRequestId: getArg('--auth-request'),
+        waitForDetached: args.includes('--wait') || args.includes('--poll'),
       });
       break;
     case 'logout':

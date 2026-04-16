@@ -123,7 +123,8 @@ describe('CLI', () => {
   });
 
   describe('login without token', () => {
-    it('starts the detached agent-session login flow and prints the manual resume command', async () => {
+    it('starts the detached agent-session handoff and exits after printing the manual resume command', async () => {
+      let pollCount = 0;
       const server = createServer((req, res) => {
         let body = '';
         req.on('data', (chunk) => { body += chunk; });
@@ -139,6 +140,7 @@ describe('CLI', () => {
             return;
           }
           if (req.method === 'POST' && req.url === '/agent-sessions/poll') {
+            pollCount += 1;
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ status: 'pending' }));
             return;
@@ -158,11 +160,13 @@ describe('CLI', () => {
           timeout: 1200,
         });
 
-        assert.equal(code, null);
+        assert.equal(code, 0);
         assert.ok(stdout.includes('Agent Analytics — Detached Login'));
         assert.ok(stdout.includes('Approval URL:'));
         assert.ok(stdout.includes('req-cli-detached'));
         assert.ok(stdout.includes('login --auth-request req-cli-detached --exchange-code <code>'));
+        assert.ok(stdout.includes('Detached approval request created: req-cli-detached'));
+        assert.equal(pollCount, 0);
       } finally {
         await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
       }
@@ -252,7 +256,7 @@ describe('CLI', () => {
           AGENT_ANALYTICS_URL: server.baseUrl,
           XDG_CONFIG_HOME: tempHome.xdgConfigHome,
         };
-        const detached = await run(['login', '--detached'], { env });
+        const detached = await run(['login', '--detached', '--wait'], { env });
         const manual = await run(['login', '--auth-request', 'req-race', '--exchange-code', 'aae_race'], { env });
         const config = readJson(tempHome.configFile);
         return { detached, manual, config, pollCount, exchangeCount };

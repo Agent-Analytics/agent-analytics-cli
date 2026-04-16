@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { loginDetached, loginInteractive } from '../lib/auth-flow.mjs';
+import { loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
 import { DEFAULT_AGENT_SESSION_SCOPES } from '../lib/scopes.mjs';
 
@@ -175,6 +175,46 @@ describe('auth flow helpers', () => {
       assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
       assert.equal(result.started.auth_request_id, 'req-detached');
       assert.equal(result.exchanged.agent_session.refresh_token, 'aar_detached');
+    });
+  });
+
+  it('starts detached login without polling for handoff mode', async () => {
+    let startPayload = null;
+    let pollCount = 0;
+
+    await withServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        const payload = body ? JSON.parse(body) : {};
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          startPayload = payload;
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-handoff',
+            authorize_url: 'https://approve.example/req-handoff',
+            approval_code: 'HAND1234',
+            poll_token: 'aap_handoff',
+          }));
+          return;
+        }
+        if (req.method === 'POST' && req.url === '/agent-sessions/poll') {
+          pollCount += 1;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'pending' }));
+          return;
+        }
+        res.writeHead(404).end();
+      });
+    }, async (baseUrl) => {
+      const api = new AgentAnalyticsAPI(null, baseUrl);
+      const started = await startDetachedLogin(api);
+
+      assert.equal(startPayload.mode, 'detached');
+      assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
+      assert.equal(started.auth_request_id, 'req-handoff');
+      assert.equal(started.approval_code, 'HAND1234');
+      assert.equal(pollCount, 0);
     });
   });
 

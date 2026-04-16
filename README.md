@@ -29,7 +29,8 @@ npx @agent-analytics/cli logout
 ```bash
 # Setup
 login                            Browser approval flow for signup/login
-login --detached                 Detached approval flow with poll/manual exchange
+login --detached                 Detached handoff: print approval URL and exit
+login --detached --wait          Detached approval with polling for local shells
 login --token <key>              Advanced fallback: save a raw API key
 logout                           Clear your saved local auth
 create <name> --domain <url>     Create a project and get your tracking snippet
@@ -117,12 +118,14 @@ Claude Code, OpenClaw, Cursor, Codex — any AI agent that can run `npx`. Or add
 claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mcp
 ```
 
-For managed or remote runtimes that cannot receive a localhost callback, use `npx @agent-analytics/cli login --detached` and complete approval in the browser or with manual exchange.
+For managed, issue-based, or remote runtimes that cannot receive a localhost callback or keep a long-running process alive, use `npx @agent-analytics/cli login --detached`. It prints the approval URL and exits. After browser approval, resume with the printed `login --auth-request <id> --exchange-code <code>` command.
+
+For a local shell where it is useful to keep waiting, use `npx @agent-analytics/cli login --detached --wait`.
 
 If your saved session predates CLI `0.5.9`, run a fresh login before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx @agent-analytics/cli@0.5.12 projects
+npx @agent-analytics/cli@0.5.14 projects
 ```
 
 ## Agent Skill
