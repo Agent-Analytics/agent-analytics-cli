@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -119,6 +119,99 @@ describe('CLI', () => {
       const { code, stdout } = await run(['nonexistent']);
       assert.notEqual(code, 0);
       assert.ok(stdout.includes('Unknown command: nonexistent'));
+    });
+  });
+
+  describe('public demo mode', () => {
+    it('prints no-login demo prompts and commands', async () => {
+      const { code, stdout } = await run(['demo']);
+      const plain = stripAnsi(stdout);
+
+      assert.equal(code, 0);
+      assert.ok(plain.includes('Try Agent Analytics with seeded demo data'));
+      assert.ok(plain.includes('npx @agent-analytics/cli@'));
+      assert.ok(plain.includes('--demo projects'));
+      assert.ok(plain.includes('which page is leaking signups'));
+    });
+
+    it('fetches a demo session, uses bearer auth, and does not write config', async () => {
+      const tempHome = createTempConfigHome();
+      let demoSessionCalls = 0;
+      let projectsAuth;
+      const server = await startServer((req, res) => {
+        if (req.method === 'POST' && req.url === '/demo/session') {
+          demoSessionCalls += 1;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            mode: 'demo',
+            agent_session: {
+              access_token: 'aas_demo_readonly',
+              access_expires_at: Date.now() + 60_000,
+              scopes: ['account:read', 'projects:read', 'analytics:read', 'experiments:read'],
+            },
+            projects: [{ name: 'agentanalytics-demo' }],
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/projects') {
+          projectsAuth = req.headers.authorization;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            projects: [{
+              id: 'proj-demo',
+              name: 'agentanalytics-demo',
+              project_token: 'aat_demo',
+              allowed_origins: 'https://agentanalytics.sh',
+              created_at: Date.now(),
+            }],
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['--demo', 'projects'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(demoSessionCalls, 1);
+        assert.equal(projectsAuth, 'Bearer aas_demo_readonly');
+        assert.ok(stdout.includes('agentanalytics-demo'));
+        assert.equal(existsSync(tempHome.configFile), false);
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('blocks mutating commands locally before making API requests', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['--demo', 'create', 'demo-site', '--domain', 'https://demo.example'], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+
+        assert.notEqual(code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(stdout).includes('Demo mode is read-only'));
+      } finally {
+        await server.close();
+      }
     });
   });
 

@@ -46,6 +46,7 @@
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
 import { finishManualExchange, loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
+import { readFileSync } from 'node:fs';
 import {
   clearStoredAuth,
   getBaseUrl,
@@ -65,6 +66,8 @@ const RED = '\x1b[31m';
 const MAGENTA = '\x1b[35m';
 const WHITE = '\x1b[37m';
 const RESET = '\x1b[0m';
+const DEFAULT_BASE_URL = 'https://api.agentanalytics.sh';
+const CLI_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 function log(msg = '') { console.log(msg); }
 function success(msg) { log(`${GREEN}✓${RESET} ${msg}`); }
@@ -122,6 +125,20 @@ function createApiClient(auth = getStoredAuth()) {
   });
 }
 
+function getDemoBaseUrl() {
+  return process.env.AGENT_ANALYTICS_URL || DEFAULT_BASE_URL;
+}
+
+async function createDemoApiClient() {
+  const bootstrap = new AgentAnalyticsAPI(null, getDemoBaseUrl());
+  const demo = await bootstrap.startDemoSession();
+  const accessToken = demo?.agent_session?.access_token;
+  if (!accessToken) {
+    throw new Error('Demo session response did not include an access token');
+  }
+  return new AgentAnalyticsAPI({ access_token: accessToken }, getDemoBaseUrl());
+}
+
 function accountDisplayName(account = {}) {
   return account.github_login || account.google_name || account.email;
 }
@@ -162,7 +179,10 @@ function logDetachedApproval(started) {
   log(`  ${CYAN}npx @agent-analytics/cli login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
 }
 
-function requireClient() {
+async function requireClient() {
+  if (demoMode) {
+    return createDemoApiClient();
+  }
   const auth = getStoredAuth();
   if (!auth) {
     error('Not logged in. Run: npx @agent-analytics/cli login');
@@ -172,8 +192,8 @@ function requireClient() {
 
 function withApi(fn) {
   return async (...args) => {
-    const api = requireClient();
     try {
+      const api = await requireClient();
       return await fn(api, ...args);
     } catch (err) {
       error(err.message);
@@ -327,6 +347,26 @@ function cmdLogout() {
     warn('AGENT_ANALYTICS_API_KEY is still set in this shell, so the CLI will keep authenticating.');
     log(`  ${CYAN}unset AGENT_ANALYTICS_API_KEY${RESET}`);
   }
+}
+
+function cmdDemo() {
+  heading('Try Agent Analytics with seeded demo data');
+  log('');
+  log('No signup needed. Your agent can run real read-only CLI commands against a hosted sample project.');
+  log('');
+  heading('Prompt examples:');
+  log(`  ${CYAN}Run the Agent Analytics demo and tell me which page is leaking signups.${RESET}`);
+  log(`  ${CYAN}Use the demo data to find the highest-friction signup path.${RESET}`);
+  log(`  ${CYAN}Check the demo experiment and tell me whether there is a likely winner.${RESET}`);
+  log('');
+  heading('Commands:');
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo projects${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo stats agentanalytics-demo --days 7${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo paths agentanalytics-demo --goal signup --since 30d${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo experiments list agentanalytics-demo${RESET}`);
+  log('');
+  log(`${DIM}Demo mode uses a short-lived read-only session and does not touch your saved CLI login.${RESET}`);
 }
 
 const cmdCreate = withApi(async (api, name, domain) => {
@@ -1309,6 +1349,8 @@ ${BOLD}SETUP${RESET}
   ${CYAN}login${RESET} --detached       Detached approval handoff; prints URL and exits
   ${CYAN}login${RESET} --detached --wait  Detached approval with polling
   ${CYAN}login${RESET} --token <key>    Advanced/manual API key fallback
+  ${CYAN}demo${RESET}                   Print no-sign-in public demo prompts and commands
+  ${CYAN}--demo${RESET} <command>        Run a read-only command against seeded demo data
   ${CYAN}logout${RESET}                 Clear saved local auth
   ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
   ${CYAN}projects${RESET}               List all your projects
@@ -1390,8 +1432,31 @@ ${DIM}https://agentanalytics.sh${RESET}
 
 // ==================== MAIN ====================
 
-const args = process.argv.slice(2);
-const command = args[0];
+const rawArgs = process.argv.slice(2);
+const demoMode = rawArgs.includes('--demo');
+const args = rawArgs.filter((arg) => arg !== '--demo');
+const command = demoMode && !args[0] ? 'demo' : args[0];
+
+const DEMO_MUTATING_COMMANDS = new Set([
+  'login',
+  'logout',
+  'create',
+  'init',
+  'update',
+  'delete',
+  'revoke-key',
+  'feedback',
+  'delete-account',
+]);
+
+function isDemoMutation(commandName, commandArgs) {
+  if (!demoMode) return false;
+  if (DEMO_MUTATING_COMMANDS.has(commandName)) return true;
+  if (commandName === 'experiments') {
+    return ['create', 'pause', 'resume', 'complete', 'delete'].includes(commandArgs[1]);
+  }
+  return false;
+}
 
 function getArg(flag) {
   const idx = args.indexOf(flag);
@@ -1399,7 +1464,14 @@ function getArg(flag) {
 }
 
 try {
+  if (isDemoMutation(command, args)) {
+    error('Demo mode is read-only. Use read commands like --demo projects, --demo stats, --demo paths, --demo funnel, or --demo experiments list.');
+  }
+
   switch (command) {
+    case 'demo':
+      cmdDemo();
+      break;
     case 'login':
       await cmdLogin({
         token: getArg('--token'),

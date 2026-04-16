@@ -6,6 +6,17 @@ Analytics your AI agent can actually use — track, analyze, experiment, optimiz
 
 ## Quick Start
 
+Try the seeded public demo without signing in:
+
+```bash
+npx @agent-analytics/cli@0.5.15 demo
+npx @agent-analytics/cli@0.5.15 --demo projects
+npx @agent-analytics/cli@0.5.15 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
+npx @agent-analytics/cli@0.5.15 --demo experiments list agentanalytics-demo
+```
+
+Demo mode fetches a short-lived read-only `aas_*` session from the hosted API. It does not expose a raw `aak_*` API key, does not write local CLI config, and blocks mutating commands before making API requests.
+
 ```bash
 # 1. Start agent login or signup in the browser
 npx @agent-analytics/cli login
@@ -125,7 +136,7 @@ For a local shell where it is useful to keep waiting, use `npx @agent-analytics/
 If your saved session predates CLI `0.5.9`, run a fresh login before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx @agent-analytics/cli@0.5.14 projects
+npx @agent-analytics/cli@0.5.15 projects
 ```
 
 ## Agent Skill
