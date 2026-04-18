@@ -21,16 +21,16 @@ Get the fastest path to useful analytics before installing events:
 
 ```bash
 # 1. Preview what your agent should track first
-npx @agent-analytics/cli@0.5.17 scan https://mysite.com --json
+npx @agent-analytics/cli@0.5.18 scan https://mysite.com --json
 
 # 2. Sign in when you want the full instrumentation plan
-npx @agent-analytics/cli@0.5.17 login
+npx @agent-analytics/cli@0.5.18 login
 
 # 3. Run the full signed-in analysis
-npx @agent-analytics/cli@0.5.17 scan https://mysite.com --full --json
+npx @agent-analytics/cli@0.5.18 scan https://mysite.com --full --json
 
 # Or resume and upgrade the anonymous analysis after login
-npx @agent-analytics/cli@0.5.17 scan \
+npx @agent-analytics/cli@0.5.18 scan \
   --resume <analysis_id> \
   --resume-token <resume_token> \
   --full \

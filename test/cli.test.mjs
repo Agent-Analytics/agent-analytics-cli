@@ -1115,6 +1115,88 @@ describe('CLI', () => {
       }
     });
 
+    it('refreshes an expired agent session before a direct full scan', async () => {
+      const requestAuths = [];
+      let refreshCalls = 0;
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_scan_expired',
+          access_token: 'aas_expired_scan',
+          refresh_token: 'aar_scan_refresh',
+          access_expires_at: 1,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/website-scans') {
+          requestAuths.push(req.headers.authorization);
+          await readRequestJson(req);
+          if (requestAuths.length === 1) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'AUTH_REQUIRED', message: 'login required for full analysis' }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_full_after_refresh',
+            mode: 'full',
+            normalized_url: 'https://example.com/',
+            result: {
+              minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
+            },
+          }));
+          return;
+        }
+        if (req.method === 'POST' && req.url === '/agent-sessions/refresh') {
+          refreshCalls += 1;
+          const body = await readRequestJson(req);
+          assert.equal(body.refresh_token, 'aar_scan_refresh');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            agent_session: {
+              id: 'sess_scan_expired',
+              access_token: 'aas_refreshed_scan',
+              refresh_token: 'aar_scan_refresh',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read'],
+            },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          '--config-dir', config.configDir,
+          'scan',
+          'https://example.com/',
+          '--full',
+          '--json',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(refreshCalls, 1);
+        assert.deepEqual(requestAuths, ['Bearer aas_expired_scan', 'Bearer aas_refreshed_scan']);
+        assert.equal(readJson(config.configFile).agent_session.access_token, 'aas_refreshed_scan');
+        assert.equal(data.analysis_id, 'scan_full_after_refresh');
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
     it('uses saved auth for scan <url> previews when logged in', async () => {
       let requestAuth;
       const config = createExplicitConfigDir({
