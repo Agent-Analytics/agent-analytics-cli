@@ -8,6 +8,7 @@
  *   npx @agent-analytics/cli login --detached     — Detached approval handoff
  *   npx @agent-analytics/cli login --token <key>  — Advanced fallback: save a raw API key
  *   npx @agent-analytics/cli logout               — Clear saved local auth
+ *   npx @agent-analytics/cli scan <url>           — Preview what your agent should track first
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
  *   npx @agent-analytics/cli projects             — List your projects
  *   npx @agent-analytics/cli all-sites            — Historical summary across all projects
@@ -42,6 +43,7 @@
  *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
  *   npx @agent-analytics/cli feedback --message "..." — Send product/process feedback
  *   npx @agent-analytics/cli whoami               — Show current account
+ *   npx @agent-analytics/cli auth status          — Show local auth path and expiry metadata
  */
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
@@ -49,11 +51,15 @@ import { finishManualExchange, loginDetached, loginInteractive, startDetachedLog
 import { readFileSync } from 'node:fs';
 import {
   clearStoredAuth,
+  getAuthSource,
   getBaseUrl,
+  getConfig,
   getConfigFile,
+  getConfigLocation,
   getStoredAuth,
   setAgentSession,
   setApiKey,
+  setConfigDirOverride,
   updateStoredAccount,
 } from '../lib/config.mjs';
 
@@ -143,6 +149,23 @@ function accountDisplayName(account = {}) {
   return account.github_login || account.google_name || account.email;
 }
 
+function shellQuote(value) {
+  const str = String(value);
+  if (/^[A-Za-z0-9_/:.,@%+=-]+$/.test(str)) return str;
+  return `'${str.replace(/'/g, `'\\''`)}'`;
+}
+
+function cliInvocationWithConfig() {
+  const location = getConfigLocation();
+  if (location.source === 'flag') {
+    return `npx @agent-analytics/cli --config-dir ${shellQuote(location.dir)}`;
+  }
+  if (location.source === 'env') {
+    return `AGENT_ANALYTICS_CONFIG_DIR=${shellQuote(location.dir)} npx @agent-analytics/cli`;
+  }
+  return 'npx @agent-analytics/cli';
+}
+
 function logConnected(account, savedMessage = `Agent session saved to ${getConfigFile()}`) {
   success(`Connected as ${BOLD}${accountDisplayName(account)}${RESET} (${account.tier})`);
   log(`${DIM}${savedMessage}${RESET}`);
@@ -176,7 +199,7 @@ function logDetachedApproval(started) {
   log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
   log(`${DIM}Send the approval URL to the user, then complete login with the finish code.${RESET}`);
   log(`${DIM}Resume with:${RESET}`);
-  log(`  ${CYAN}npx @agent-analytics/cli login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
+  log(`  ${CYAN}${cliInvocationWithConfig()} login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
 }
 
 async function requireClient() {
@@ -278,7 +301,7 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId, waitForD
           }
         }
         warn(err.message);
-        log(`Resume detached approval later: ${CYAN}npx @agent-analytics/cli login --auth-request <id> --exchange-code <code>${RESET}`);
+        log(`Resume detached approval later: ${CYAN}${cliInvocationWithConfig()} login --auth-request <id> --exchange-code <code>${RESET}`);
         throw err;
       }
     }
@@ -355,27 +378,128 @@ function cmdDemo() {
   log('No signup needed. Your agent can run real read-only CLI commands against a hosted sample project.');
   log('');
   heading('Prompt examples:');
-  log(`  ${CYAN}Run the Agent Analytics demo and tell me which page is leaking signups.${RESET}`);
-  log(`  ${CYAN}Use the demo data to find the highest-friction signup path.${RESET}`);
-  log(`  ${CYAN}Check the demo experiment and tell me whether there is a likely winner.${RESET}`);
+  log(`  ${CYAN}Audit the signup leak, question the data, and tell me the next fix to test.${RESET}`);
+  log(`  ${CYAN}Check whether the CTA experiment winner actually fixes the biggest signup problem.${RESET}`);
+  log(`  ${CYAN}Turn the demo analytics into a developer-ready growth task with metrics and guardrails.${RESET}`);
   log('');
   heading('Commands:');
   log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo projects${RESET}`);
-  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo stats agentanalytics-demo --days 7${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo stats agentanalytics-demo --days 30${RESET}`);
   log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo paths agentanalytics-demo --goal signup --since 30d${RESET}`);
   log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"${RESET}`);
-  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo experiments list agentanalytics-demo${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo breakdown agentanalytics-demo --property path --event signup_started --days 30${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo breakdown agentanalytics-demo --property path --event signup --days 30${RESET}`);
+  log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo experiments get exp_demo_signup_cta${RESET}`);
   log('');
   log(`${DIM}Demo mode uses a short-lived read-only session and does not touch your saved CLI login.${RESET}`);
 }
 
-const cmdCreate = withApi(async (api, name, domain) => {
+function printJson(data) {
+  process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+}
+
+function printScanResult(data, { full = false } = {}) {
+  const result = full ? (data.result || data.full_result || data.preview) : data.preview;
+  heading(full ? 'Full Instrumentation Plan' : 'What your agent should track first');
+  log('');
+  log(`  ${BOLD}Analysis:${RESET} ${data.analysis_id}`);
+  if (data.normalized_url) log(`  ${BOLD}Website:${RESET}  ${data.normalized_url}`);
+  if (data.cached) log(`  ${DIM}Using a recent preview for this domain.${RESET}`);
+  log('');
+
+  const events = result?.minimum_viable_instrumentation || [];
+  if (events.length) {
+    heading('Minimum viable instrumentation');
+    for (const event of events) {
+      log(`  ${BOLD}${event.priority || '-'}${RESET}. ${CYAN}${event.event}${RESET}`);
+      if (event.why_this_matters_now) log(`     ${event.why_this_matters_now}`);
+      if (Array.isArray(event.unlocks_questions) && event.unlocks_questions.length) {
+        log(`     ${DIM}Unlocks:${RESET} ${event.unlocks_questions.join(' | ')}`);
+      }
+    }
+    log('');
+  }
+
+  const blindspots = result?.current_blindspots || [];
+  if (blindspots.length) {
+    heading('Current blind spots');
+    for (const item of blindspots.slice(0, 3)) log(`  - ${item}`);
+    log('');
+  }
+
+  const notNeeded = result?.not_needed_yet || [];
+  if (notNeeded.length) {
+    heading('Not needed yet');
+    for (const item of notNeeded.slice(0, 3)) {
+      log(`  - ${CYAN}${item.event}${RESET}: ${item.reason || 'Deprioritized for the first useful answer.'}`);
+    }
+    log('');
+  }
+
+  if (data.agent_handoff?.prompt) {
+    heading(data.agent_handoff.label || 'Give your agent analytics judgment');
+    log(data.agent_handoff.prompt);
+    log('');
+  }
+
+  if (data.resume_token && !full) {
+    log(`${DIM}To unlock the full plan after login:${RESET}`);
+    log(`  ${CYAN}npx @agent-analytics/cli scan --resume ${data.analysis_id} --resume-token ${data.resume_token} --full --json${RESET}`);
+    log('');
+  }
+}
+
+async function cmdScan({ url, resumeId, resumeToken, full = false, project, jsonOutput = false } = {}) {
+  if (full) {
+    if (!resumeId || !resumeToken) {
+      error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
+    }
+    try {
+      const api = await requireClient();
+      const data = await api.upgradeWebsiteScan(resumeId, { resumeToken, project });
+      if (jsonOutput) {
+        printJson(data);
+      } else {
+        printScanResult(data, { full: true });
+      }
+      return;
+    } catch (err) {
+      error(err.message);
+    }
+  }
+
+  try {
+    if (resumeId && !resumeToken) {
+      error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> [--json]');
+    }
+    if (!resumeId && !url) {
+      error('Usage: npx @agent-analytics/cli scan <url> [--json]');
+    }
+    const api = createApiClient(null);
+    const data = resumeId
+      ? await api.getWebsiteScan(resumeId, { resumeToken })
+      : await api.createWebsiteScan(url);
+    if (jsonOutput) {
+      printJson(data);
+    } else {
+      printScanResult(data);
+    }
+  } catch (err) {
+    if (err?.status === 429 && err?.code === 'SCAN_BUSY') {
+      const retry = err.body?.retry_after_seconds || err.body?.retry_after || 'a few';
+      error(`The free analyzer is busy. Try again in ${retry} seconds.`);
+    }
+    error(err.message);
+  }
+}
+
+const cmdCreate = withApi(async (api, name, domain, opts = {}) => {
   if (!name) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com');
   if (!domain) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
 
   heading(`Creating project: ${name}`);
 
-  const data = await api.createProject(name, domain);
+  const data = await api.createProject(name, domain, { sourceScanId: opts.source_scan_id });
 
   success(data.existing
     ? `Found existing project for ${BOLD}${domain}${RESET}!\n`
@@ -1081,6 +1205,25 @@ const cmdFeedback = withApi(async (api, opts = {}) => {
   log('');
 });
 
+function formatExpiry(value) {
+  if (!value) return 'N/A';
+  const timestamp = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(timestamp)) return String(value);
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toISOString();
+}
+
+function logAuthDiagnostics(config = getConfig()) {
+  const location = getConfigLocation();
+  const session = config.agent_session || {};
+  log(`  ${BOLD}Config:${RESET}  ${location.file}`);
+  log(`  ${BOLD}Storage:${RESET} ${location.label}`);
+  log(`  ${BOLD}Auth:${RESET}    ${getAuthSource(config)}`);
+  log(`  ${BOLD}Access expires:${RESET}  ${formatExpiry(session.access_expires_at)}`);
+  log(`  ${BOLD}Refresh expires:${RESET} ${formatExpiry(session.refresh_expires_at)}`);
+}
+
 const cmdWhoami = withApi(async (api) => {
   const data = await api.getAccount();
   heading('Account');
@@ -1092,7 +1235,41 @@ const cmdWhoami = withApi(async (api) => {
     log(`  ${BOLD}Spend cap:${RESET} $${data.monthly_spend_cap_dollars.toFixed(2)}/month`);
   }
   log('');
+  heading('Auth');
+  logAuthDiagnostics(getConfig());
+  log('');
 });
+
+function cmdAuth(sub) {
+  if (sub !== 'status') {
+    error('Usage: npx @agent-analytics/cli auth status');
+  }
+
+  const location = getConfigLocation();
+  const config = getConfig();
+  const session = config.agent_session || {};
+
+  heading('Auth Status');
+  log(`  ${BOLD}Config dir:${RESET}  ${location.dir}`);
+  log(`  ${BOLD}Config file:${RESET} ${location.file}`);
+  log(`  ${BOLD}Storage:${RESET}     ${location.label}`);
+  log(`  ${BOLD}Auth:${RESET}        ${getAuthSource(config)}`);
+  log('');
+
+  heading('Cached Account');
+  log(`  ${BOLD}Email:${RESET}  ${config.email || 'N/A'}`);
+  log(`  ${BOLD}GitHub:${RESET} ${config.github_login || 'N/A'}`);
+  log(`  ${BOLD}Google:${RESET} ${config.google_name || 'N/A'}`);
+  log(`  ${BOLD}Tier:${RESET}   ${config.tier || 'N/A'}`);
+  log('');
+
+  heading('Agent Session');
+  log(`  ${BOLD}ID:${RESET}              ${session.id || 'N/A'}`);
+  log(`  ${BOLD}Scopes:${RESET}          ${Array.isArray(session.scopes) ? session.scopes.join(', ') : 'N/A'}`);
+  log(`  ${BOLD}Access expires:${RESET}  ${formatExpiry(session.access_expires_at)}`);
+  log(`  ${BOLD}Refresh expires:${RESET} ${formatExpiry(session.refresh_expires_at)}`);
+  log('');
+}
 
 // ==================== LIVE ====================
 
@@ -1352,6 +1529,7 @@ ${BOLD}SETUP${RESET}
   ${CYAN}demo${RESET}                   Print no-sign-in public demo prompts and commands
   ${CYAN}--demo${RESET} <command>        Run a read-only command against seeded demo data
   ${CYAN}logout${RESET}                 Clear saved local auth
+  ${CYAN}scan${RESET} <url>              Preview what your agent should track first
   ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
   ${CYAN}projects${RESET}               List all your projects
 
@@ -1384,6 +1562,7 @@ ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RE
 
 ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show current account & tier
+  ${CYAN}auth status${RESET}            Show local auth path and token expiry metadata
   ${CYAN}revoke-key${RESET}             Rotate a saved raw API key fallback
   ${CYAN}feedback${RESET}               Send product/process feedback
   ${CYAN}project${RESET} <project>      Get single project details by name or id
@@ -1394,6 +1573,10 @@ ${BOLD}KEY OPTIONS${RESET}
   --days <N>         Lookback window in days (default: 7)
   --limit <N>        Max results (default: 100)
   --domain <url>     Site domain (required for create)
+  --source-scan <id> Link project creation to a prior website analysis
+  --resume <id>      Resume a website analysis by id
+  --resume-token <t> Resume token for one analysis
+  --full             Upgrade a resumed analysis after login
   --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
   --since <VALUE>    Lookback start for commands that support explicit ranges
   --property <key>   Property to break down (path, referrer, utm_source, country)
@@ -1407,6 +1590,7 @@ ${BOLD}KEY OPTIONS${RESET}
   --entry-limit <N>  Max entry pages to include (1-20)
   --path-limit <N>   Max children kept at each path branch (1-10)
   --candidate-session-cap <N>  Max sessions scanned for /paths (100-10000)
+  --config-dir <dir> Read/write auth config from an explicit directory
 
 ${BOLD}QUICK START${RESET}
   ${DIM}# 1. Start agent login${RESET}
@@ -1432,9 +1616,35 @@ ${DIM}https://agentanalytics.sh${RESET}
 
 // ==================== MAIN ====================
 
+function parseGlobalOptions(argv) {
+  const nextArgs = [];
+  let configDir = null;
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg !== '--config-dir') {
+      nextArgs.push(arg);
+      continue;
+    }
+
+    const value = argv[i + 1];
+    if (!value || value.startsWith('--')) {
+      error('Missing value for --config-dir. Usage: npx @agent-analytics/cli --config-dir <dir> <command>');
+    }
+    configDir = value;
+    i += 1;
+  }
+
+  return { args: nextArgs, configDir };
+}
+
 const rawArgs = process.argv.slice(2);
-const demoMode = rawArgs.includes('--demo');
-const args = rawArgs.filter((arg) => arg !== '--demo');
+const parsedGlobal = parseGlobalOptions(rawArgs);
+if (parsedGlobal.configDir) {
+  setConfigDirOverride(parsedGlobal.configDir);
+}
+const demoMode = parsedGlobal.args.includes('--demo');
+const args = parsedGlobal.args.filter((arg) => arg !== '--demo');
 const command = demoMode && !args[0] ? 'demo' : args[0];
 
 const DEMO_MUTATING_COMMANDS = new Set([
@@ -1484,9 +1694,23 @@ try {
     case 'logout':
       cmdLogout();
       break;
+    case 'scan': {
+      const scanUrl = args[1] && !args[1].startsWith('--') ? args[1] : null;
+      await cmdScan({
+        url: scanUrl,
+        resumeId: getArg('--resume'),
+        resumeToken: getArg('--resume-token'),
+        full: args.includes('--full'),
+        project: getArg('--project'),
+        jsonOutput: args.includes('--json'),
+      });
+      break;
+    }
     case 'create':
     case 'init':
-      await cmdCreate(args[1], getArg('--domain'));
+      await cmdCreate(args[1], getArg('--domain'), {
+        source_scan_id: getArg('--source-scan'),
+      });
       break;
     case 'projects':
     case 'list':
@@ -1631,6 +1855,9 @@ try {
       break;
     case 'whoami':
       await cmdWhoami();
+      break;
+    case 'auth':
+      cmdAuth(args[1]);
       break;
     case 'help':
     case '--help':

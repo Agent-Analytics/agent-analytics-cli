@@ -9,13 +9,38 @@ Analytics your AI agent can actually use — track, analyze, experiment, optimiz
 Try the seeded public demo without signing in:
 
 ```bash
-npx @agent-analytics/cli@0.5.15 demo
-npx @agent-analytics/cli@0.5.15 --demo projects
-npx @agent-analytics/cli@0.5.15 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
-npx @agent-analytics/cli@0.5.15 --demo experiments list agentanalytics-demo
+npx @agent-analytics/cli@0.5.16 demo
+npx @agent-analytics/cli@0.5.16 --demo projects
+npx @agent-analytics/cli@0.5.16 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
+npx @agent-analytics/cli@0.5.16 --demo experiments list agentanalytics-demo
 ```
 
 Demo mode fetches a short-lived read-only `aas_*` session from the hosted API. It does not expose a raw `aak_*` API key, does not write local CLI config, and blocks mutating commands before making API requests.
+
+Get the fastest path to useful analytics before installing events:
+
+```bash
+# 1. Preview what your agent should track first
+npx @agent-analytics/cli@0.5.16 scan https://mysite.com --json
+
+# 2. Sign in when you want the full instrumentation plan
+npx @agent-analytics/cli@0.5.16 login
+
+# 3. Resume and upgrade the analysis after login
+npx @agent-analytics/cli@0.5.16 scan \
+  --resume <analysis_id> \
+  --resume-token <resume_token> \
+  --full \
+  --project my-site \
+  --json
+
+# 4. Link the new project back to the analysis
+npx @agent-analytics/cli@0.5.16 create my-site \
+  --domain https://mysite.com \
+  --source-scan <analysis_id>
+```
+
+Anonymous `scan` returns a one-analysis `rst_*` resume token, not an `aas_*` agent session. Full analysis and project linking require login.
 
 ```bash
 # 1. Start agent login or signup in the browser
@@ -44,7 +69,16 @@ login --detached                 Detached handoff: print approval URL and exit
 login --detached --wait          Detached approval with polling for local shells
 login --token <key>              Advanced fallback: save a raw API key
 logout                           Clear your saved local auth
+auth status                      Show local auth path and expiry metadata
+scan <url>                       Analyze what your agent should track first
+scan <url> --json                Return anonymous preview JSON for agents
+scan --resume <id> --resume-token <token>
+                                  Resume a preview by analysis id and token
+scan --resume <id> --resume-token <token> --full --project <name>
+                                  Upgrade a resumed analysis after login
 create <name> --domain <url>     Create a project and get your tracking snippet
+create <name> --domain <url> --source-scan <id>
+                                  Link project activation to an analysis
 projects                         List all your projects with IDs
 project <project>                Get project details by exact name or ID
 update <project>                 Update project name or origins by exact name or ID
@@ -90,6 +124,10 @@ Project management commands accept exact project names or project IDs. For local
 npx @agent-analytics/cli update stylio --origins 'https://stylio.app,http://lvh.me:3101'
 ```
 
+Use `scan` before tracker installation when you want judgment instead of generic event lists. The preview is intentionally small: prioritized minimum viable instrumentation, what each event unlocks, current blind spots, and what not to track yet. The stable JSON is designed for agent skills to install only the high-priority events first and verify the first useful recommended event.
+
+Each recommendation includes an `implementation_hint` that should map to tracker.js capabilities. Do not add custom duplicates for automatic tracker signals such as `page_view`, path, referrer, UTMs, device/browser fields, country, session IDs, session count, days since first visit, or first-touch attribution. Prefer `data-aa-event`, `data-aa-impression`, `window.aa.track(...)`, server-side durable outcome tracking, or script opt-ins only when they unlock the stated decision.
+
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
 
@@ -131,12 +169,22 @@ claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mc
 
 For managed, issue-based, or remote runtimes that cannot receive a localhost callback or keep a long-running process alive, use `npx @agent-analytics/cli login --detached`. It prints the approval URL and exits. After browser approval, resume with the printed `login --auth-request <id> --exchange-code <code>` command.
 
+For managed runtimes where the default home config path may not persist, point auth storage at a persistent runtime/workspace directory:
+
+```bash
+export AGENT_ANALYTICS_CONFIG_DIR="$PWD/.openclaw/agent-analytics"
+npx @agent-analytics/cli@0.5.16 login --detached
+npx @agent-analytics/cli@0.5.16 auth status
+```
+
+For one-off commands, use `--config-dir "$PWD/.openclaw/agent-analytics"` before or after the command. The CLI stores the same `config.json` file in that directory and does not migrate credentials from the default path.
+
 For a local shell where it is useful to keep waiting, use `npx @agent-analytics/cli login --detached --wait`.
 
 If your saved session predates CLI `0.5.9`, run a fresh login before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx @agent-analytics/cli@0.5.15 projects
+npx @agent-analytics/cli@0.5.16 projects
 ```
 
 ## Agent Skill
@@ -154,6 +202,7 @@ Do not install the skill from this CLI repo. This package is the runtime CLI; th
 | Variable | Description |
 |----------|-------------|
 | `AGENT_ANALYTICS_API_KEY` | Advanced fallback API key (overrides config file) |
+| `AGENT_ANALYTICS_CONFIG_DIR` | Directory containing CLI `config.json`; use a persistent path in managed runtimes |
 | `AGENT_ANALYTICS_URL` | Custom API URL (for self-hosted) |
 
 ## Links

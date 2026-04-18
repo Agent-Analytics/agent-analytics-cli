@@ -37,9 +37,27 @@ function createTempConfigHome(config) {
 
   return {
     xdgConfigHome,
+    configDir,
     configFile,
     cleanup() {
       rmSync(xdgConfigHome, { recursive: true, force: true });
+    },
+  };
+}
+
+function createExplicitConfigDir(config) {
+  const configDir = mkdtempSync(join(tmpdir(), 'agent-analytics-explicit-config-'));
+  const configFile = join(configDir, 'config.json');
+
+  if (config !== undefined) {
+    writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
+  }
+
+  return {
+    configDir,
+    configFile,
+    cleanup() {
+      rmSync(configDir, { recursive: true, force: true });
     },
   };
 }
@@ -131,11 +149,13 @@ describe('CLI', () => {
       assert.ok(plain.includes('Try Agent Analytics with seeded demo data'));
       assert.ok(plain.includes('npx @agent-analytics/cli@'));
       assert.ok(plain.includes('--demo projects'));
-      assert.ok(plain.includes('which page is leaking signups'));
+      assert.ok(plain.includes('Audit the signup leak'));
+      assert.ok(plain.includes('--demo breakdown agentanalytics-demo --property path --event signup_started --days 30'));
     });
 
     it('fetches a demo session, uses bearer auth, and does not write config', async () => {
       const tempHome = createTempConfigHome();
+      const explicitConfig = createExplicitConfigDir();
       let demoSessionCalls = 0;
       let projectsAuth;
       const server = await startServer((req, res) => {
@@ -175,7 +195,7 @@ describe('CLI', () => {
       });
 
       try {
-        const { code, stdout } = await run(['--demo', 'projects'], {
+        const { code, stdout } = await run(['--demo', 'projects', '--config-dir', explicitConfig.configDir], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
             XDG_CONFIG_HOME: tempHome.xdgConfigHome,
@@ -187,9 +207,11 @@ describe('CLI', () => {
         assert.equal(projectsAuth, 'Bearer aas_demo_readonly');
         assert.ok(stdout.includes('agentanalytics-demo'));
         assert.equal(existsSync(tempHome.configFile), false);
+        assert.equal(existsSync(explicitConfig.configFile), false);
       } finally {
         await server.close();
         tempHome.cleanup();
+        explicitConfig.cleanup();
       }
     });
 
@@ -212,6 +234,321 @@ describe('CLI', () => {
       } finally {
         await server.close();
       }
+    });
+  });
+
+  describe('config directory selection', () => {
+    async function startAccountServer({ expectedAuth = 'Bearer aas_saved', refresh = false } = {}) {
+      let accountCalls = 0;
+      let refreshCalls = 0;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'GET' && req.url === '/account') {
+          accountCalls += 1;
+          if (refresh && accountCalls === 1) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ message: 'expired' }));
+            return;
+          }
+          assert.equal(req.headers.authorization || req.headers['x-api-key'], expectedAuth);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            email: 'config@example.com',
+            github_login: 'configdev',
+            tier: 'pro',
+            projects_count: 2,
+          }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/refresh') {
+          refreshCalls += 1;
+          await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              access_token: 'aas_refreshed',
+              refresh_token: 'aar_saved',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read'],
+            },
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      return {
+        ...server,
+        get accountCalls() { return accountCalls; },
+        get refreshCalls() { return refreshCalls; },
+      };
+    }
+
+    it('writes login --token auth to an explicit --config-dir after the command', async () => {
+      const config = createExplicitConfigDir();
+      const server = await startAccountServer({ expectedAuth: 'aak_config_token' });
+
+      try {
+        const { code, stdout } = await run(['login', '--token', 'aak_config_token', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl, XDG_CONFIG_HOME: mkdtempSync(join(tmpdir(), 'agent-analytics-unused-xdg-')) },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(stdout.includes(config.configFile));
+        assert.equal(readJson(config.configFile).api_key, 'aak_config_token');
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('reads whoami auth from an explicit --config-dir before the command', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_config',
+          access_token: 'aas_saved',
+          refresh_token: 'aar_saved',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const server = await startAccountServer();
+
+      try {
+        const { code, stdout } = await run(['--config-dir', config.configDir, 'whoami'], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.ok(plain.includes('config@example.com'));
+        assert.ok(plain.includes(config.configFile));
+        assert.ok(plain.includes('stored agent session'));
+        assert.ok(plain.includes('2030-01-01T00:00:00.000Z'));
+        assert.ok(plain.includes('2031-01-01T00:00:00.000Z'));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('persists refreshed whoami expiry metadata before printing diagnostics', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_config',
+          access_token: 'aas_expired',
+          refresh_token: 'aar_saved',
+          access_expires_at: 1,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const server = await startAccountServer({ expectedAuth: 'Bearer aas_refreshed', refresh: true });
+
+      try {
+        const { code, stdout } = await run(['whoami', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(server.refreshCalls, 1);
+        assert.ok(plain.includes('2030-01-01T00:00:00.000Z'));
+        assert.equal(readJson(config.configFile).agent_session.access_token, 'aas_refreshed');
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('uses AGENT_ANALYTICS_CONFIG_DIR without the flag', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: {
+          access_token: 'aas_saved',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+        },
+      });
+      const server = await startAccountServer();
+
+      try {
+        const { code, stdout } = await run(['whoami'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_CONFIG_DIR: config.configDir,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(stripAnsi(stdout).includes('AGENT_ANALYTICS_CONFIG_DIR'));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('lets --config-dir override AGENT_ANALYTICS_CONFIG_DIR', async () => {
+      const envConfig = createExplicitConfigDir({
+        agent_session: { access_token: 'aas_wrong' },
+      });
+      const flagConfig = createExplicitConfigDir({
+        agent_session: { access_token: 'aas_saved' },
+      });
+      const server = await startAccountServer();
+
+      try {
+        const { code, stdout } = await run(['whoami', '--config-dir', flagConfig.configDir], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_CONFIG_DIR: envConfig.configDir,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(stripAnsi(stdout).includes('--config-dir'));
+      } finally {
+        await server.close();
+        envConfig.cleanup();
+        flagConfig.cleanup();
+      }
+    });
+
+    it('logout clears only the selected explicit --config-dir', async () => {
+      const selected = createExplicitConfigDir({
+        api_key: 'aak_selected',
+        email: 'selected@example.com',
+      });
+      const other = createExplicitConfigDir({
+        api_key: 'aak_other',
+        email: 'other@example.com',
+      });
+
+      try {
+        const { code } = await run(['logout', '--config-dir', selected.configDir]);
+
+        assert.equal(code, 0);
+        assert.deepEqual(readJson(selected.configFile), {});
+        assert.equal(readJson(other.configFile).api_key, 'aak_other');
+      } finally {
+        selected.cleanup();
+        other.cleanup();
+      }
+    });
+
+    it('prints detached resume commands with explicit --config-dir', async () => {
+      const config = createExplicitConfigDir();
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          await readRequestJson(req);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-config-dir',
+            authorize_url: 'https://approve.example/req-config-dir',
+            approval_code: 'CFG12345',
+            poll_token: 'aap_config_dir',
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['--config-dir', config.configDir, 'login', '--detached'], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.ok(plain.includes(`--config-dir ${config.configDir}`));
+        assert.ok(plain.includes('login --auth-request req-config-dir --exchange-code <code>'));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('prints detached resume commands with AGENT_ANALYTICS_CONFIG_DIR when env selected the path', async () => {
+      const config = createExplicitConfigDir();
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          await readRequestJson(req);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-env-dir',
+            authorize_url: 'https://approve.example/req-env-dir',
+            approval_code: 'ENV12345',
+            poll_token: 'aap_env_dir',
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['login', '--detached'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_CONFIG_DIR: config.configDir,
+          },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.ok(plain.includes(`AGENT_ANALYTICS_CONFIG_DIR=${config.configDir}`));
+        assert.ok(plain.includes('login --auth-request req-env-dir --exchange-code <code>'));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('auth status prints local metadata without token values or network access', async () => {
+      const config = createExplicitConfigDir({
+        email: 'local@example.com',
+        github_login: 'localdev',
+        google_name: 'Local Dev',
+        tier: 'free',
+        agent_session: {
+          id: 'sess_local',
+          access_token: 'aas_secret_should_not_print',
+          refresh_token: 'aar_secret_should_not_print',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read', 'projects:read'],
+        },
+      });
+
+      try {
+        const { code, stdout } = await run(['auth', 'status', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: 'http://127.0.0.1:9' },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.ok(plain.includes(config.configDir));
+        assert.ok(plain.includes('stored agent session'));
+        assert.ok(plain.includes('local@example.com'));
+        assert.ok(plain.includes('sess_local'));
+        assert.ok(plain.includes('account:read, projects:read'));
+        assert.ok(plain.includes('2030-01-01T00:00:00.000Z'));
+        assert.equal(plain.includes('aas_secret_should_not_print'), false);
+        assert.equal(plain.includes('aar_secret_should_not_print'), false);
+      } finally {
+        config.cleanup();
+      }
+    });
+
+    it('fails loudly when --config-dir is missing a value', async () => {
+      const { code, stdout } = await run(['whoami', '--config-dir']);
+
+      assert.notEqual(code, 0);
+      assert.ok(stripAnsi(stdout).includes('Missing value for --config-dir'));
     });
   });
 
@@ -568,6 +905,212 @@ describe('CLI', () => {
     });
   });
 
+  describe('website analysis scan command', () => {
+    it('returns anonymous preview JSON for scan <url> --json without saved auth', async () => {
+      const tempHome = createTempConfigHome();
+      let requestBody;
+      let authHeader;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/website-scans') {
+          authHeader = req.headers.authorization || req.headers['x-api-key'];
+          requestBody = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_anon',
+            mode: 'anonymous_preview',
+            normalized_url: 'https://example.com/',
+            resume_token: 'rst_preview',
+            preview: {
+              current_blindspots: ['Cannot see signup intent'],
+              minimum_viable_instrumentation: [{
+                event: 'primary_cta_clicked',
+                priority: 1,
+                why_this_matters_now: 'Intent starts here.',
+                current_blindspot: 'CTA intent is unknown.',
+                unlocks_questions: ['Which page creates intent?'],
+                agent_capability_after_install: 'Rank pages by intent.',
+              }],
+              not_needed_yet: [],
+              goal_driven_funnels: [],
+              after_install_agent_behavior: [],
+              analytics_detected: { providers: [] },
+            },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['scan', 'example.com/pricing', '--json'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+            XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(authHeader, undefined);
+        assert.deepEqual(requestBody, { url: 'example.com/pricing' });
+        assert.equal(data.analysis_id, 'scan_anon');
+        assert.equal(data.resume_token, 'rst_preview');
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('resumes an anonymous preview with scan --resume and --resume-token', async () => {
+      const tempHome = createTempConfigHome();
+      let requestUrl;
+      const server = await startServer((req, res) => {
+        requestUrl = req.url;
+        if (req.method === 'GET' && req.url === '/website-scans/scan_anon?resume_token=rst_preview') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_anon',
+            mode: 'anonymous_preview',
+            normalized_url: 'https://example.com/',
+            preview: { minimum_viable_instrumentation: [] },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['scan', '--resume', 'scan_anon', '--resume-token', 'rst_preview', '--json'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+            XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(requestUrl, '/website-scans/scan_anon?resume_token=rst_preview');
+        assert.equal(data.analysis_id, 'scan_anon');
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('upgrades a resumed analysis with auth when --full is passed', async () => {
+      let requestBody;
+      let requestAuth;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/website-scans/scan_anon/upgrade') {
+          requestAuth = req.headers['x-api-key'];
+          requestBody = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_anon',
+            mode: 'full',
+            normalized_url: 'https://example.com/',
+            result: {
+              minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
+            },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'scan',
+          '--resume', 'scan_anon',
+          '--resume-token', 'rst_preview',
+          '--full',
+          '--project', 'example-site',
+          '--json',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(requestAuth, 'aak_test123');
+        assert.deepEqual(requestBody, {
+          resume_token: 'rst_preview',
+          project: 'example-site',
+        });
+        assert.equal(data.mode, 'full');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints login guidance for scan --full without auth', async () => {
+      const tempHome = createTempConfigHome();
+      const { code, stdout } = await run([
+        'scan',
+        '--resume', 'scan_anon',
+        '--resume-token', 'rst_preview',
+        '--full',
+      ], {
+        env: {
+          AGENT_ANALYTICS_API_KEY: '',
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+        },
+      });
+
+      assert.notEqual(code, 0);
+      assert.ok(stripAnsi(stdout).includes('Not logged in'));
+      assert.ok(stripAnsi(stdout).includes('login'));
+      tempHome.cleanup();
+    });
+
+    it('prints retry timing for a busy anonymous analyzer response', async () => {
+      const tempHome = createTempConfigHome();
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/website-scans') {
+          await readRequestJson(req);
+          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '17' });
+          res.end(JSON.stringify({
+            error: 'SCAN_BUSY',
+            message: 'The free analyzer is busy.',
+            retry_after_seconds: 17,
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['scan', 'https://busy.example'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+            XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          },
+        });
+        const output = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.ok(output.includes('free analyzer is busy'));
+        assert.ok(output.includes('17 seconds'));
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+  });
+
   describe('projects', () => {
     const stylioProject = {
       id: 'proj-stylio',
@@ -722,6 +1265,52 @@ describe('CLI', () => {
         assert.equal(code, 0);
         assert.equal(detailUrl, '/projects/proj-stylio');
         assert.ok(stdout.includes('Project: stylio'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('passes --source-scan when creating a project', async () => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/projects') {
+          requestBody = await readRequestJson(req);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'proj-created',
+            name: 'source-site',
+            project_token: 'aat_created',
+            allowed_origins: 'https://source.example',
+            source_scan_id: 'scan_source',
+            snippet: '<script></script>',
+            api_example: 'curl /stats',
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'create',
+          'source-site',
+          '--domain', 'https://source.example',
+          '--source-scan', 'scan_source',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.deepEqual(requestBody, {
+          name: 'source-site',
+          allowed_origins: 'https://source.example',
+          source_scan_id: 'scan_source',
+        });
+        assert.ok(stdout.includes('Project created'));
       } finally {
         await server.close();
       }
