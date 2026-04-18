@@ -451,12 +451,19 @@ function printScanResult(data, { full = false } = {}) {
 
 async function cmdScan({ url, resumeId, resumeToken, full = false, project, jsonOutput = false } = {}) {
   if (full) {
-    if (!resumeId || !resumeToken) {
-      error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
-    }
     try {
       const api = await requireClient();
-      const data = await api.upgradeWebsiteScan(resumeId, { resumeToken, project });
+      let data;
+      if (resumeId) {
+        if (!resumeToken) {
+          error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
+        }
+        data = await api.upgradeWebsiteScan(resumeId, { resumeToken, project });
+      } else if (url) {
+        data = await api.createWebsiteScan(url, { full: true });
+      } else {
+        error('Usage: npx @agent-analytics/cli scan <url> --full [--json]\n   or: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
+      }
       if (jsonOutput) {
         printJson(data);
       } else {
@@ -475,7 +482,7 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
     if (!resumeId && !url) {
       error('Usage: npx @agent-analytics/cli scan <url> [--json]');
     }
-    const api = createApiClient(null);
+    const api = resumeId ? createApiClient(null) : createApiClient();
     const data = resumeId
       ? await api.getWebsiteScan(resumeId, { resumeToken })
       : await api.createWebsiteScan(url);

@@ -1054,6 +1054,122 @@ describe('CLI', () => {
       }
     });
 
+    it('runs a direct authenticated full scan with scan <url> --full', async () => {
+      let requestBody;
+      let requestAuth;
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_scan_full',
+          access_token: 'aas_scan_full',
+          refresh_token: 'aar_scan_full',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/website-scans') {
+          requestAuth = req.headers.authorization;
+          requestBody = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_full_direct',
+            mode: 'full',
+            normalized_url: 'https://example.com/',
+            result: {
+              minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
+            },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          '--config-dir', config.configDir,
+          'scan',
+          'https://example.com/',
+          '--full',
+          '--json',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(requestAuth, 'Bearer aas_scan_full');
+        assert.deepEqual(requestBody, {
+          url: 'https://example.com/',
+          mode: 'full',
+        });
+        assert.equal(data.mode, 'full');
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('uses saved auth for scan <url> previews when logged in', async () => {
+      let requestAuth;
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_scan_preview',
+          access_token: 'aas_scan_preview',
+          refresh_token: 'aar_scan_preview',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/website-scans') {
+          requestAuth = req.headers.authorization;
+          await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_auth_preview',
+            mode: 'authenticated_preview',
+            normalized_url: 'https://example.com/',
+            preview: {
+              minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
+            },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          '--config-dir', config.configDir,
+          'scan',
+          'https://example.com/',
+          '--json',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(requestAuth, 'Bearer aas_scan_preview');
+        assert.equal(data.mode, 'authenticated_preview');
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
     it('prints login guidance for scan --full without auth', async () => {
       const tempHome = createTempConfigHome();
       const { code, stdout } = await run([

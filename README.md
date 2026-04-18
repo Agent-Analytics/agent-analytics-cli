@@ -21,13 +21,16 @@ Get the fastest path to useful analytics before installing events:
 
 ```bash
 # 1. Preview what your agent should track first
-npx @agent-analytics/cli@0.5.16 scan https://mysite.com --json
+npx @agent-analytics/cli@0.5.17 scan https://mysite.com --json
 
 # 2. Sign in when you want the full instrumentation plan
-npx @agent-analytics/cli@0.5.16 login
+npx @agent-analytics/cli@0.5.17 login
 
-# 3. Resume and upgrade the analysis after login
-npx @agent-analytics/cli@0.5.16 scan \
+# 3. Run the full signed-in analysis
+npx @agent-analytics/cli@0.5.17 scan https://mysite.com --full --json
+
+# Or resume and upgrade the anonymous analysis after login
+npx @agent-analytics/cli@0.5.17 scan \
   --resume <analysis_id> \
   --resume-token <resume_token> \
   --full \
@@ -71,7 +74,8 @@ login --token <key>              Advanced fallback: save a raw API key
 logout                           Clear your saved local auth
 auth status                      Show local auth path and expiry metadata
 scan <url>                       Analyze what your agent should track first
-scan <url> --json                Return anonymous preview JSON for agents
+scan <url> --json                Return preview JSON for agents; uses saved auth when logged in
+scan <url> --full --json         Run a full signed-in analysis with saved auth
 scan --resume <id> --resume-token <token>
                                   Resume a preview by analysis id and token
 scan --resume <id> --resume-token <token> --full --project <name>
