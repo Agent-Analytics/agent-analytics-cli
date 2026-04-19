@@ -237,6 +237,201 @@ describe('CLI', () => {
     });
   });
 
+  describe('upgrade-link', () => {
+    it('requires exactly one mode flag before making network requests', async () => {
+      const missing = await run(['upgrade-link']);
+      assert.notEqual(missing.code, 0);
+      assert.ok(stripAnsi(missing.stdout).includes('upgrade-link --detached|--wait'));
+
+      const both = await run(['upgrade-link', '--detached', '--wait']);
+      assert.notEqual(both.code, 0);
+      assert.ok(stripAnsi(both.stdout).includes('upgrade-link --detached|--wait'));
+    });
+
+    it('rejects raw API key auth locally', async () => {
+      const config = createExplicitConfigDir({ api_key: 'aak_raw' });
+
+      try {
+        const { code, stdout } = await run(['upgrade-link', '--detached', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: 'http://127.0.0.1:9' },
+        });
+
+        assert.notEqual(code, 0);
+        assert.ok(stripAnsi(stdout).includes('requires browser-approved CLI login'));
+      } finally {
+        config.cleanup();
+      }
+    });
+
+    it('prints an app-domain detached handoff link', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: { access_token: 'aas_saved' },
+      });
+      let accountCalls = 0;
+      const server = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/account') {
+          accountCalls += 1;
+          assert.equal(req.headers.authorization, 'Bearer aas_saved');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'acct-free',
+            email: 'free@example.com',
+            tier: 'free',
+            projects_count: 1,
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'upgrade-link',
+          '--detached',
+          '--reason',
+          'Need funnels',
+          '--command',
+          'npx @agent-analytics/cli funnel my-site --steps page_view,signup',
+          '--config-dir',
+          config.configDir,
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_DASHBOARD_URL: 'https://app.example.test',
+          },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(accountCalls, 1);
+        assert.ok(plain.includes('https://app.example.test/account/billing/agent-upgrade?'));
+        assert.ok(plain.includes('account=acct-free'));
+        assert.ok(plain.includes('mode=detached'));
+        assert.ok(plain.includes('Need+funnels'));
+        assert.ok(plain.includes('command='));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('waits until the account becomes Pro', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: { access_token: 'aas_saved' },
+      });
+      let accountCalls = 0;
+      const server = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/account') {
+          accountCalls += 1;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'acct-wait',
+            email: 'wait@example.com',
+            tier: accountCalls >= 2 ? 'pro' : 'free',
+            projects_count: 1,
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['upgrade-link', '--wait', '--config-dir', config.configDir], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_UPGRADE_POLL_INTERVAL_MS: '10',
+            AGENT_ANALYTICS_UPGRADE_TIMEOUT_MS: '1000',
+          },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.ok(accountCalls >= 2);
+        assert.ok(plain.includes('Waiting for Pro activation'));
+        assert.ok(plain.includes('Pro is active'));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('times out cleanly while waiting for Pro activation', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: { access_token: 'aas_saved' },
+      });
+      const server = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/account') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'acct-timeout',
+            email: 'timeout@example.com',
+            tier: 'free',
+            projects_count: 1,
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['upgrade-link', '--wait', '--config-dir', config.configDir], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_UPGRADE_POLL_INTERVAL_MS: '10',
+            AGENT_ANALYTICS_UPGRADE_TIMEOUT_MS: '30',
+          },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.ok(plain.includes('Still waiting for Pro activation'));
+        assert.ok(plain.includes('Return to the agent'));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('prints explicit upgrade commands for paid-only errors without creating checkout', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: { access_token: 'aas_saved' },
+      });
+      let checkoutCalls = 0;
+      const server = await startServer((req, res) => {
+        if (req.method === 'GET' && req.url.startsWith('/properties?')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'PRO_REQUIRED',
+            message: 'This endpoint is available on paid plans.',
+          }));
+          return;
+        }
+        if (req.url.includes('/billing/checkout')) checkoutCalls += 1;
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['properties', 'my-site', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.equal(checkoutCalls, 0);
+        assert.ok(plain.includes('upgrade-link --detached'));
+        assert.ok(plain.includes('upgrade-link --wait'));
+        assert.ok(plain.includes('properties my-site'));
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+  });
+
   describe('config directory selection', () => {
     async function startAccountServer({ expectedAuth = 'Bearer aas_saved', refresh = false } = {}) {
       let accountCalls = 0;

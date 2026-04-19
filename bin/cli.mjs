@@ -6,8 +6,8 @@
  * Usage:
  *   npx @agent-analytics/cli login                — Start browser-based agent session login
  *   npx @agent-analytics/cli login --detached     — Detached approval handoff
- *   npx @agent-analytics/cli login --token <key>  — Advanced fallback: save a raw API key
  *   npx @agent-analytics/cli logout               — Clear saved local auth
+ *   npx @agent-analytics/cli upgrade-link --detached — Print a human payment handoff link
  *   npx @agent-analytics/cli scan <url>           — Preview what your agent should track first
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
  *   npx @agent-analytics/cli projects             — List your projects
@@ -33,7 +33,6 @@
  *   npx @agent-analytics/cli context set <project> --json '{...}' — Set goals, activation events, glossary
  *   npx @agent-analytics/cli update <name-or-id>   — Update a project
  *   npx @agent-analytics/cli delete <name-or-id>   — Delete a project
- *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
  *   npx @agent-analytics/cli live [name]          — Real-time live view
  *   npx @agent-analytics/cli experiments list <project>   — List experiments
  *   npx @agent-analytics/cli experiments create <p> ...  — Create experiment
@@ -137,6 +136,14 @@ function getDemoBaseUrl() {
   return process.env.AGENT_ANALYTICS_URL || DEFAULT_BASE_URL;
 }
 
+function getDashboardBaseUrl() {
+  return (process.env.AGENT_ANALYTICS_DASHBOARD_URL || 'https://app.agentanalytics.sh').replace(/\/+$/, '');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function createDemoApiClient() {
   const bootstrap = new AgentAnalyticsAPI(null, getDemoBaseUrl());
   const demo = await bootstrap.startDemoSession();
@@ -204,6 +211,37 @@ function logDetachedApproval(started) {
   log(`  ${CYAN}${cliInvocationWithConfig()} login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
 }
 
+function currentCommandForHandoff() {
+  return `${cliInvocationWithConfig()} ${args.map(shellQuote).join(' ')}`.trim();
+}
+
+function isUpgradeableError(err) {
+  const code = err?.code || err?.body?.error || err?.body?.code;
+  const message = String(err?.message || '');
+  if (code === 'PRO_REQUIRED') return true;
+  if (code === 'RATE_LIMITED' && /free plan|agent\/API read|Upgrade/i.test(message)) return true;
+  return false;
+}
+
+function printUpgradeLinkHint(err) {
+  if (!isUpgradeableError(err)) return;
+
+  const reason = String(err?.message || 'This analytics task needs Pro.');
+  const blockedCommand = currentCommandForHandoff();
+  const auth = getStoredAuth();
+
+  log('');
+  warn('This needs Pro for the full agent analytics loop.');
+  if (auth?.api_key) {
+    log(`Upgrade links require browser-approved CLI login, not a raw API key.`);
+    log(`  ${CYAN}${cliInvocationWithConfig()} login --detached${RESET}`);
+    return;
+  }
+  log(`Ask the human to approve payment with one explicit command:`);
+  log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --detached --reason ${shellQuote(reason)} --command ${shellQuote(blockedCommand)}${RESET}`);
+  log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --wait --reason ${shellQuote(reason)} --command ${shellQuote(blockedCommand)}${RESET}`);
+}
+
 async function requireClient() {
   if (demoMode) {
     return createDemoApiClient();
@@ -221,6 +259,7 @@ function withApi(fn) {
       const api = await requireClient();
       return await fn(api, ...args);
     } catch (err) {
+      printUpgradeLinkHint(err);
       error(err.message);
     }
   };
@@ -328,7 +367,6 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId, waitForD
       log('');
       log(`Fallbacks:`);
       log(`  ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
-      log(`  ${CYAN}npx @agent-analytics/cli login --token aak_your_key_here${RESET}  ${DIM}advanced/manual fallback${RESET}`);
       return;
     } catch (err) {
       stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
@@ -394,6 +432,81 @@ function cmdDemo() {
   log(`  ${CYAN}npx @agent-analytics/cli@${CLI_VERSION} --demo experiments get exp_demo_signup_cta${RESET}`);
   log('');
   log(`${DIM}Demo mode uses a short-lived read-only session and does not touch your saved CLI login.${RESET}`);
+}
+
+async function cmdUpgradeLink({ detached, wait, reason, blockedCommand }) {
+  if (demoMode) {
+    error('Demo mode is read-only. Upgrade links require a real browser-approved account.');
+  }
+  if ((detached && wait) || (!detached && !wait)) {
+    error('Usage: npx @agent-analytics/cli upgrade-link --detached|--wait [--reason <text>] [--command <command>]');
+  }
+
+  const auth = getStoredAuth();
+  if (!auth) {
+    error('Not logged in. Run: npx @agent-analytics/cli login --detached');
+  }
+  if (auth.api_key) {
+    error('upgrade-link requires browser-approved CLI login, not a raw API key. Run: npx @agent-analytics/cli login --detached');
+  }
+
+  const api = createApiClient(auth);
+  const account = await api.getAccount();
+  updateStoredAccount(account);
+
+  if (!account?.id) {
+    error('Account response did not include an account id. Run: npx @agent-analytics/cli whoami and try again.');
+  }
+  if (account.tier === 'pro') {
+    success('Pro is already active on this account.');
+    return;
+  }
+
+  const mode = wait ? 'wait' : 'detached';
+  const link = new URL('/account/billing/agent-upgrade', getDashboardBaseUrl());
+  link.searchParams.set('account', account.id);
+  link.searchParams.set('mode', mode);
+  link.searchParams.set('reason', reason || 'The requested analytics task needs Pro.');
+  if (blockedCommand) link.searchParams.set('command', blockedCommand);
+
+  heading('Agent Analytics — Pro Upgrade Handoff');
+  log(`Open this link in the human browser:`);
+  log(`  ${CYAN}${link.toString()}${RESET}`);
+  log('');
+  log(`${DIM}The browser stays on app.agentanalytics.sh first, confirms the logged-in account, then opens Lemon Squeezy.${RESET}`);
+
+  if (detached) {
+    log(`${DIM}After payment, return to the agent and rerun the blocked command.${RESET}`);
+    return;
+  }
+
+  const pollIntervalMs = Number(process.env.AGENT_ANALYTICS_UPGRADE_POLL_INTERVAL_MS || 5000);
+  const timeoutMs = Number(process.env.AGENT_ANALYTICS_UPGRADE_TIMEOUT_MS || 15 * 60 * 1000);
+  const interval = Number.isFinite(pollIntervalMs) && pollIntervalMs > 0 ? pollIntervalMs : 5000;
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15 * 60 * 1000;
+  const stopWaiting = startWaitingIndicator('Waiting for Pro activation...', {
+    interruptMessage: 'Stopped waiting for Pro activation.',
+  });
+  const deadline = Date.now() + timeout;
+
+  try {
+    while (Date.now() < deadline) {
+      await sleep(interval);
+      const nextAccount = await api.getAccount().catch(() => null);
+      if (!nextAccount) continue;
+      updateStoredAccount(nextAccount);
+      if (nextAccount.tier === 'pro') {
+        stopWaiting(`${DIM}Pro activation received.${RESET}`);
+        success('Pro is active. Rerun the blocked analytics command.');
+        return;
+      }
+    }
+  } finally {
+    stopWaiting();
+  }
+
+  warn('Still waiting for Pro activation. The payment webhook may still be processing.');
+  error(`Return to the agent after the browser says Pro is active, then rerun: ${blockedCommand || 'the blocked command'}`);
 }
 
 function printJson(data) {
@@ -1241,10 +1354,10 @@ function cmdDeleteAccount() {
 async function cmdRevokeKey() {
   const auth = getStoredAuth();
   if (!auth) {
-    error('Not logged in. Run: npx @agent-analytics/cli login --token <api-key>');
+    error('No raw API key is saved. Use browser-approved CLI login for normal agent work.');
   }
   if (auth.access_token || auth.refresh_token) {
-    error('revoke-key only rotates a saved raw API key. Manage API keys from https://app.agentanalytics.sh/settings or log in with --token for the API-key fallback.');
+    error('revoke-key only rotates a saved raw API key. Manage keys from https://app.agentanalytics.sh/settings.');
   }
 
   const api = createApiClient(auth);
@@ -1603,7 +1716,8 @@ ${BOLD}SETUP${RESET}
   ${CYAN}login${RESET}                  Browser-based agent session login
   ${CYAN}login${RESET} --detached       Detached approval handoff; prints URL and exits
   ${CYAN}login${RESET} --detached --wait  Detached approval with polling
-  ${CYAN}login${RESET} --token <key>    Advanced/manual API key fallback
+  ${CYAN}upgrade-link${RESET} --detached  Print a human Pro payment handoff link
+  ${CYAN}upgrade-link${RESET} --wait      Print the handoff link and wait for Pro activation
   ${CYAN}demo${RESET}                   Print no-sign-in public demo prompts and commands
   ${CYAN}--demo${RESET} <command>        Run a read-only command against seeded demo data
   ${CYAN}logout${RESET}                 Clear saved local auth
@@ -1643,7 +1757,6 @@ ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RE
 ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show current account & tier
   ${CYAN}auth status${RESET}            Show local auth path and token expiry metadata
-  ${CYAN}revoke-key${RESET}             Rotate a saved raw API key fallback
   ${CYAN}feedback${RESET}               Send product/process feedback
   ${CYAN}project${RESET} <project>      Get single project details by name or id
   ${CYAN}update${RESET} <project>       Update a project by name or id (--name, --origins)
@@ -1734,6 +1847,7 @@ const DEMO_MUTATING_COMMANDS = new Set([
   'init',
   'update',
   'delete',
+  'upgrade-link',
   'revoke-key',
   'feedback',
   'delete-account',
@@ -1798,6 +1912,14 @@ try {
     case 'projects':
     case 'list':
       await cmdProjects();
+      break;
+    case 'upgrade-link':
+      await cmdUpgradeLink({
+        detached: args.includes('--detached'),
+        wait: args.includes('--wait'),
+        reason: getArg('--reason'),
+        blockedCommand: getArg('--command'),
+      });
       break;
     case 'all-sites':
       await cmdAllSites({
