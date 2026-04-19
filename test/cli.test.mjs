@@ -765,6 +765,54 @@ describe('CLI', () => {
     });
   });
 
+  describe('context', () => {
+    it('sets project context from JSON with event-name glossary entries', async () => {
+      let requestBody;
+      const server = await startServer((req, res) => {
+        if (req.method !== 'PUT' || req.url !== '/project-context') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          requestBody = JSON.parse(body);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            project: 'my-site',
+            project_context: requestBody,
+          }));
+        });
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'context',
+          'set',
+          'my-site',
+          '--json',
+          '{"goals":["Improve activation"],"activation_events":["signup_completed"],"glossary":[{"event_name":"signup_completed","term":"Signup","definition":"A verified account completed signup."}]}',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(requestBody.project, 'my-site');
+        assert.equal(requestBody.glossary[0].event_name, 'signup_completed');
+        assert.ok(stdout.includes('Project context updated'));
+        assert.ok(stdout.includes('signup_completed'));
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
   describe('query', () => {
     it('forwards --count-mode session_then_user to the /query payload', async () => {
       let requestBody;

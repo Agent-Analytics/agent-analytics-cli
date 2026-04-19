@@ -29,6 +29,8 @@
  *   npx @agent-analytics/cli retention <name>     — Cohort retention: % of users who return
  *   npx @agent-analytics/cli init <name>          — Alias for create
  *   npx @agent-analytics/cli project <name-or-id>  — Get single project details
+ *   npx @agent-analytics/cli context get <project> — Get stored project analytics context
+ *   npx @agent-analytics/cli context set <project> --json '{...}' — Set goals, activation events, glossary
  *   npx @agent-analytics/cli update <name-or-id>   — Update a project
  *   npx @agent-analytics/cli delete <name-or-id>   — Delete a project
  *   npx @agent-analytics/cli revoke-key           — Revoke and regenerate API key
@@ -1140,6 +1142,75 @@ const cmdProject = withApi(async (api, target) => {
   log('');
 });
 
+function logProjectContext(data) {
+  const context = data.project_context || {};
+  heading(`Project Context: ${data.project || data.project_id || 'project'}`);
+  log('');
+
+  const goals = context.goals || [];
+  const activationEvents = context.activation_events || [];
+  const glossary = context.glossary || [];
+
+  if (goals.length === 0 && activationEvents.length === 0 && glossary.length === 0) {
+    log('  No project context stored.');
+    log(`${DIM}Use context set after checking event names with: npx @agent-analytics/cli properties <project>${RESET}`);
+    log('');
+    return;
+  }
+
+  if (goals.length > 0) {
+    heading('Goals:');
+    for (const goal of goals) log(`  - ${goal}`);
+  }
+
+  if (activationEvents.length > 0) {
+    log('');
+    heading('Activation Events:');
+    for (const eventName of activationEvents) log(`  - ${eventName}`);
+  }
+
+  if (glossary.length > 0) {
+    log('');
+    heading('Glossary:');
+    for (const entry of glossary) {
+      log(`  - ${entry.event_name}: ${entry.term}`);
+      log(`    ${DIM}${entry.definition}${RESET}`);
+    }
+  }
+
+  log('');
+}
+
+const cmdContext = withApi(async (api, subcommand, project, opts = {}) => {
+  if (!subcommand || !['get', 'set'].includes(subcommand)) {
+    error('Usage: npx @agent-analytics/cli context <get|set> <project> [--json \'{...}\']');
+  }
+  if (!project) {
+    error(`Usage: npx @agent-analytics/cli context ${subcommand} <project>`);
+  }
+
+  if (subcommand === 'get') {
+    const data = await api.getProjectContext(project);
+    logProjectContext(data);
+    return;
+  }
+
+  if (!opts.json) {
+    error('Usage: npx @agent-analytics/cli context set <project> --json \'{"goals":[],"activation_events":[],"glossary":[]}\'');
+  }
+
+  let context;
+  try {
+    context = JSON.parse(opts.json);
+  } catch {
+    error('--json must be valid JSON');
+  }
+
+  const data = await api.setProjectContext(project, context);
+  success(`Project context updated for ${data.project || project}`);
+  logProjectContext(data);
+});
+
 const cmdUpdate = withApi(async (api, target, opts = {}) => {
   if (!target) error('Usage: npx @agent-analytics/cli update <project-name-or-id> [--name new-name] [--origins "https://example.com"]');
   if (!opts.name && !opts.allowed_origins) error('Provide --name and/or --origins to update');
@@ -1557,6 +1628,8 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}sessions${RESET} <name>        Individual session records
   ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, country)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
+  ${CYAN}context get${RESET} <name>     Read stored goals, activation events, and event glossary
+  ${CYAN}context set${RESET} <name>     Set compact project context with --json
 
 ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RESET}
   ${CYAN}experiments list${RESET} <project>     List experiments
@@ -1669,6 +1742,9 @@ const DEMO_MUTATING_COMMANDS = new Set([
 function isDemoMutation(commandName, commandArgs) {
   if (!demoMode) return false;
   if (DEMO_MUTATING_COMMANDS.has(commandName)) return true;
+  if (commandName === 'context') {
+    return commandArgs[1] === 'set';
+  }
   if (commandName === 'experiments') {
     return ['create', 'pause', 'resume', 'complete', 'delete'].includes(commandArgs[1]);
   }
@@ -1777,6 +1853,11 @@ try {
       break;
     case 'project':
       await cmdProject(args[1]);
+      break;
+    case 'context':
+      await cmdContext(args[1], args[2], {
+        json: getArg('--json'),
+      });
       break;
     case 'update':
       await cmdUpdate(args[1], {

@@ -204,6 +204,36 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastMethod, 'DELETE');
     });
 
+    it('getProjectContext → GET /project-context', async () => {
+      await api.getProjectContext('my-site');
+      assert.equal(lastUrl, 'https://api.test/project-context?project=my-site');
+      assert.equal(lastMethod, 'GET');
+    });
+
+    it('setProjectContext → PUT /project-context', async () => {
+      await api.setProjectContext('my-site', {
+        goals: ['Improve activation'],
+        activation_events: ['signup_completed'],
+        glossary: [{
+          event_name: 'signup_completed',
+          term: 'Signup',
+          definition: 'A verified account completed signup.',
+        }],
+      });
+      assert.equal(lastUrl, 'https://api.test/project-context');
+      assert.equal(lastMethod, 'PUT');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        goals: ['Improve activation'],
+        activation_events: ['signup_completed'],
+        glossary: [{
+          event_name: 'signup_completed',
+          term: 'Signup',
+          definition: 'A verified account completed signup.',
+        }],
+      }));
+    });
+
     it('getStats → GET /stats with query params', async () => {
       await api.getStats('my-site', 30);
       assert.equal(lastUrl, 'https://api.test/stats?project=my-site&since=30d');
