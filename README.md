@@ -26,8 +26,11 @@ npx --yes @agent-analytics/cli@0.5.20 scan https://mysite.com --json
 # 2. Sign in when you want the full instrumentation plan
 npx --yes @agent-analytics/cli@0.5.20 login
 
-# 3. Run the full signed-in analysis
-npx --yes @agent-analytics/cli@0.5.20 scan https://mysite.com --full --json
+# 3. Create or identify the project domain
+npx --yes @agent-analytics/cli@0.5.20 create my-site --domain https://mysite.com
+
+# 4. Run the full signed-in analysis for that project domain
+npx --yes @agent-analytics/cli@0.5.20 scan https://mysite.com --full --project my-site --json
 
 # Or resume and upgrade the anonymous analysis after login
 npx --yes @agent-analytics/cli@0.5.20 scan \
@@ -36,11 +39,6 @@ npx --yes @agent-analytics/cli@0.5.20 scan \
   --full \
   --project my-site \
   --json
-
-# 4. Link the new project back to the analysis
-npx --yes @agent-analytics/cli@0.5.20 create my-site \
-  --domain https://mysite.com \
-  --source-scan <analysis_id>
 ```
 
 Anonymous `scan` returns a one-analysis `rst_*` resume token, not an `aas_*` agent session. Full analysis and project linking require login.
@@ -74,8 +72,9 @@ upgrade-link --wait              Print the handoff link and wait for Pro activat
 logout                           Clear your saved local auth
 auth status                      Show local auth path and expiry metadata
 scan <url>                       Analyze what your agent should track first
-scan <url> --json                Return preview JSON for agents; uses saved auth when logged in
-scan <url> --full --json         Run a full signed-in analysis with saved auth
+scan <url> --json                Return anonymous preview JSON for agents
+scan <url> --full --project <name> --json
+                                  Run a full signed-in analysis for a project domain
 scan --resume <id> --resume-token <token>
                                   Resume a preview by analysis id and token
 scan --resume <id> --resume-token <token> --full --project <name>

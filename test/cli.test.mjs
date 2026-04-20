@@ -1297,7 +1297,7 @@ describe('CLI', () => {
       }
     });
 
-    it('runs a direct authenticated full scan with scan <url> --full', async () => {
+    it('runs a direct authenticated full scan with scan <url> --full --project', async () => {
       let requestBody;
       let requestAuth;
       const config = createExplicitConfigDir({
@@ -1336,6 +1336,7 @@ describe('CLI', () => {
           'scan',
           'https://example.com/',
           '--full',
+          '--project', 'example-site',
           '--json',
         ], {
           env: {
@@ -1350,6 +1351,7 @@ describe('CLI', () => {
         assert.deepEqual(requestBody, {
           url: 'https://example.com/',
           mode: 'full',
+          project: 'example-site',
         });
         assert.equal(data.mode, 'full');
       } finally {
@@ -1360,6 +1362,7 @@ describe('CLI', () => {
 
     it('refreshes an expired agent session before a direct full scan', async () => {
       const requestAuths = [];
+      const requestBodies = [];
       let refreshCalls = 0;
       const config = createExplicitConfigDir({
         agent_session: {
@@ -1374,7 +1377,7 @@ describe('CLI', () => {
       const server = await startServer(async (req, res) => {
         if (req.method === 'POST' && req.url === '/website-scans') {
           requestAuths.push(req.headers.authorization);
-          await readRequestJson(req);
+          requestBodies.push(await readRequestJson(req));
           if (requestAuths.length === 1) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'AUTH_REQUIRED', message: 'login required for full analysis' }));
@@ -1420,6 +1423,7 @@ describe('CLI', () => {
           'scan',
           'https://example.com/',
           '--full',
+          '--project', 'example-site',
           '--json',
         ], {
           env: {
@@ -1432,6 +1436,10 @@ describe('CLI', () => {
         assert.equal(code, 0);
         assert.equal(refreshCalls, 1);
         assert.deepEqual(requestAuths, ['Bearer aas_expired_scan', 'Bearer aas_refreshed_scan']);
+        assert.deepEqual(requestBodies, [
+          { url: 'https://example.com/', mode: 'full', project: 'example-site' },
+          { url: 'https://example.com/', mode: 'full', project: 'example-site' },
+        ]);
         assert.equal(readJson(config.configFile).agent_session.access_token, 'aas_refreshed_scan');
         assert.equal(data.analysis_id, 'scan_full_after_refresh');
       } finally {
@@ -1440,7 +1448,7 @@ describe('CLI', () => {
       }
     });
 
-    it('uses saved auth for scan <url> previews when logged in', async () => {
+    it('uses an anonymous request for scan <url> previews unless a project is supplied', async () => {
       let requestAuth;
       const config = createExplicitConfigDir({
         agent_session: {
@@ -1460,7 +1468,7 @@ describe('CLI', () => {
           res.end(JSON.stringify({
             ok: true,
             analysis_id: 'scan_auth_preview',
-            mode: 'authenticated_preview',
+            mode: 'anonymous_preview',
             normalized_url: 'https://example.com/',
             preview: {
               minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
@@ -1487,8 +1495,8 @@ describe('CLI', () => {
         const data = JSON.parse(stdout);
 
         assert.equal(code, 0);
-        assert.equal(requestAuth, 'Bearer aas_scan_preview');
-        assert.equal(data.mode, 'authenticated_preview');
+        assert.equal(requestAuth, undefined);
+        assert.equal(data.mode, 'anonymous_preview');
       } finally {
         await server.close();
         config.cleanup();

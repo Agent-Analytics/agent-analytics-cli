@@ -559,7 +559,7 @@ function printScanResult(data, { full = false } = {}) {
 
   if (data.resume_token && !full) {
     log(`${DIM}To unlock the full plan after login:${RESET}`);
-    log(`  ${CYAN}npx @agent-analytics/cli scan --resume ${data.analysis_id} --resume-token ${data.resume_token} --full --json${RESET}`);
+    log(`  ${CYAN}npx @agent-analytics/cli scan --resume ${data.analysis_id} --resume-token ${data.resume_token} --full --project <project> --json${RESET}`);
     log('');
   }
 }
@@ -570,14 +570,17 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
       const api = await requireClient();
       let data;
       if (resumeId) {
-        if (!resumeToken) {
-          error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
+        if (!resumeToken || !project) {
+          error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full --project <name> [--json]');
         }
         data = await api.upgradeWebsiteScan(resumeId, { resumeToken, project });
       } else if (url) {
-        data = await api.createWebsiteScan(url, { full: true });
+        if (!project) {
+          error('Usage: npx @agent-analytics/cli scan <url> --full --project <name> [--json]');
+        }
+        data = await api.createWebsiteScan(url, { full: true, project });
       } else {
-        error('Usage: npx @agent-analytics/cli scan <url> --full [--json]\n   or: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
+        error('Usage: npx @agent-analytics/cli scan <url> --full --project <name> [--json]\n   or: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full --project <name> [--json]');
       }
       if (jsonOutput) {
         printJson(data);
@@ -597,10 +600,10 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
     if (!resumeId && !url) {
       error('Usage: npx @agent-analytics/cli scan <url> [--json]');
     }
-    const api = resumeId ? createApiClient(null) : createApiClient();
+    const api = resumeId ? createApiClient(null) : (project ? await requireClient() : createApiClient(null));
     const data = resumeId
       ? await api.getWebsiteScan(resumeId, { resumeToken })
-      : await api.createWebsiteScan(url);
+      : await api.createWebsiteScan(url, { project });
     if (jsonOutput) {
       printJson(data);
     } else {
