@@ -1,0 +1,107 @@
+name: NPM Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.5.21)'
+        required: true
+        type: string
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify release ref is current origin/main
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          RELEASE_SHA=$(git rev-parse HEAD)
+          MAIN_SHA=$(git rev-parse refs/remotes/origin/main)
+
+          echo "Release commit SHA: $RELEASE_SHA"
+          echo "origin/main SHA: $MAIN_SHA"
+
+          if [ "$RELEASE_SHA" != "$MAIN_SHA" ]; then
+            echo "Error: releases must be tagged or dispatched from the current origin/main commit."
+            echo "Push the release commit to main first, then create/push the version tag or run workflow_dispatch from main."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Create npm package tarball
+        run: npm pack --dry-run
+
+  publish:
+    name: Publish to NPM
+    needs: build-and-test
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Verify package version
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="${{ github.event.inputs.version }}"
+          fi
+
+          echo "Package version: $PACKAGE_VERSION"
+          echo "Requested version: $TAG_VERSION"
+
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "Error: package.json version ($PACKAGE_VERSION) does not match requested version ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Create npm package tarball
+        run: npm pack --dry-run
+
+      - name: Publish to NPM with trusted publishing
+        run: npm publish --access public --provenance
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
