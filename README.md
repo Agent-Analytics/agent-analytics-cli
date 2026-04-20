@@ -107,6 +107,9 @@ properties <name>                Discover event names & property keys
 properties-received <name>       Property keys grouped by received event name
 context get <name>               Read stored goals, activation events, and event glossary
 context set <name> --json '{...}' Store compact goals, activation events, and glossary
+portfolio-context get            Read stored account portfolio context
+portfolio-context set --json '{...}'
+                                 Store shared goals, surface roles, milestones, and glossary
 
 # Experiments — A/B testing your agent can actually use
 experiments list <project>       List experiments
