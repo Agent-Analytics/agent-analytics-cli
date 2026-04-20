@@ -159,7 +159,7 @@ npx --yes @agent-analytics/cli@0.5.20 query my-site --filter '[{"field":"propert
 
 Invalid filter fields now fail loudly and return property discovery guidance instead of being silently ignored.
 
-Store compact project context when the product has custom goals, activation events, or event meanings that should travel with analytics results. Keep this short because project-scoped analytics endpoints include it as `project_context`.
+Store compact project context when the product has custom goals, activation events, or event meanings that should travel with analytics results. Keep this short because project-scoped analytics endpoints include it as `project_context`. `context set` accepts an encoded JSON body up to 8KB.
 
 Before setting or refreshing the glossary, inspect the project's current event names:
 

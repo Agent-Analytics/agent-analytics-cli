@@ -31,6 +31,8 @@
  *   npx @agent-analytics/cli project <name-or-id>  — Get single project details
  *   npx @agent-analytics/cli context get <project> — Get stored project analytics context
  *   npx @agent-analytics/cli context set <project> --json '{...}' — Set goals, activation events, glossary
+ *   npx @agent-analytics/cli portfolio-context get — Get stored account portfolio context
+ *   npx @agent-analytics/cli portfolio-context set --json '{...}' — Set goals, surface roles, milestones, glossary
  *   npx @agent-analytics/cli update <name-or-id>   — Update a project
  *   npx @agent-analytics/cli delete <name-or-id>   — Delete a project
  *   npx @agent-analytics/cli live [name]          — Real-time live view
@@ -1297,6 +1299,52 @@ function logProjectContext(data) {
   log('');
 }
 
+function logPortfolioContext(data) {
+  const context = data.portfolio_context || {};
+  heading('Portfolio Context');
+  log('');
+
+  const goals = context.goals || [];
+  const surfaceRoles = context.surface_roles || [];
+  const sharedMilestones = context.shared_milestones || [];
+  const glossary = context.glossary || [];
+
+  if (goals.length === 0 && surfaceRoles.length === 0 && sharedMilestones.length === 0 && glossary.length === 0) {
+    log('  No portfolio context stored.');
+    log(`${DIM}Use portfolio-context set --json '{...}' to define your shared growth system.${RESET}`);
+    log('');
+    return;
+  }
+
+  if (goals.length > 0) {
+    heading('Goals:');
+    for (const goal of goals) log(`  - ${goal}`);
+  }
+
+  if (surfaceRoles.length > 0) {
+    log('');
+    heading('Surface Roles:');
+    for (const entry of surfaceRoles) log(`  - ${entry.project}: ${entry.role}`);
+  }
+
+  if (sharedMilestones.length > 0) {
+    log('');
+    heading('Shared Milestones:');
+    for (const milestone of sharedMilestones) log(`  - ${milestone}`);
+  }
+
+  if (glossary.length > 0) {
+    log('');
+    heading('Glossary:');
+    for (const entry of glossary) {
+      log(`  - ${entry.term}`);
+      log(`    ${DIM}${entry.definition}${RESET}`);
+    }
+  }
+
+  log('');
+}
+
 const cmdContext = withApi(async (api, subcommand, project, opts = {}) => {
   if (!subcommand || !['get', 'set'].includes(subcommand)) {
     error('Usage: npx @agent-analytics/cli context <get|set> <project> [--json \'{...}\']');
@@ -1325,6 +1373,33 @@ const cmdContext = withApi(async (api, subcommand, project, opts = {}) => {
   const data = await api.setProjectContext(project, context);
   success(`Project context updated for ${data.project || project}`);
   logProjectContext(data);
+});
+
+const cmdPortfolioContext = withApi(async (subcommandApi, subcommand, opts = {}) => {
+  if (!subcommand || !['get', 'set'].includes(subcommand)) {
+    error('Usage: npx @agent-analytics/cli portfolio-context <get|set> [--json \'{...}\']');
+  }
+
+  if (subcommand === 'get') {
+    const data = await subcommandApi.getPortfolioContext();
+    logPortfolioContext(data);
+    return;
+  }
+
+  if (!opts.json) {
+    error('Usage: npx @agent-analytics/cli portfolio-context set --json \'{"goals":[],"surface_roles":[],"shared_milestones":[],"glossary":[]}\'');
+  }
+
+  let context;
+  try {
+    context = JSON.parse(opts.json);
+  } catch {
+    error('--json must be valid JSON');
+  }
+
+  const data = await subcommandApi.setPortfolioContext(context);
+  success('Portfolio context updated');
+  logPortfolioContext(data);
 });
 
 const cmdUpdate = withApi(async (api, target, opts = {}) => {
@@ -1747,6 +1822,8 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
   ${CYAN}context get${RESET} <name>     Read stored goals, activation events, and event glossary
   ${CYAN}context set${RESET} <name>     Set compact project context with --json
+  ${CYAN}portfolio-context get${RESET}  Read stored account portfolio context
+  ${CYAN}portfolio-context set${RESET}  Set compact portfolio context with --json
 
 ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RESET}
   ${CYAN}experiments list${RESET} <project>     List experiments
@@ -1981,6 +2058,11 @@ try {
       break;
     case 'context':
       await cmdContext(args[1], args[2], {
+        json: getArg('--json'),
+      });
+      break;
+    case 'portfolio-context':
+      await cmdPortfolioContext(args[1], {
         json: getArg('--json'),
       });
       break;

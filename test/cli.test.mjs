@@ -1008,6 +1008,95 @@ describe('CLI', () => {
     });
   });
 
+  describe('portfolio-context', () => {
+    it('gets portfolio context from the API', async () => {
+      const server = await startServer((req, res) => {
+        if (req.method !== 'GET' || req.url !== '/portfolio-context') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          portfolio_context: {
+            goals: ['Increase qualified users who reach setup'],
+            surface_roles: [
+              { project_id: 'proj_1', project: 'agentanalytics.sh', role: 'scanner_and_conversion' },
+              { project_id: 'proj_2', project: 'openorchestrators.org', role: 'discovery' },
+            ],
+            shared_milestones: ['qualified_click_to_product', 'project_created'],
+            glossary: [
+              { term: 'Qualified click', definition: 'A visitor reaches the main product with relevant intent.' },
+            ],
+          },
+        }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'portfolio-context',
+          'get',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(stdout.includes('Portfolio Context'));
+        assert.ok(stdout.includes('agentanalytics.sh'));
+        assert.ok(stdout.includes('qualified_click_to_product'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('sets portfolio context from JSON', async () => {
+      let requestBody;
+      const server = await startServer((req, res) => {
+        if (req.method !== 'PUT' || req.url !== '/portfolio-context') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          requestBody = JSON.parse(body);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            portfolio_context: requestBody,
+          }));
+        });
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'portfolio-context',
+          'set',
+          '--json',
+          '{"goals":["Increase qualified users who reach setup"],"surface_roles":[{"project":"agentanalytics.sh","role":"scanner_and_conversion"}],"shared_milestones":["qualified_click_to_product"],"glossary":[{"term":"Qualified click","definition":"A visitor reaches the main product with relevant intent."}]}',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(requestBody.surface_roles[0].project, 'agentanalytics.sh');
+        assert.ok(stdout.includes('Portfolio context updated'));
+        assert.ok(stdout.includes('scanner_and_conversion'));
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
   describe('query', () => {
     it('forwards --count-mode session_then_user to the /query payload', async () => {
       let requestBody;
