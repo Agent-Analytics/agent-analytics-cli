@@ -272,6 +272,29 @@ function ifEmpty(arr, label) {
   return false;
 }
 
+function websiteAnalysisWebPreviewUrl() {
+  return 'https://agentanalytics.sh/analysis/';
+}
+
+function unauthenticatedWebsiteAnalysisCliMessage() {
+  return [
+    `Website analysis preview is only available anonymously on the web: ${websiteAnalysisWebPreviewUrl()}`,
+    `In CLI, sign in first, then scan sites for projects you own or manage.`,
+    `Next step: npx @agent-analytics/cli login --detached`,
+  ].join('\n');
+}
+
+function authenticatedWebsiteAnalysisProjectMessage(url) {
+  const website = url || 'https://mysite.com';
+  return [
+    'CLI website analysis requires --project for authenticated scans.',
+    `Scan sites for projects you own or manage. If you need anonymous preview, use ${websiteAnalysisWebPreviewUrl()}`,
+    'If this is a new site, create or identify the matching project first, then rerun scan:',
+    `  npx @agent-analytics/cli create my-site --domain ${website}`,
+    `  npx @agent-analytics/cli scan ${website} --project my-site --json`,
+  ].join('\n');
+}
+
 async function resolveProject(api, target) {
   const { projects } = await api.listProjects();
   const match = projects?.find(p => p.id === target) || projects?.find(p => p.name === target);
@@ -602,10 +625,28 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
     if (!resumeId && !url) {
       error('Usage: npx @agent-analytics/cli scan <url> [--json]');
     }
-    const api = resumeId ? createApiClient(null) : (project ? await requireClient() : createApiClient(null));
-    const data = resumeId
-      ? await api.getWebsiteScan(resumeId, { resumeToken })
-      : await api.createWebsiteScan(url, { project });
+
+    if (resumeId) {
+      const api = createApiClient(null);
+      const data = await api.getWebsiteScan(resumeId, { resumeToken });
+      if (jsonOutput) {
+        printJson(data);
+      } else {
+        printScanResult(data);
+      }
+      return;
+    }
+
+    const auth = getStoredAuth();
+    if (!auth) {
+      error(unauthenticatedWebsiteAnalysisCliMessage());
+    }
+    if (!project) {
+      error(authenticatedWebsiteAnalysisProjectMessage(url));
+    }
+
+    const api = createApiClient(auth);
+    const data = await api.createWebsiteScan(url, { project });
     if (jsonOutput) {
       printJson(data);
     } else {

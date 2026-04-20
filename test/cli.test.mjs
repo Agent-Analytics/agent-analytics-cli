@@ -1238,41 +1238,13 @@ describe('CLI', () => {
   });
 
   describe('website analysis scan command', () => {
-    it('returns anonymous preview JSON for scan <url> --json without saved auth', async () => {
+    it('tells unauthenticated CLI users to use the web preview and sign in first', async () => {
       const tempHome = createTempConfigHome();
-      let requestBody;
-      let authHeader;
+      let requests = 0;
       const server = await startServer(async (req, res) => {
-        if (req.method === 'POST' && req.url === '/website-scans') {
-          authHeader = req.headers.authorization || req.headers['x-api-key'];
-          requestBody = await readRequestJson(req);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            ok: true,
-            analysis_id: 'scan_anon',
-            mode: 'anonymous_preview',
-            normalized_url: 'https://example.com/',
-            resume_token: 'rst_preview',
-            preview: {
-              current_blindspots: ['Cannot see signup intent'],
-              minimum_viable_instrumentation: [{
-                event: 'primary_cta_clicked',
-                priority: 1,
-                why_this_matters_now: 'Intent starts here.',
-                current_blindspot: 'CTA intent is unknown.',
-                unlocks_questions: ['Which page creates intent?'],
-                agent_capability_after_install: 'Rank pages by intent.',
-              }],
-              not_needed_yet: [],
-              goal_driven_funnels: [],
-              after_install_agent_behavior: [],
-              analytics_detected: { providers: [] },
-            },
-          }));
-          return;
-        }
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'not found' }));
+        requests += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
       });
 
       try {
@@ -1283,16 +1255,60 @@ describe('CLI', () => {
             XDG_CONFIG_HOME: tempHome.xdgConfigHome,
           },
         });
-        const data = JSON.parse(stdout);
+        const plain = stripAnsi(stdout);
 
-        assert.equal(code, 0);
-        assert.equal(authHeader, undefined);
-        assert.deepEqual(requestBody, { url: 'example.com/pricing' });
-        assert.equal(data.analysis_id, 'scan_anon');
-        assert.equal(data.resume_token, 'rst_preview');
+        assert.notEqual(code, 0);
+        assert.equal(requests, 0);
+        assert.match(plain, /Website analysis preview is only available anonymously on the web/i);
+        assert.match(plain, /https:\/\/agentanalytics\.sh\/analysis\//i);
+        assert.match(plain, /sign in first/i);
+        assert.match(plain, /login --detached/i);
       } finally {
         await server.close();
         tempHome.cleanup();
+      }
+    });
+
+    it('requires --project for authenticated CLI website analysis', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_scan_preview',
+          access_token: 'aas_scan_preview',
+          refresh_token: 'aar_scan_preview',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      let requests = 0;
+      const server = await startServer(async (req, res) => {
+        requests += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          '--config-dir', config.configDir,
+          'scan',
+          'https://example.com/',
+          '--json',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+          },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.equal(requests, 0);
+        assert.match(plain, /requires --project for authenticated scans/i);
+        assert.match(plain, /create my-site --domain https:\/\/example\.com\//i);
+        assert.match(plain, /scan https:\/\/example\.com\/ --project my-site --json/i);
+      } finally {
+        await server.close();
+        config.cleanup();
       }
     });
 
@@ -1537,8 +1553,9 @@ describe('CLI', () => {
       }
     });
 
-    it('uses an anonymous request for scan <url> previews unless a project is supplied', async () => {
+    it('uses authenticated requests for scan <url> when a project is supplied', async () => {
       let requestAuth;
+      let requestBody;
       const config = createExplicitConfigDir({
         agent_session: {
           id: 'sess_scan_preview',
@@ -1552,12 +1569,12 @@ describe('CLI', () => {
       const server = await startServer(async (req, res) => {
         if (req.method === 'POST' && req.url === '/website-scans') {
           requestAuth = req.headers.authorization;
-          await readRequestJson(req);
+          requestBody = await readRequestJson(req);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             ok: true,
             analysis_id: 'scan_auth_preview',
-            mode: 'anonymous_preview',
+            mode: 'authenticated_preview',
             normalized_url: 'https://example.com/',
             preview: {
               minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
@@ -1574,6 +1591,7 @@ describe('CLI', () => {
           '--config-dir', config.configDir,
           'scan',
           'https://example.com/',
+          '--project', 'example-site',
           '--json',
         ], {
           env: {
@@ -1584,8 +1602,12 @@ describe('CLI', () => {
         const data = JSON.parse(stdout);
 
         assert.equal(code, 0);
-        assert.equal(requestAuth, undefined);
-        assert.equal(data.mode, 'anonymous_preview');
+        assert.equal(requestAuth, 'Bearer aas_scan_preview');
+        assert.deepEqual(requestBody, {
+          url: 'https://example.com/',
+          project: 'example-site',
+        });
+        assert.equal(data.mode, 'authenticated_preview');
       } finally {
         await server.close();
         config.cleanup();
@@ -1612,8 +1634,17 @@ describe('CLI', () => {
       tempHome.cleanup();
     });
 
-    it('prints retry timing for a busy anonymous analyzer response', async () => {
-      const tempHome = createTempConfigHome();
+    it('prints retry timing for a busy authenticated analyzer response', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_scan_busy',
+          access_token: 'aas_scan_busy',
+          refresh_token: 'aar_scan_busy',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
       const server = await startServer(async (req, res) => {
         if (req.method === 'POST' && req.url === '/website-scans') {
           await readRequestJson(req);
@@ -1630,11 +1661,15 @@ describe('CLI', () => {
       });
 
       try {
-        const { code, stdout } = await run(['scan', 'https://busy.example'], {
+        const { code, stdout } = await run([
+          '--config-dir', config.configDir,
+          'scan',
+          'https://busy.example',
+          '--project', 'busy-site',
+        ], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
             AGENT_ANALYTICS_API_KEY: '',
-            XDG_CONFIG_HOME: tempHome.xdgConfigHome,
           },
         });
         const output = stripAnsi(stdout);
@@ -1644,7 +1679,7 @@ describe('CLI', () => {
         assert.ok(output.includes('17 seconds'));
       } finally {
         await server.close();
-        tempHome.cleanup();
+        config.cleanup();
       }
     });
   });
