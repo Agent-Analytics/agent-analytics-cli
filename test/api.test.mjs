@@ -254,6 +254,17 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastUrl, 'https://api.test/events?project=my-site&since=14d&limit=50&event=page_view');
     });
 
+    it('getEvents with identity filters', async () => {
+      await api.getEvents('my-site', { since: '30d', user_id: 'user-1', email_hash: 'a'.repeat(64) });
+      assert.equal(lastUrl, `https://api.test/events?project=my-site&since=30d&limit=100&user_id=user-1&email_hash=${'a'.repeat(64)}`);
+    });
+
+    it('getJourney → GET /journey with identity filters', async () => {
+      await api.getJourney('my-site', { since: '30d', limit: 25, email_hash: 'b'.repeat(64) });
+      assert.equal(lastUrl, `https://api.test/journey?project=my-site&since=30d&limit=25&email_hash=${'b'.repeat(64)}`);
+      assert.equal(lastMethod, 'GET');
+    });
+
     it('getProperties → GET /properties', async () => {
       await api.getProperties('my-site', 60);
       assert.equal(lastUrl, 'https://api.test/properties?project=my-site&since=60d');
@@ -294,6 +305,7 @@ describe('AgentAnalyticsAPI', () => {
         group_by: ['country'],
         count_mode: 'raw',
         limit: 25,
+        email_hash: 'c'.repeat(64),
       });
       assert.equal(lastUrl, 'https://api.test/query');
       assert.equal(lastMethod, 'POST');
@@ -303,6 +315,7 @@ describe('AgentAnalyticsAPI', () => {
         group_by: ['country'],
         limit: 25,
         count_mode: 'raw',
+        email_hash: 'c'.repeat(64),
       }));
     });
   });

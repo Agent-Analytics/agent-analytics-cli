@@ -15,6 +15,7 @@
  *   npx @agent-analytics/cli bot-traffic <name>   — Automated traffic filtered from tracking
  *   npx @agent-analytics/cli stats <name>         — Get stats for a project
  *   npx @agent-analytics/cli events <name>        — Get recent events
+ *   npx @agent-analytics/cli journey <name>       — Show one user's chronological journey
  *   npx @agent-analytics/cli query <name>         — Flexible analytics query
  *   npx @agent-analytics/cli properties <name>    — Discover event names & property keys
  *   npx @agent-analytics/cli properties-received <name> — Show property keys per event
@@ -51,6 +52,7 @@
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
 import { finishManualExchange, loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   clearStoredAuth,
@@ -83,6 +85,23 @@ function success(msg) { log(`${GREEN}✓${RESET} ${msg}`); }
 function warn(msg) { log(`${YELLOW}⚠${RESET} ${msg}`); }
 function error(msg) { log(`${RED}✗${RESET} ${msg}`); process.exit(1); }
 function heading(msg) { log(`\n${BOLD}${msg}${RESET}`); }
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function hashEmail(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  return createHash('sha256').update(normalized).digest('hex');
+}
+
+function identityOptions(opts = {}) {
+  const out = {};
+  if (opts.user_id) out.user_id = opts.user_id;
+  if (opts.email) out.email_hash = hashEmail(opts.email);
+  return out;
+}
 
 function startWaitingIndicator(message, { interruptMessage = 'Stopped waiting for browser approval.' } = {}) {
   if (!process.stdout.isTTY) {
@@ -866,9 +885,9 @@ const cmdStats = withApi(async (api, project, days = 7) => {
 });
 
 const cmdEvents = withApi(async (api, project, opts = {}) => {
-  if (!project) error('Usage: npx @agent-analytics/cli events <project-name> [--days N] [--limit N]');
+  if (!project) error('Usage: npx @agent-analytics/cli events <project-name> [--days N] [--limit N] [--user-id id] [--email email]');
 
-  const data = await api.getEvents(project, opts);
+  const data = await api.getEvents(project, { ...opts, ...identityOptions(opts) });
 
   heading(`Events: ${project}`);
   log('');
@@ -880,6 +899,46 @@ const cmdEvents = withApi(async (api, project, opts = {}) => {
     log(`  ${DIM}${time}${RESET}  ${BOLD}${e.event}${RESET}  ${DIM}${e.user_id || ''}${RESET}`);
     if (e.properties) {
       log(`    ${DIM}${JSON.stringify(e.properties)}${RESET}`);
+    }
+  }
+  log('');
+});
+
+const cmdJourney = withApi(async (api, project, opts = {}) => {
+  if (!project) error('Usage: npx @agent-analytics/cli journey <project-name> [--user-id id | --email email] [--since 30d] [--limit N]');
+  if (!opts.user_id && !opts.email) error('journey requires --user-id or --email');
+
+  const data = await api.getJourney(project, { ...opts, ...identityOptions(opts) });
+
+  heading(`Journey: ${project}`);
+  log('');
+
+  const label = opts.email ? `email ${normalizeEmail(opts.email)}` : `user ${opts.user_id}`;
+  log(`  ${DIM}${label}${RESET}`);
+  if (data.profiles?.length) {
+    const ids = data.profiles.map((profile) => profile.user_id).join(', ');
+    log(`  ${DIM}matched user_id:${RESET} ${ids}`);
+  }
+  log('');
+
+  if (ifEmpty(data.events, 'events')) return;
+
+  for (const e of data.events) {
+    const time = new Date(e.timestamp).toLocaleString();
+    const props = e.properties || {};
+    const path = props.path || props.page || props.url || '';
+    const referrer = props.referrer ? `  ${DIM}ref ${props.referrer}${RESET}` : '';
+    const session = e.session_id ? `  ${DIM}${e.session_id}${RESET}` : '';
+    log(`  ${DIM}${time}${RESET}  ${BOLD}${e.event}${RESET}  ${DIM}${e.user_id || ''}${RESET}${session}`);
+    if (path || referrer) log(`    ${DIM}${path}${RESET}${referrer}`);
+    const compactProps = { ...props };
+    delete compactProps.url;
+    delete compactProps.path;
+    delete compactProps.page;
+    delete compactProps.referrer;
+    delete compactProps.title;
+    if (Object.keys(compactProps).length > 0) {
+      log(`    ${DIM}${JSON.stringify(compactProps)}${RESET}`);
     }
   }
   log('');
@@ -1229,9 +1288,11 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
   --order-by  event_count, unique_users, session_count, date, event
   --order     asc or desc
   --limit     Max rows (default 100, max 1000)
+  --email     Filter by local-only normalized SHA-256 email hash lookup
 
 Property filters must use the canonical properties.<key> form.
 Example: properties.referrer, properties.utm_source, properties.first_utm_source
+Email lookup uses normalized SHA-256, not a keyed HMAC. It keeps raw email out of API requests but hashes may be guessable for known emails.
 Invalid filter fields now fail loudly instead of being ignored.
 
 ${BOLD}Examples:${RESET}
@@ -1263,6 +1324,7 @@ ${BOLD}Examples:${RESET}
     order_by: opts.order_by || undefined,
     order: opts.order || undefined,
     limit: opts.limit,
+    ...identityOptions(opts),
   });
 
   heading(`Query: ${project}`);
@@ -1858,6 +1920,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}retention${RESET} <name>         Cohort retention: % of users who return
   ${CYAN}sessions-dist${RESET} <name>   Session duration distribution
   ${CYAN}events${RESET} <name>          Raw event log
+  ${CYAN}journey${RESET} <name>         Chronological journey by --user-id or --email
   ${CYAN}sessions${RESET} <name>        Individual session records
   ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, country)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
@@ -1895,6 +1958,9 @@ ${BOLD}KEY OPTIONS${RESET}
   --since <VALUE>    Lookback start for commands that support explicit ranges
   --property <key>   Property to break down (path, referrer, utm_source, country)
   --event <name>     Filter by event name
+  --user-id <id>     Filter events or journeys to one known user id
+  --email <email>    Filter events, journeys, or query by local-only email hash lookup
+                     Uses normalized SHA-256, not a keyed HMAC; hashes may be guessable for known emails
   --message <text>   Feedback message for the product team
   --filter <json>    Filters for query (e.g. '[{"field":"country","op":"eq","value":"US"}]')
   --interval <N>     Live view refresh in seconds (default: 5)
@@ -2062,8 +2128,19 @@ try {
     case 'events':
       await cmdEvents(args[1], {
         days: parseInt(getArg('--days') || '7', 10),
+        since: getArg('--since'),
         limit: parseInt(getArg('--limit') || '100', 10),
         event: getArg('--event'),
+        user_id: getArg('--user-id'),
+        email: getArg('--email'),
+      });
+      break;
+    case 'journey':
+      await cmdJourney(args[1], {
+        since: getArg('--since') || (getArg('--days') ? `${getArg('--days')}d` : undefined),
+        limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+        user_id: getArg('--user-id'),
+        email: getArg('--email'),
       });
       break;
     case 'properties':
@@ -2092,6 +2169,7 @@ try {
         order_by: getArg('--order-by'),
         order: getArg('--order'),
         limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+        email: getArg('--email'),
       });
       break;
     case 'project':

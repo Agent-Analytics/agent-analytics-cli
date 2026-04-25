@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -68,6 +69,10 @@ function readJson(file) {
 
 function stripAnsi(text) {
   return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function emailHash(email) {
+  return createHash('sha256').update(String(email).trim().toLowerCase()).digest('hex');
 }
 
 function readRequestJson(req) {
@@ -1098,6 +1103,41 @@ describe('CLI', () => {
   });
 
   describe('query', () => {
+    it('hashes --email locally and sends only email_hash to /query', async () => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        if (req.method !== 'POST' || req.url !== '/query') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+
+        requestBody = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ rows: [], count: 0 }));
+      });
+
+      try {
+        const { code } = await run([
+          'query',
+          'my-site',
+          '--email', ' Alice@Example.com ',
+          '--metrics', 'event_count',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(requestBody.email_hash, emailHash('alice@example.com'));
+        assert.equal(JSON.stringify(requestBody).includes('Alice@Example.com'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
     it('forwards --count-mode session_then_user to the /query payload', async () => {
       let requestBody;
       const server = createServer((req, res) => {
@@ -1163,6 +1203,88 @@ describe('CLI', () => {
       assert.ok(output.includes('--count-mode raw or session_then_user (default: raw event rows)'));
       assert.ok(output.includes('--count-mode session_then_user'));
       assert.ok(!output.includes('mixed session/no-session duplicates collapse by user'));
+    });
+  });
+
+  describe('identity lookup', () => {
+    it('hashes --email locally for events and never sends raw email', async () => {
+      let requestUrl;
+      const server = await startServer((req, res) => {
+        requestUrl = req.url;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ events: [], count: 0 }));
+      });
+
+      try {
+        const { code } = await run([
+          'events',
+          'my-site',
+          '--email', ' Alice@Example.com ',
+          '--days', '30',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(requestUrl.includes(`/events?`));
+        assert.ok(requestUrl.includes(`email_hash=${emailHash('alice@example.com')}`));
+        assert.equal(requestUrl.includes('Alice%40Example.com'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('renders journey rows with path, referrer, and session context', async () => {
+      let requestUrl;
+      const server = await startServer((req, res) => {
+        requestUrl = req.url;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          profiles: [{ user_id: 'user-1' }],
+          events: [{
+            timestamp: Date.UTC(2026, 0, 2, 3, 4, 5),
+            event: 'page_view',
+            user_id: 'user-1',
+            session_id: 'sess-1',
+            properties: {
+              path: '/pricing',
+              referrer: 'https://reddit.com/r/test',
+              plan: 'pro',
+            },
+          }],
+          count: 1,
+        }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'journey',
+          'my-site',
+          '--email', 'alice@example.com',
+          '--since', '30d',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        const output = stripAnsi(stdout);
+        assert.equal(code, 0);
+        assert.ok(requestUrl.includes('/journey?'));
+        assert.ok(requestUrl.includes(`email_hash=${emailHash('alice@example.com')}`));
+        assert.equal(requestUrl.includes('alice%40example.com'), false);
+        assert.ok(output.includes('matched user_id: user-1'));
+        assert.ok(output.includes('page_view'));
+        assert.ok(output.includes('/pricing'));
+        assert.ok(output.includes('sess-1'));
+        assert.ok(output.includes('"plan":"pro"'));
+      } finally {
+        await server.close();
+      }
     });
   });
 
