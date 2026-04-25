@@ -966,6 +966,48 @@ describe('CLI', () => {
   });
 
   describe('context', () => {
+    it('gets project context and renders annotations', async () => {
+      const server = await startServer((req, res) => {
+        if (req.method !== 'GET' || req.url !== '/project-context?project=my-site') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          project: 'my-site',
+          project_context: {
+            goals: [],
+            activation_events: [],
+            glossary: [],
+            annotations: [{
+              occurred_at: '2026-04-25T13:00:00.000Z',
+              title: 'Changed pricing page offer',
+              note: 'Moved annual plan discount above the fold.',
+            }],
+          },
+        }));
+      });
+
+      try {
+        const { code, stdout } = await run(['context', 'get', 'my-site'], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.ok(stdout.includes('Annotations:'));
+        assert.ok(stdout.includes('2026-04-25T13:00:00.000Z'));
+        assert.ok(stdout.includes('Changed pricing page offer'));
+        assert.ok(stdout.includes('Moved annual plan discount above the fold.'));
+      } finally {
+        await server.close();
+      }
+    });
+
     it('sets project context from JSON with event-name glossary entries', async () => {
       let requestBody;
       const server = await startServer((req, res) => {
@@ -1007,6 +1049,52 @@ describe('CLI', () => {
         assert.equal(requestBody.glossary[0].event_name, 'signup_completed');
         assert.ok(stdout.includes('Project context updated'));
         assert.ok(stdout.includes('signup_completed'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('sets project context from JSON with annotations', async () => {
+      let requestBody;
+      const server = await startServer((req, res) => {
+        if (req.method !== 'PUT' || req.url !== '/project-context') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          requestBody = JSON.parse(body);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            project: 'my-site',
+            project_context: requestBody,
+          }));
+        });
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'context',
+          'set',
+          'my-site',
+          '--json',
+          '{"annotations":[{"occurred_at":"2026-04-25T13:00:00.000Z","title":"Changed pricing page offer","note":"Moved annual plan discount above the fold."}]}',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(requestBody.project, 'my-site');
+        assert.equal(requestBody.annotations[0].title, 'Changed pricing page offer');
+        assert.ok(stdout.includes('Project context updated'));
+        assert.ok(stdout.includes('Changed pricing page offer'));
       } finally {
         await server.close();
       }

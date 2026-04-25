@@ -1371,8 +1371,9 @@ function logProjectContext(data) {
   const goals = context.goals || [];
   const activationEvents = context.activation_events || [];
   const glossary = context.glossary || [];
+  const annotations = context.annotations || [];
 
-  if (goals.length === 0 && activationEvents.length === 0 && glossary.length === 0) {
+  if (goals.length === 0 && activationEvents.length === 0 && glossary.length === 0 && annotations.length === 0) {
     log('  No project context stored.');
     log(`${DIM}Use context set after checking event names with: npx @agent-analytics/cli properties <project>${RESET}`);
     log('');
@@ -1396,6 +1397,15 @@ function logProjectContext(data) {
     for (const entry of glossary) {
       log(`  - ${entry.event_name}: ${entry.term}`);
       log(`    ${DIM}${entry.definition}${RESET}`);
+    }
+  }
+
+  if (annotations.length > 0) {
+    log('');
+    heading('Annotations:');
+    for (const entry of annotations) {
+      log(`  - ${entry.occurred_at}: ${entry.title}`);
+      if (entry.note) log(`    ${DIM}${entry.note}${RESET}`);
     }
   }
 

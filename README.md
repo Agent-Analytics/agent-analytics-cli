@@ -105,8 +105,8 @@ sessions <name>                  Individual session records
 query <name>                     Flexible analytics query (metrics, group_by, filters)
 properties <name>                Discover event names & property keys
 properties-received <name>       Property keys grouped by received event name
-context get <name>               Read stored goals, activation events, and event glossary
-context set <name> --json '{...}' Store compact goals, activation events, and glossary
+context get <name>               Read stored goals, activation events, event glossary, and annotations
+context set <name> --json '{...}' Store compact goals, activation events, glossary, and annotations
 portfolio-context get            Read stored account portfolio context
 portfolio-context set --json '{...}'
                                  Store shared goals, surface roles, milestones, and glossary
@@ -162,7 +162,9 @@ npx --yes @agent-analytics/cli@0.5.20 query my-site --filter '[{"field":"propert
 
 Invalid filter fields now fail loudly and return property discovery guidance instead of being silently ignored.
 
-Store compact project context when the product has custom goals, activation events, or event meanings that should travel with analytics results. Keep this short because project-scoped analytics endpoints include it as `project_context`. `context set` accepts an encoded JSON body up to 8KB.
+Store compact project context when the product has custom goals, activation events, event meanings, or date annotations that should travel with analytics results. Keep this short because project-scoped analytics endpoints include it as `project_context`. `context set` accepts an encoded JSON body up to 512KB.
+
+Use annotations for major product changes that could explain later graph movement: landing page, pricing, onboarding, feature, release, or experiment changes. Do not store git commit logs, noisy edits, temporary metric notes, PII, secrets, or long release notes. Direct `context get` returns all annotations; project-scoped analytics responses include annotations only for the requested analytics date range plus one day before and after.
 
 Before setting or refreshing the glossary, inspect the project's current event names:
 
@@ -177,6 +179,13 @@ npx --yes @agent-analytics/cli@0.5.20 context set my-site --json '{
       "event_name": "first_event_received",
       "term": "AA Activation",
       "definition": "Signup, project created, and first event received."
+    }
+  ],
+  "annotations": [
+    {
+      "occurred_at": "2026-04-25T13:00:00.000Z",
+      "title": "Changed pricing page offer",
+      "note": "Moved annual plan discount above the fold."
     }
   ]
 }'
