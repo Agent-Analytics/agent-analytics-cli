@@ -234,6 +234,30 @@ describe('AgentAnalyticsAPI', () => {
       }));
     });
 
+    it('portfolio methods use the new /portfolios contract', async () => {
+      await api.listPortfolios();
+      assert.equal(lastUrl, 'https://api.test/portfolios');
+      assert.equal(lastMethod, 'GET');
+
+      await api.createPortfolio({ slug: 'growth', name: 'Growth', projects: ['app'], allow_move: true });
+      assert.equal(lastUrl, 'https://api.test/portfolios');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({ slug: 'growth', name: 'Growth', projects: ['app'], allow_move: true }));
+
+      await api.getPortfolio('growth/system');
+      assert.equal(lastUrl, 'https://api.test/portfolios/growth%2Fsystem');
+      assert.equal(lastMethod, 'GET');
+
+      await api.updatePortfolio('growth', { name: 'Growth System', projects: ['docs'], allow_move: true });
+      assert.equal(lastUrl, 'https://api.test/portfolios/growth');
+      assert.equal(lastMethod, 'PATCH');
+      assert.equal(lastOpts.body, JSON.stringify({ name: 'Growth System', projects: ['docs'], allow_move: true }));
+
+      await api.deletePortfolio('growth');
+      assert.equal(lastUrl, 'https://api.test/portfolios/growth');
+      assert.equal(lastMethod, 'DELETE');
+    });
+
     it('getStats → GET /stats with query params', async () => {
       await api.getStats('my-site', 30);
       assert.equal(lastUrl, 'https://api.test/stats?project=my-site&since=30d');
@@ -254,15 +278,29 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastUrl, 'https://api.test/events?project=my-site&since=14d&limit=50&event=page_view');
     });
 
-    it('getEvents with identity filters', async () => {
-      await api.getEvents('my-site', { since: '30d', user_id: 'user-1', email_hash: 'a'.repeat(64) });
-      assert.equal(lastUrl, `https://api.test/events?project=my-site&since=30d&limit=100&user_id=user-1&email_hash=${'a'.repeat(64)}`);
+    it('getEvents with email uses POST for scoped HMAC lookup', async () => {
+      await api.getEvents('my-site', { since: '30d', user_id: 'user-1', email: 'alice@example.com' });
+      assert.equal(lastUrl, 'https://api.test/events');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        since: '30d',
+        limit: 100,
+        user_id: 'user-1',
+        email: 'alice@example.com',
+      }));
     });
 
-    it('getJourney → GET /journey with identity filters', async () => {
-      await api.getJourney('my-site', { since: '30d', limit: 25, email_hash: 'b'.repeat(64) });
-      assert.equal(lastUrl, `https://api.test/journey?project=my-site&since=30d&limit=25&email_hash=${'b'.repeat(64)}`);
-      assert.equal(lastMethod, 'GET');
+    it('getJourney with email uses POST for scoped HMAC lookup', async () => {
+      await api.getJourney('my-site', { since: '30d', limit: 25, email: 'alice@example.com' });
+      assert.equal(lastUrl, 'https://api.test/journey');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        since: '30d',
+        limit: 25,
+        email: 'alice@example.com',
+      }));
     });
 
     it('getProperties → GET /properties', async () => {
@@ -299,13 +337,13 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastMethod, 'GET');
     });
 
-    it('query → POST /query forwards count_mode', async () => {
+    it('query → POST /query forwards count_mode and email lookup', async () => {
       await api.query('my-site', {
         metrics: ['event_count'],
         group_by: ['country'],
         count_mode: 'raw',
         limit: 25,
-        email_hash: 'c'.repeat(64),
+        email: 'alice@example.com',
       });
       assert.equal(lastUrl, 'https://api.test/query');
       assert.equal(lastMethod, 'POST');
@@ -315,7 +353,7 @@ describe('AgentAnalyticsAPI', () => {
         group_by: ['country'],
         limit: 25,
         count_mode: 'raw',
-        email_hash: 'c'.repeat(64),
+        email: 'alice@example.com',
       }));
     });
   });

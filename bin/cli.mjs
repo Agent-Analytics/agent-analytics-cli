@@ -34,6 +34,8 @@
  *   npx @agent-analytics/cli context set <project> --json '{...}' — Set goals, activation events, glossary
  *   npx @agent-analytics/cli portfolio-context get — Get stored account portfolio context
  *   npx @agent-analytics/cli portfolio-context set --json '{...}' — Set goals, surface roles, milestones, glossary
+ *   npx @agent-analytics/cli portfolios list — List identity lookup portfolios
+ *   npx @agent-analytics/cli portfolios create <slug> --name "Portfolio" --projects app,docs [--move]
  *   npx @agent-analytics/cli update <name-or-id>   — Update a project
  *   npx @agent-analytics/cli delete <name-or-id>   — Delete a project
  *   npx @agent-analytics/cli live [name]          — Real-time live view
@@ -52,7 +54,6 @@
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
 import { finishManualExchange, loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   clearStoredAuth,
@@ -90,16 +91,10 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
-function hashEmail(email) {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return null;
-  return createHash('sha256').update(normalized).digest('hex');
-}
-
 function identityOptions(opts = {}) {
   const out = {};
   if (opts.user_id) out.user_id = opts.user_id;
-  if (opts.email) out.email_hash = hashEmail(opts.email);
+  if (opts.email) out.email = normalizeEmail(opts.email);
   return out;
 }
 
@@ -1288,11 +1283,11 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
   --order-by  event_count, unique_users, session_count, date, event
   --order     asc or desc
   --limit     Max rows (default 100, max 1000)
-  --email     Filter by local-only normalized SHA-256 email hash lookup
+  --email     Filter by server-side scoped HMAC email lookup
 
 Property filters must use the canonical properties.<key> form.
 Example: properties.referrer, properties.utm_source, properties.first_utm_source
-Email lookup uses normalized SHA-256, not a keyed HMAC. It keeps raw email out of API requests but hashes may be guessable for known emails.
+Email lookup sends the email to Agent Analytics over HTTPS and matches with a project-scoped HMAC index. Raw email is not stored in event rows or profile traits.
 Invalid filter fields now fail loudly instead of being ignored.
 
 ${BOLD}Examples:${RESET}
@@ -1513,6 +1508,75 @@ const cmdPortfolioContext = withApi(async (subcommandApi, subcommand, opts = {})
   const data = await subcommandApi.setPortfolioContext(context);
   success('Portfolio context updated');
   logPortfolioContext(data);
+});
+
+function parseProjectList(value) {
+  if (!value) return [];
+  return String(value).split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function logPortfolio(data) {
+  const portfolio = data?.portfolio || data;
+  if (!portfolio) {
+    log('No portfolio returned.');
+    return;
+  }
+  heading(`${portfolio.name || portfolio.slug} (${portfolio.slug || portfolio.id})`);
+  log(`${DIM}id:${RESET} ${portfolio.id}`);
+  const members = portfolio.members || [];
+  if (members.length === 0) {
+    log(`  ${DIM}No member projects.${RESET}`);
+    return;
+  }
+  for (const member of members) {
+    log(`  • ${member.project || member.project_id} ${DIM}${member.project_id}${RESET}`);
+  }
+}
+
+const cmdPortfolios = withApi(async (api, subcommand = 'list', target, opts = {}) => {
+  if (!['list', 'create', 'get', 'update', 'delete'].includes(subcommand)) {
+    error('Usage: npx @agent-analytics/cli portfolios <list|create|get|update|delete> [slug] [--name name] [--projects a,b] [--move]');
+  }
+
+  if (subcommand === 'list') {
+    const data = await api.listPortfolios();
+    const portfolios = data.portfolios || [];
+    if (portfolios.length === 0) {
+      log('No identity portfolios yet.');
+      return;
+    }
+    portfolios.forEach((portfolio) => log(`${portfolio.slug}\t${portfolio.name}\t${portfolio.id}`));
+    return;
+  }
+
+  if (subcommand === 'create') {
+    const slug = target || opts.slug;
+    if (!slug) error('Usage: npx @agent-analytics/cli portfolios create <slug> --name "Name" [--projects a,b]');
+    const data = await api.createPortfolio({ slug, name: opts.name || slug, projects: parseProjectList(opts.projects), allow_move: Boolean(opts.move) });
+    success(`Portfolio ${data.portfolio?.slug || slug} created`);
+    logPortfolio(data);
+    return;
+  }
+
+  if (!target) error(`Usage: npx @agent-analytics/cli portfolios ${subcommand} <slug-or-id>`);
+
+  if (subcommand === 'get') {
+    logPortfolio(await api.getPortfolio(target));
+    return;
+  }
+
+  if (subcommand === 'update') {
+    if (!opts.name && !opts.projects) error('Provide --name and/or --projects to update');
+    const data = await api.updatePortfolio(target, { name: opts.name, projects: opts.projects ? parseProjectList(opts.projects) : undefined, allow_move: Boolean(opts.move) });
+    success(`Portfolio ${data.portfolio?.slug || target} updated`);
+    logPortfolio(data);
+    return;
+  }
+
+  if (subcommand === 'delete') {
+    await api.deletePortfolio(target);
+    success(`Portfolio ${target} deleted`);
+  }
 });
 
 const cmdUpdate = withApi(async (api, target, opts = {}) => {
@@ -1938,6 +2002,11 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}context set${RESET} <name>     Set compact project context with --json
   ${CYAN}portfolio-context get${RESET}  Read stored account portfolio context
   ${CYAN}portfolio-context set${RESET}  Set compact portfolio context with --json
+  ${CYAN}portfolios list${RESET}         List identity lookup portfolios
+  ${CYAN}portfolios create${RESET} <slug> Create a portfolio with --name and --projects
+  ${CYAN}portfolios get${RESET} <slug>   Show a portfolio and member projects
+  ${CYAN}portfolios update${RESET} <slug> Update name/projects with optional --move
+  ${CYAN}portfolios delete${RESET} <slug> Delete a portfolio
 
 ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RESET}
   ${CYAN}experiments list${RESET} <project>     List experiments
@@ -1969,8 +2038,8 @@ ${BOLD}KEY OPTIONS${RESET}
   --property <key>   Property to break down (path, referrer, utm_source, country)
   --event <name>     Filter by event name
   --user-id <id>     Filter events or journeys to one known user id
-  --email <email>    Filter events, journeys, or query by local-only email hash lookup
-                     Uses normalized SHA-256, not a keyed HMAC; hashes may be guessable for known emails
+  --email <email>    Filter events, journeys, or query by server-side scoped HMAC email lookup
+                     Raw email is sent over HTTPS for lookup and is not stored in event rows or profile traits
   --message <text>   Feedback message for the product team
   --filter <json>    Filters for query (e.g. '[{"field":"country","op":"eq","value":"US"}]')
   --interval <N>     Live view refresh in seconds (default: 5)
@@ -2055,6 +2124,9 @@ function isDemoMutation(commandName, commandArgs) {
   if (DEMO_MUTATING_COMMANDS.has(commandName)) return true;
   if (commandName === 'context') {
     return commandArgs[1] === 'set';
+  }
+  if (commandName === 'portfolios') {
+    return ['create', 'update', 'delete'].includes(commandArgs[1]);
   }
   if (commandName === 'experiments') {
     return ['create', 'pause', 'resume', 'complete', 'delete'].includes(commandArgs[1]);
@@ -2193,6 +2265,14 @@ try {
     case 'portfolio-context':
       await cmdPortfolioContext(args[1], {
         json: getArg('--json'),
+      });
+      break;
+    case 'portfolios':
+      await cmdPortfolios(args[1] || 'list', args[2], {
+        slug: getArg('--slug'),
+        name: getArg('--name'),
+        projects: getArg('--projects'),
+        move: args.includes('--move'),
       });
       break;
     case 'update':

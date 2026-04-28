@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -71,9 +70,6 @@ function stripAnsi(text) {
   return text.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
-function emailHash(email) {
-  return createHash('sha256').update(String(email).trim().toLowerCase()).digest('hex');
-}
 
 function readRequestJson(req) {
   return new Promise((resolve) => {
@@ -1190,8 +1186,67 @@ describe('CLI', () => {
     });
   });
 
+  describe('portfolios', () => {
+    it('creates and updates portfolios through /portfolios with explicit move intent', async () => {
+      const requests = [];
+      const server = await startServer(async (req, res) => {
+        requests.push({ method: req.method, url: req.url, body: await readRequestJson(req) });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          portfolio: {
+            id: 'pf_1',
+            slug: 'growth',
+            name: 'Growth',
+            members: [],
+          },
+        }));
+      });
+
+      try {
+        let result = await run([
+          'portfolios', 'create', 'growth',
+          '--name', 'Growth',
+          '--projects', 'app,docs',
+          '--move',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        assert.equal(result.code, 0);
+
+        result = await run([
+          'portfolios', 'update', 'growth',
+          '--projects', 'app',
+          '--move',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        assert.equal(result.code, 0);
+
+        assert.deepEqual(requests[0], {
+          method: 'POST',
+          url: '/portfolios',
+          body: { slug: 'growth', name: 'Growth', projects: ['app', 'docs'], allow_move: true },
+        });
+        assert.deepEqual(requests[1], {
+          method: 'PATCH',
+          url: '/portfolios/growth',
+          body: { projects: ['app'], allow_move: true },
+        });
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
   describe('query', () => {
-    it('hashes --email locally and sends only email_hash to /query', async () => {
+    it('sends --email to /query for server-side scoped HMAC lookup', async () => {
       let requestBody;
       const server = await startServer(async (req, res) => {
         if (req.method !== 'POST' || req.url !== '/query') {
@@ -1219,8 +1274,8 @@ describe('CLI', () => {
         });
 
         assert.equal(code, 0);
-        assert.equal(requestBody.email_hash, emailHash('alice@example.com'));
-        assert.equal(JSON.stringify(requestBody).includes('Alice@Example.com'), false);
+        assert.equal(requestBody.email, 'alice@example.com');
+        assert.equal(requestBody.email_hash, undefined);
       } finally {
         await server.close();
       }
@@ -1295,10 +1350,14 @@ describe('CLI', () => {
   });
 
   describe('identity lookup', () => {
-    it('hashes --email locally for events and never sends raw email', async () => {
+    it('sends --email to /events as POST for server-side scoped HMAC lookup', async () => {
+      let requestMethod;
       let requestUrl;
-      const server = await startServer((req, res) => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        requestMethod = req.method;
         requestUrl = req.url;
+        requestBody = await readRequestJson(req);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ events: [], count: 0 }));
       });
@@ -1317,18 +1376,23 @@ describe('CLI', () => {
         });
 
         assert.equal(code, 0);
-        assert.ok(requestUrl.includes(`/events?`));
-        assert.ok(requestUrl.includes(`email_hash=${emailHash('alice@example.com')}`));
-        assert.equal(requestUrl.includes('Alice%40Example.com'), false);
+        assert.equal(requestMethod, 'POST');
+        assert.equal(requestUrl, '/events');
+        assert.equal(requestBody.email, 'alice@example.com');
+        assert.equal(requestBody.email_hash, undefined);
       } finally {
         await server.close();
       }
     });
 
     it('renders journey rows with path, referrer, and session context', async () => {
+      let requestMethod;
       let requestUrl;
-      const server = await startServer((req, res) => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        requestMethod = req.method;
         requestUrl = req.url;
+        requestBody = await readRequestJson(req);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           profiles: [{ user_id: 'user-1' }],
@@ -1362,9 +1426,10 @@ describe('CLI', () => {
 
         const output = stripAnsi(stdout);
         assert.equal(code, 0);
-        assert.ok(requestUrl.includes('/journey?'));
-        assert.ok(requestUrl.includes(`email_hash=${emailHash('alice@example.com')}`));
-        assert.equal(requestUrl.includes('alice%40example.com'), false);
+        assert.equal(requestMethod, 'POST');
+        assert.equal(requestUrl, '/journey');
+        assert.equal(requestBody.email, 'alice@example.com');
+        assert.equal(requestBody.email_hash, undefined);
         assert.ok(output.includes('matched user_id: user-1'));
         assert.ok(output.includes('page_view'));
         assert.ok(output.includes('/pricing'));

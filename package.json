@@ -1,6 +1,6 @@
 {
   "name": "@agent-analytics/cli",
-  "version": "0.5.23",
+  "version": "0.5.24",
   "description": "Stop juggling dashboards. Let your agent do it. Analytics your AI agent can actually use — track, analyze, experiment, optimize.",
   "bin": {
     "agent-analytics": "bin/cli.mjs"
