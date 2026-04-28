@@ -644,7 +644,6 @@ describe('CLI', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-config-dir',
             authorize_url: 'https://approve.example/req-config-dir',
-            approval_code: 'CFG12345',
             poll_token: 'aap_config_dir',
           }));
           return;
@@ -677,7 +676,6 @@ describe('CLI', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-env-dir',
             authorize_url: 'https://approve.example/req-env-dir',
-            approval_code: 'ENV12345',
             poll_token: 'aap_env_dir',
           }));
           return;
@@ -760,7 +758,6 @@ describe('CLI', () => {
             res.end(JSON.stringify({
               auth_request_id: 'req-cli-detached',
               authorize_url: 'https://approve.example/req-cli-detached',
-              approval_code: 'CLI12345',
               poll_token: 'aap_cli_detached',
             }));
             return;
@@ -789,6 +786,7 @@ describe('CLI', () => {
         assert.equal(code, 0);
         assert.ok(stdout.includes('Agent Analytics — Detached Login'));
         assert.ok(stdout.includes('Approval URL:'));
+        assert.equal(stripAnsi(stdout).includes('Approval code:'), false);
         assert.ok(stdout.includes('req-cli-detached'));
         assert.ok(stdout.includes('login --auth-request req-cli-detached --exchange-code <code>'));
         assert.ok(stdout.includes('Detached approval request created: req-cli-detached'));
@@ -810,7 +808,6 @@ describe('CLI', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-race',
             authorize_url: 'https://approve.example/req-race',
-            approval_code: 'RACE1234',
             poll_token: 'aap_race',
           }));
           return;

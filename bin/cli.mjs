@@ -221,7 +221,6 @@ async function verifyStoredAgentSession() {
 
 function logDetachedApproval(started) {
   log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
-  log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
   log(`${DIM}Send the approval URL to the user, then complete login with the finish code.${RESET}`);
   log(`${DIM}Resume with:${RESET}`);
   log(`  ${CYAN}${cliInvocationWithConfig()} login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
@@ -393,7 +392,6 @@ async function cmdLogin({ token, detached, exchangeCode, authRequestId, waitForD
       const result = await loginInteractive(api, {
         onPending(started) {
           log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
-          log(`Approval code: ${YELLOW}${started.approval_code}${RESET}`);
           log(`${DIM}The browser should open automatically. If it does not, open the URL above.${RESET}`);
           log('');
           stopWaiting = startWaitingIndicator('Waiting for browser approval...');

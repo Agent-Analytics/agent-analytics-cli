@@ -38,7 +38,6 @@ describe('auth flow helpers', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-1',
             authorize_url: 'https://approve.example/req-1',
-            approval_code: 'ABC12345',
             poll_token: 'aap_1',
           }));
           return;
@@ -92,7 +91,7 @@ describe('auth flow helpers', () => {
       assert.ok(startPayload.code_challenge);
       assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
       assert.equal(pending.authorize_url, 'https://approve.example/req-1');
-      assert.equal(pending.approval_code, 'ABC12345');
+      assert.equal('approval_code' in pending, false);
       assert.equal(exchangePayload.auth_request_id, 'req-1');
       assert.equal(exchangePayload.exchange_code, 'aae_exchange');
       assert.ok(exchangePayload.code_verifier);
@@ -131,7 +130,6 @@ describe('auth flow helpers', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-detached',
             authorize_url: 'https://approve.example/req-detached',
-            approval_code: 'ZYXW9876',
             poll_token: 'aap_detached',
           }));
           return;
@@ -193,7 +191,6 @@ describe('auth flow helpers', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-handoff',
             authorize_url: 'https://approve.example/req-handoff',
-            approval_code: 'HAND1234',
             poll_token: 'aap_handoff',
           }));
           return;
@@ -213,7 +210,7 @@ describe('auth flow helpers', () => {
       assert.equal(startPayload.mode, 'detached');
       assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
       assert.equal(started.auth_request_id, 'req-handoff');
-      assert.equal(started.approval_code, 'HAND1234');
+      assert.equal('approval_code' in started, false);
       assert.equal(pollCount, 0);
     });
   });
@@ -228,7 +225,6 @@ describe('auth flow helpers', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-timeout',
             authorize_url: 'https://approve.example/req-timeout',
-            approval_code: 'TIME1234',
             poll_token: 'aap_timeout',
           }));
           return;
@@ -262,7 +258,6 @@ describe('auth flow helpers', () => {
           res.end(JSON.stringify({
             auth_request_id: 'req-exchanged',
             authorize_url: 'https://approve.example/req-exchanged',
-            approval_code: 'DONE1234',
             poll_token: 'aap_exchanged',
           }));
           return;
