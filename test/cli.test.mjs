@@ -259,6 +259,7 @@ describe('CLI', () => {
 
         assert.notEqual(code, 0);
         assert.ok(stripAnsi(stdout).includes('requires browser-approved CLI login'));
+        assert.ok(stripAnsi(stdout).includes('Run: npx @agent-analytics/cli login'));
       } finally {
         config.cleanup();
       }
@@ -1534,6 +1535,8 @@ describe('CLI', () => {
         assert.match(plain, /Website analysis preview is only available anonymously on the web/i);
         assert.match(plain, /https:\/\/agentanalytics\.sh\/analysis\//i);
         assert.match(plain, /sign in first/i);
+        assert.match(plain, /Next step: npx @agent-analytics\/cli login/i);
+        assert.match(plain, /Paperclip, OpenClaw, or issue-based runtimes/i);
         assert.match(plain, /login --detached/i);
       } finally {
         await server.close();

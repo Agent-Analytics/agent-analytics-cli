@@ -249,7 +249,7 @@ function printUpgradeLinkHint(err) {
   warn('This needs Pro for the full agent analytics loop.');
   if (auth?.api_key) {
     log(`Upgrade links require browser-approved CLI login, not a raw API key.`);
-    log(`  ${CYAN}${cliInvocationWithConfig()} login --detached${RESET}`);
+    log(`  ${CYAN}${cliInvocationWithConfig()} login${RESET}`);
     return;
   }
   log(`Ask the human to approve payment with one explicit command:`);
@@ -293,7 +293,8 @@ function unauthenticatedWebsiteAnalysisCliMessage() {
   return [
     `Website analysis preview is only available anonymously on the web: ${websiteAnalysisWebPreviewUrl()}`,
     `In CLI, sign in first, then scan sites for projects you own or manage.`,
-    `Next step: npx @agent-analytics/cli login --detached`,
+    `Next step: npx @agent-analytics/cli login`,
+    `For Paperclip, OpenClaw, or issue-based runtimes, use: npx @agent-analytics/cli login --detached`,
   ].join('\n');
 }
 
@@ -481,10 +482,10 @@ async function cmdUpgradeLink({ detached, wait, reason, blockedCommand }) {
 
   const auth = getStoredAuth();
   if (!auth) {
-    error('Not logged in. Run: npx @agent-analytics/cli login --detached');
+    error('Not logged in. Run: npx @agent-analytics/cli login');
   }
   if (auth.api_key) {
-    error('upgrade-link requires browser-approved CLI login, not a raw API key. Run: npx @agent-analytics/cli login --detached');
+    error('upgrade-link requires browser-approved CLI login, not a raw API key. Run: npx @agent-analytics/cli login');
   }
 
   const api = createApiClient(auth);
