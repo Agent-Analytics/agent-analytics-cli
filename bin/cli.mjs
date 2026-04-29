@@ -86,6 +86,14 @@ function success(msg) { log(`${GREEN}✓${RESET} ${msg}`); }
 function warn(msg) { log(`${YELLOW}⚠${RESET} ${msg}`); }
 function error(msg) { log(`${RED}✗${RESET} ${msg}`); process.exit(1); }
 function heading(msg) { log(`\n${BOLD}${msg}${RESET}`); }
+function parseFiniteNumber(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+function formatDollars(value) {
+  return `$${value.toFixed(2)}`;
+}
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -863,16 +871,23 @@ const cmdStats = withApi(async (api, project, days = 7) => {
   const monthlyUsage = headers['x-monthly-usage'];
   if (monthlyUsage) {
     const events = parseInt(monthlyUsage, 10);
-    const bill = (events / 1000) * 2;
     const monthlyLimit = headers['x-monthly-limit'];
     const pct = headers['x-monthly-usage-percent'];
+    const estimatedBill = parseFiniteNumber(headers['x-monthly-estimated-bill']);
+    const spendCap = parseFiniteNumber(headers['x-monthly-spend-cap']);
+    const monthlyLimitEvents = parseInt(monthlyLimit, 10);
     log('');
-    if (monthlyLimit && pct) {
-      const capDollars = (parseInt(monthlyLimit, 10) / 1000) * 2;
-      log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)}) — ${pct}% of $${capDollars.toFixed(2)} cap`);
-    } else {
-      log(`  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events ($${bill.toFixed(2)})`);
+
+    let usageLine = `  ${DIM}Monthly usage:${RESET} ${events.toLocaleString()} events`;
+    if (estimatedBill != null) {
+      usageLine += ` (est. bill ${formatDollars(estimatedBill)})`;
     }
+    if (pct && spendCap != null) {
+      usageLine += ` — ${pct}% of ${formatDollars(spendCap)} cap`;
+    } else if (pct && monthlyLimit && Number.isFinite(monthlyLimitEvents)) {
+      usageLine += ` — ${pct}% of ${monthlyLimitEvents.toLocaleString()}-event cap`;
+    }
+    log(usageLine);
   }
 
   log('');

@@ -8,10 +8,14 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cli.mjs');
 
-function startMockServer(responseData) {
+function stripAnsi(value) {
+  return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function startMockServer(responseData, responseHeaders = {}) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', ...responseHeaders });
       res.end(JSON.stringify(responseData));
     });
     server.listen(0, '127.0.0.1', () => {
@@ -71,6 +75,63 @@ describe('stats command rendering', () => {
 
       assert.equal(code, 0);
       assert.ok(!stdout.includes('Daily:'), 'should not show Daily when no timeSeries');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('renders server-provided monthly billing estimates without hard-coded legacy pricing', async () => {
+    const { server, url } = await startMockServer({
+      totals: { total_events: 100, unique_users: 10 },
+      events: [],
+    }, {
+      'X-Monthly-Usage': '36953',
+      'X-Monthly-Estimated-Bill': '4',
+      'X-Monthly-Limit': '250000',
+      'X-Monthly-Usage-Percent': '14.78',
+      'X-Monthly-Spend-Cap': '25',
+    });
+
+    try {
+      const { stdout } = await runCli(['stats', 'test-project'], {
+        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        AGENT_ANALYTICS_URL: url,
+      });
+      const plain = stripAnsi(stdout);
+
+      assert.ok(
+        plain.includes('Monthly usage: 36,953 events (est. bill $4.00) — 14.78% of $25.00 cap'),
+        'should show the server-provided billing estimate and spend cap'
+      );
+      assert.ok(!plain.includes('$73.91'), 'should not use the old $2 per 1,000 events rate');
+      assert.ok(!plain.includes('$500.00'), 'should not derive spend-cap dollars from the old rate');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('does not invent billing dollars from generic monthly usage headers', async () => {
+    const { server, url } = await startMockServer({
+      totals: { total_events: 100, unique_users: 10 },
+      events: [],
+    }, {
+      'X-Monthly-Usage': '36953',
+      'X-Monthly-Limit': '250000',
+      'X-Monthly-Usage-Percent': '14.78',
+    });
+
+    try {
+      const { stdout } = await runCli(['stats', 'test-project'], {
+        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        AGENT_ANALYTICS_URL: url,
+      });
+      const plain = stripAnsi(stdout);
+
+      assert.ok(
+        plain.includes('Monthly usage: 36,953 events — 14.78% of 250,000-event cap'),
+        'should show usage and event cap without guessing billing dollars'
+      );
+      assert.ok(!plain.includes('$'), 'should not display dollars without explicit billing headers');
     } finally {
       server.close();
     }
