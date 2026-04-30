@@ -684,15 +684,15 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
 
 const cmdCreate = withApi(async (api, name, domain, opts = {}) => {
   if (!name) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com');
-  if (!domain) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com\n\nThe domain is required so we can restrict tracking to your site.');
+  if (!domain) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com\n\nThe --domain value is the primary surface URL/origin used to restrict tracking for this project.');
 
   heading(`Creating project: ${name}`);
 
   const data = await api.createProject(name, domain, { sourceScanId: opts.source_scan_id });
 
   success(data.existing
-    ? `Found existing project for ${BOLD}${domain}${RESET}!\n`
-    : `Project created for ${BOLD}${domain}${RESET}!\n`);
+    ? `Found existing project with primary surface ${BOLD}${domain}${RESET}!\n`
+    : `Project created with primary surface ${BOLD}${domain}${RESET}!\n`);
 
   heading('1. Add this snippet to your site:');
   log(`${CYAN}${data.snippet}${RESET}\n`);
@@ -2042,7 +2042,7 @@ ${BOLD}ACCOUNT${RESET}
 ${BOLD}KEY OPTIONS${RESET}
   --days <N>         Lookback window in days (default: 7)
   --limit <N>        Max results (default: 100)
-  --domain <url>     Site domain (required for create)
+  --domain <url>     Primary surface URL/origin (required for create)
   --source-scan <id> Link project creation to a prior website analysis
   --resume <id>      Resume a website analysis by id
   --resume-token <t> Resume token for one analysis
