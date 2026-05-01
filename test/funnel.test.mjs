@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -96,4 +96,25 @@ test('funnel command forwards --from-context without steps', async () => {
     assert.match(stdout, /Step source:/);
     assert.match(stdout, /project_context\.activation_events/);
   });
+});
+
+test('packed CLI exposes structured funnel flags in help', () => {
+  const packJson = execFileSync('npm', ['pack', '--json'], { cwd: resolve('.'), encoding: 'utf8' });
+  const [{ filename }] = JSON.parse(packJson);
+
+  try {
+    const output = execFileSync('npx', ['--yes', `./${filename}`, 'funnel', '--help'], {
+      cwd: resolve('.'),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    assert.match(output, /--steps-json/);
+    assert.match(output, /--from-context/);
+    assert.match(output, /--json/);
+    assert.match(output, /raw_activity/);
+    assert.match(output, /strict_survivors/);
+  } finally {
+    rmSync(join(resolve('.'), filename), { force: true });
+  }
 });

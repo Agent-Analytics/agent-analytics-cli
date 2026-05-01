@@ -9,10 +9,10 @@ Analytics your AI agent can actually use — track, analyze, experiment, optimiz
 Try the seeded public demo without signing in:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 demo
-npx --yes @agent-analytics/cli@0.5.27 --demo projects
-npx --yes @agent-analytics/cli@0.5.27 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
-npx --yes @agent-analytics/cli@0.5.27 --demo experiments list agentanalytics-demo
+npx --yes @agent-analytics/cli@0.5.28 demo
+npx --yes @agent-analytics/cli@0.5.28 --demo projects
+npx --yes @agent-analytics/cli@0.5.28 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
+npx --yes @agent-analytics/cli@0.5.28 --demo experiments list agentanalytics-demo
 ```
 
 Demo mode fetches a short-lived read-only `aas_*` session from the hosted API. It does not expose a raw `aak_*` API key, does not write local CLI config, and blocks mutating commands before making API requests.
@@ -21,19 +21,19 @@ Get the fastest path to useful analytics before installing events:
 
 ```bash
 # 1. Preview what your agent should track first
-npx --yes @agent-analytics/cli@0.5.27 scan https://mysite.com --json
+npx --yes @agent-analytics/cli@0.5.28 scan https://mysite.com --json
 
 # 2. Sign in when you want the full instrumentation plan
-npx --yes @agent-analytics/cli@0.5.27 login
+npx --yes @agent-analytics/cli@0.5.28 login
 
 # 3. Create or identify the matching project and primary surface URL
-npx --yes @agent-analytics/cli@0.5.27 create my-site --domain https://mysite.com
+npx --yes @agent-analytics/cli@0.5.28 create my-site --domain https://mysite.com
 
 # 4. Run the full signed-in analysis for that project's surface
-npx --yes @agent-analytics/cli@0.5.27 scan https://mysite.com --full --project my-site --json
+npx --yes @agent-analytics/cli@0.5.28 scan https://mysite.com --full --project my-site --json
 
 # Or resume and upgrade the anonymous analysis after login
-npx --yes @agent-analytics/cli@0.5.27 scan \
+npx --yes @agent-analytics/cli@0.5.28 scan \
   --resume <analysis_id> \
   --resume-token <resume_token> \
   --full \
@@ -45,19 +45,19 @@ Anonymous `scan` returns a one-analysis `rst_*` resume token, not an `aas_*` age
 
 ```bash
 # 1. Start agent login or signup in the browser
-npx --yes @agent-analytics/cli@0.5.27 login
+npx --yes @agent-analytics/cli@0.5.28 login
 
 # 2. Create a project; --domain is the primary surface URL/origin for setup
-npx --yes @agent-analytics/cli@0.5.27 create my-site --domain https://mysite.com
+npx --yes @agent-analytics/cli@0.5.28 create my-site --domain https://mysite.com
 
 # 3. Watch it live
-npx --yes @agent-analytics/cli@0.5.27 live
+npx --yes @agent-analytics/cli@0.5.28 live
 
 # Optional detached login for remote or issue-based agent work
-npx --yes @agent-analytics/cli@0.5.27 login --detached
+npx --yes @agent-analytics/cli@0.5.28 login --detached
 
 # Optional: clear your saved local auth later
-npx --yes @agent-analytics/cli@0.5.27 logout
+npx --yes @agent-analytics/cli@0.5.28 logout
 ```
 
 ## Commands
@@ -135,9 +135,9 @@ The CLI is agent-session-first. It stores a renewable Agent Analytics session lo
 When a free account hits a Pro-only analytics task, run an explicit upgrade handoff:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 upgrade-link --detached \
+npx --yes @agent-analytics/cli@0.5.28 upgrade-link --detached \
   --reason "Need funnel and retention reads for this analysis" \
-  --command "npx --yes @agent-analytics/cli@0.5.27 funnel my-site --steps page_view,signup,purchase"
+  --command "npx --yes @agent-analytics/cli@0.5.28 funnel my-site --steps page_view,signup,purchase"
 ```
 
 The CLI prints an `app.agentanalytics.sh` link. The human confirms the logged-in dashboard account, pays in Lemon Squeezy, and returns to the agent after Pro activates. Use `upgrade-link --wait` when the local shell should keep polling for activation.
@@ -145,7 +145,7 @@ The CLI prints an `app.agentanalytics.sh` link. The human confirms the logged-in
 Project management commands accept exact project names or project IDs. The `--domain` value on `create` remains the required primary surface URL/origin for setup; it is not the project identity. For local browser QA, treat localhost and preview deployments as setup/testing surfaces and update allowed origins through the CLI while keeping the production origin:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 update stylio --origins 'https://stylio.app,http://lvh.me:3101'
+npx --yes @agent-analytics/cli@0.5.28 update stylio --origins 'https://stylio.app,http://lvh.me:3101'
 ```
 
 Use `scan` before tracker installation when you want judgment instead of generic event lists. The preview is intentionally small: prioritized minimum viable instrumentation, what each event unlocks, current blind spots, and what not to track yet. The stable JSON is designed for agent skills to install only the high-priority events first and verify the first useful recommended event.
@@ -158,7 +158,7 @@ Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce whe
 `query` keeps `/events` raw and lossless, but `/query` uses activation-safe dedupe (`session_then_user`) as the default for `event_count`: session-backed rows count by session, no-session rows fall back to `user_id` only when that user has no session-backed row in the same filtered/grouped result set, and fully anonymous rows fall back to event `id`. For recent signup or ingestion debugging, check `events <project> --event <actual_event_name>` first, then use `query` after verifying the raw event names the project emits. `--count-mode` only affects `event_count`. Use `--count-mode raw` when you need the old ingested-row count for debugging or audit work:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 query my-site --metrics event_count --count-mode raw
+npx --yes @agent-analytics/cli@0.5.28 query my-site --metrics event_count --count-mode raw
 ```
 
 
@@ -178,7 +178,7 @@ cat > funnel.json <<'JSON'
 }
 JSON
 
-npx --yes @agent-analytics/cli@0.5.27 funnel shop --steps-json ./funnel.json --json
+npx --yes @agent-analytics/cli@0.5.28 funnel shop --steps-json ./funnel.json --json
 ```
 
 Funnel filters use canonical `properties.<key>` fields and support `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains`, `prefix`, and `in`. The JSON output includes `steps_source`, `identity_basis`, `raw_activity`, `joinable_entities`, `strict_survivors`, `conversion_rates`, `warnings`, and `caveats` so your agent can separate “events exist” from “entities survived the strict ordered funnel.” `--steps a,b,c` remains supported for quick legacy checks. If no step source is passed, or if you pass `--from-context`, the API falls back to bare `project_context.activation_events`; treat that as a convenience starting point, not a precision source.
@@ -188,7 +188,7 @@ Funnel filters use canonical `properties.<key>` fields and support `eq`, `neq`, 
 Property filters must use canonical `properties.*` fields. Built-in filter fields are only `event`, `user_id`, `date`, `country`, `session_id`, and `timestamp`. Example:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'
+npx --yes @agent-analytics/cli@0.5.28 query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'
 ```
 
 Invalid filter fields now fail loudly and return property discovery guidance instead of being silently ignored.
@@ -202,9 +202,9 @@ Use annotations for major product changes that could explain later graph movemen
 Before setting or refreshing the glossary, inspect the project's current event names:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 properties my-site
-npx --yes @agent-analytics/cli@0.5.27 properties-received my-site
-npx --yes @agent-analytics/cli@0.5.27 context set my-site --json '{
+npx --yes @agent-analytics/cli@0.5.28 properties my-site
+npx --yes @agent-analytics/cli@0.5.28 properties-received my-site
+npx --yes @agent-analytics/cli@0.5.28 context set my-site --json '{
   "goals": ["Increase activated Agent Analytics accounts"],
   "activation_events": ["signup_completed", "project_created", "first_event_received"],
   "glossary": [
@@ -229,7 +229,7 @@ npx --yes @agent-analytics/cli@0.5.27 context set my-site --json '{
 Use the CLI feedback command when Agent Analytics was confusing, a task took too long, or the agent had to do manual analysis that the product should have handled:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 feedback \
+npx --yes @agent-analytics/cli@0.5.28 feedback \
   --message "The agent had to calculate the funnel drop-off manually" \
   --project my-site \
   --command "agent-analytics funnel my-site --steps page_view,signup,purchase" \
@@ -246,24 +246,24 @@ Claude Code, OpenClaw, Cursor, Codex — any AI agent that can run `npx`. Or add
 claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mcp
 ```
 
-For managed, issue-based, or remote runtimes that cannot receive a localhost callback or keep a long-running process alive, use `npx --yes @agent-analytics/cli@0.5.27 login --detached`. It prints the approval URL and exits. After browser approval, resume with the printed `login --auth-request <id> --exchange-code <code>` command.
+For managed, issue-based, or remote runtimes that cannot receive a localhost callback or keep a long-running process alive, use `npx --yes @agent-analytics/cli@0.5.28 login --detached`. It prints the approval URL and exits. After browser approval, resume with the printed `login --auth-request <id> --exchange-code <code>` command.
 
 For managed runtimes where the default home config path may not persist, point auth storage at a persistent runtime/workspace directory:
 
 ```bash
 export AGENT_ANALYTICS_CONFIG_DIR="$PWD/.openclaw/agent-analytics"
-npx --yes @agent-analytics/cli@0.5.27 login --detached
-npx --yes @agent-analytics/cli@0.5.27 auth status
+npx --yes @agent-analytics/cli@0.5.28 login --detached
+npx --yes @agent-analytics/cli@0.5.28 auth status
 ```
 
 For one-off commands, use `--config-dir "$PWD/.openclaw/agent-analytics"` before or after the command. The CLI stores the same `config.json` file in that directory and does not migrate credentials from the default path.
 
-For a local shell where it is useful to keep waiting, use `npx --yes @agent-analytics/cli@0.5.27 login --detached --wait`.
+For a local shell where it is useful to keep waiting, use `npx --yes @agent-analytics/cli@0.5.28 login --detached --wait`.
 
 If your saved session predates CLI `0.5.9`, run a fresh login before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.27 projects
+npx --yes @agent-analytics/cli@0.5.28 projects
 ```
 
 ## Agent Skill
