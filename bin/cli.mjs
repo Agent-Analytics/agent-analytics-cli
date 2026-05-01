@@ -1063,7 +1063,7 @@ function printPathsTree(nodes, prefix = '    ') {
 
 const cmdPaths = withApi(async (api, project, opts = {}) => {
   if (!project || !opts.goal_event) {
-    error('Usage: npx @agent-analytics/cli paths <project-name> --goal <event> [--since 30d] [--max-steps 5] [--entry-limit 10] [--path-limit 5] [--candidate-session-cap 5000]');
+    error('Usage: npx @agent-analytics/cli paths <project-name> --goal <event> [--since 1d|7d|14d|30d|90d] [--max-steps 5] [--entry-limit 10] [--path-limit 5] [--candidate-session-cap 5000]');
   }
 
   const data = await api.getPaths(project, opts);
@@ -1131,22 +1131,101 @@ const cmdHeatmap = withApi(async (api, project) => {
   log('');
 });
 
+function parseJsonArgOrFile(value, flagName) {
+  if (!value) error(`Missing value for ${flagName}`);
+  let text = value;
+  if (!value.trim().startsWith('{') && !value.trim().startsWith('[')) {
+    try {
+      text = readFileSync(value, 'utf8');
+    } catch (err) {
+      error(`Could not read ${flagName} file: ${err.message}`);
+    }
+  }
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    error(`Invalid JSON for ${flagName}: ${err.message}`);
+  }
+}
+
+function normalizeCliStepsJson(value) {
+  const parsed = parseJsonArgOrFile(value, '--steps-json');
+  const steps = Array.isArray(parsed) ? parsed : parsed.steps;
+  if (!Array.isArray(steps)) error('--steps-json must be an array or an object with a steps array');
+  return steps;
+}
+
+function printFunnelHelp() {
+  log(`
+${BOLD}Usage${RESET}
+  npx @agent-analytics/cli funnel <project> [--steps-json <json-or-file> | --steps a,b | --from-context] [--json]
+
+${BOLD}Structured funnels${RESET} ${DIM}(canonical precision path)${RESET}
+  npx @agent-analytics/cli funnel shop --steps-json ./funnel.json --json
+  npx @agent-analytics/cli funnel shop --steps-json '[{"event":"page_view","filters":[{"field":"properties.path","op":"prefix","value":"/products"}]},{"event":"signup"}]' --json
+
+${BOLD}Quick modes${RESET}
+  npx @agent-analytics/cli funnel shop --steps page_view,signup,purchase --json
+  npx @agent-analytics/cli funnel shop --from-context --json
+  npx @agent-analytics/cli funnel shop --json   ${DIM}# uses project context activation_events when present${RESET}
+
+${BOLD}Options${RESET}
+  --steps <list>       Comma-separated event names; kept for compatibility
+  --steps-json <arg>   Inline JSON or path to JSON file. Use fields like properties.path with eq, in, contains, prefix
+  --from-context       Use project_context.activation_events as bare event steps
+  --json               Print the full structured API response
+  --window <hours>     Conversion window in hours (default: 168)
+  --since <value>      Lookback window, e.g. 1d, 7d, 30d
+  --count-by <basis>   user_id or session_id
+  --breakdown <key>    Property key to break down from step 1
+
+Structured funnel output includes raw_activity, strict_survivors, identity_basis, warnings, and caveats.
+Use funnel for sequential conversion, query for aggregate slicing/grouping, and paths for bounded session-local journey exploration.
+`);
+}
+
 const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
-  if (!project || !stepsStr) error('Usage: npx @agent-analytics/cli funnel <project-name> --steps "page_view,signup,purchase" [--window 168] [--since 30d] [--count-by user_id] [--breakdown country] [--breakdown-limit 10]');
+  if (project === '--help' || opts.help) {
+    printFunnelHelp();
+    return;
+  }
+  if (!project) {
+    printFunnelHelp();
+    return;
+  }
 
-  const steps = stepsStr.split(',').map(s => ({ event: s.trim() }));
-  if (steps.length < 2) error('At least 2 steps required');
+  const sourceCount = [!!stepsStr, !!opts.steps_json, !!opts.from_context].filter(Boolean).length;
+  if (sourceCount > 1) error('--steps, --steps-json, and --from-context are mutually exclusive. Choose one funnel step source.');
 
-  const data = await api.getFunnel(project, {
-    steps,
+  const payload = {
     conversion_window_hours: opts.window ? parseInt(opts.window, 10) : undefined,
     since: opts.since,
     count_by: opts.count_by,
     breakdown: opts.breakdown || undefined,
     breakdown_limit: opts.breakdown_limit ? parseInt(opts.breakdown_limit, 10) : undefined,
-  });
+  };
+
+  if (opts.steps_json) {
+    payload.steps = normalizeCliStepsJson(opts.steps_json);
+  } else if (stepsStr) {
+    const steps = stepsStr.split(',').map(s => ({ event: s.trim() })).filter(s => s.event);
+    if (steps.length < 2) error('At least 2 steps required');
+    payload.steps = steps;
+  } else if (opts.from_context) {
+    payload.from_context = true;
+  }
+
+  const data = await api.getFunnel(project, payload);
+
+  if (opts.jsonOutput) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
 
   heading(`Funnel: ${project}`);
+  log('');
+  if (data.steps_source) log(`  ${BOLD}Step source:${RESET} ${data.steps_source}`);
+  if (data.identity_basis) log(`  ${BOLD}Identity basis:${RESET} ${data.identity_basis}`);
   log('');
 
   if (!data.steps || data.steps.length === 0) {
@@ -1154,13 +1233,27 @@ const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
     return;
   }
 
-  const maxUsers = Math.max(...data.steps.map(s => s.users));
+  const maxUsers = Math.max(...data.steps.map(s => s.strict_survivors ?? s.users ?? 0));
   for (const step of data.steps) {
-    const barLen = maxUsers > 0 ? Math.max(1, Math.round((step.users / maxUsers) * 30)) : 1;
+    const survivors = step.strict_survivors ?? step.users ?? 0;
+    const raw = step.raw_activity?.event_count ?? null;
+    const barLen = maxUsers > 0 ? Math.max(1, Math.round((survivors / maxUsers) * 30)) : 1;
     const bar = '█'.repeat(barLen);
-    const rate = step.step === 1 ? '' : `  ${DIM}${Math.round(step.conversion_rate * 100)}% conversion${RESET}`;
+    const rate = step.step === 1 ? '' : `  ${DIM}${Math.round((step.conversion_from_previous ?? step.conversion_rate ?? 0) * 100)}% strict conversion${RESET}`;
+    const rawLabel = raw == null ? '' : `  ${DIM}raw ${raw} events${RESET}`;
     const time = step.avg_time_to_next_ms != null ? `  ${DIM}→ ${Math.round(step.avg_time_to_next_ms / 1000)}s to next${RESET}` : '';
-    log(`  ${step.step}. ${BOLD}${step.event.padEnd(20)}${RESET}  ${GREEN}${bar}${RESET}  ${step.users} users${rate}${time}`);
+    log(`  ${step.step}. ${BOLD}${step.event.padEnd(20)}${RESET}  ${GREEN}${bar}${RESET}  ${survivors} strict survivors${rawLabel}${rate}${time}`);
+  }
+
+  if (data.warnings?.length) {
+    log('');
+    heading('Warnings');
+    for (const warning of data.warnings) log(`  ${YELLOW}!${RESET} ${warning}`);
+  }
+  if (data.caveats?.length) {
+    log('');
+    heading('Caveats');
+    for (const caveat of data.caveats) log(`  ${DIM}-${RESET} ${caveat}`);
   }
 
   log('');
@@ -1173,13 +1266,14 @@ const cmdFunnel = withApi(async (api, project, stepsStr, opts = {}) => {
     log('');
     for (const bd of data.breakdowns) {
       const label = bd.value ?? '(none)';
-      const bdMax = Math.max(...bd.steps.map(s => s.users));
+      const bdMax = Math.max(...bd.steps.map(s => s.strict_survivors ?? s.users ?? 0));
       log(`  ${BOLD}${CYAN}${label}${RESET}  ${DIM}${Math.round(bd.overall_conversion_rate * 100)}% overall${RESET}`);
       for (const step of bd.steps) {
-        const barLen = bdMax > 0 ? Math.max(1, Math.round((step.users / bdMax) * 25)) : 1;
+        const survivors = step.strict_survivors ?? step.users ?? 0;
+        const barLen = bdMax > 0 ? Math.max(1, Math.round((survivors / bdMax) * 25)) : 1;
         const bar = '█'.repeat(barLen);
-        const rate = step.step === 1 ? '' : `  ${DIM}${Math.round(step.conversion_rate * 100)}%${RESET}`;
-        log(`    ${step.step}. ${step.event.padEnd(18)}  ${GREEN}${bar}${RESET}  ${step.users}${rate}`);
+        const rate = step.step === 1 ? '' : `  ${DIM}${Math.round((step.conversion_from_previous ?? step.conversion_rate ?? 0) * 100)}%${RESET}`;
+        log(`    ${step.step}. ${step.event.padEnd(18)}  ${GREEN}${bar}${RESET}  ${survivors}${rate}`);
       }
       log('');
     }
@@ -2328,6 +2422,10 @@ try {
       break;
     case 'funnel':
       await cmdFunnel(args[1], getArg('--steps'), {
+        steps_json: getArg('--steps-json'),
+        from_context: args.includes('--from-context'),
+        help: args.includes('--help') || args[1] === '--help',
+        jsonOutput: args.includes('--json'),
         window: getArg('--window'),
         since: getArg('--since'),
         count_by: getArg('--count-by'),

@@ -97,7 +97,8 @@ breakdown <name> --property path Top pages, referrers, UTM sources, countries
 pages <name>                     Entry/exit page performance & bounce rates
 paths <name> --goal <event>      Bounded entry-to-goal/drop-off session paths
 heatmap <name>                   Peak hours & busiest days
-funnel <name>                    Funnel analysis: where users drop off
+funnel <name> --steps-json <arg> Structured funnel analysis with raw-vs-strict diagnostics
+funnel <name> --steps a,b,c      Legacy comma-separated funnel steps
 retention <name>                 Cohort retention: % of users who return
 sessions-dist <name>             Session duration distribution
 events <name>                    Raw event log
@@ -159,6 +160,30 @@ Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce whe
 ```bash
 npx --yes @agent-analytics/cli@0.5.27 query my-site --metrics event_count --count-mode raw
 ```
+
+
+`funnel` is for ordered conversion, `query` is for aggregate slicing/grouping, and `paths` is for bounded session-local journey exploration. For precise funnels, prefer structured JSON steps with per-step filters:
+
+```bash
+cat > funnel.json <<'JSON'
+{
+  "steps": [
+    {
+      "event": "page_view",
+      "filters": [{ "field": "properties.path", "op": "prefix", "value": "/products" }]
+    },
+    { "event": "add_to_cart" },
+    { "event": "purchase" }
+  ]
+}
+JSON
+
+npx --yes @agent-analytics/cli@0.5.27 funnel shop --steps-json ./funnel.json --json
+```
+
+Funnel filters use canonical `properties.<key>` fields and support `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains`, `prefix`, and `in`. The JSON output includes `steps_source`, `identity_basis`, `raw_activity`, `joinable_entities`, `strict_survivors`, `conversion_rates`, `warnings`, and `caveats` so your agent can separate “events exist” from “entities survived the strict ordered funnel.” `--steps a,b,c` remains supported for quick legacy checks. If no step source is passed, or if you pass `--from-context`, the API falls back to bare `project_context.activation_events`; treat that as a convenience starting point, not a precision source.
+
+`paths` accepts bounded lookback windows `1d`, `7d`, `14d`, `30d`, and `90d`. Use `1d` for fresh local instrumentation checks, then move to a longer window once there is enough traffic.
 
 Property filters must use canonical `properties.*` fields. Built-in filter fields are only `event`, `user_id`, `date`, `country`, `session_id`, and `timestamp`. Example:
 
