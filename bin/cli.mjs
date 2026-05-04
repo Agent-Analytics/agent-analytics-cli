@@ -688,7 +688,26 @@ const cmdCreate = withApi(async (api, name, domain, opts = {}) => {
 
   heading(`Creating project: ${name}`);
 
-  const data = await api.createProject(name, domain, { sourceScanId: opts.source_scan_id });
+  let data;
+  try {
+    data = await api.createProject(name, domain, { sourceScanId: opts.source_scan_id });
+  } catch (err) {
+    if (err?.status === 409 && err?.code === 'ACCOUNT_SETUP_PENDING') {
+      error([
+        'Account setup is still finishing.',
+        'Do not retry automatically.',
+        'Run the same create command again shortly:',
+        `  ${currentCommandForHandoff()}`,
+      ].join('\n'));
+    }
+    if (err?.status === 409 && err?.code === 'ACCOUNT_SETUP_FAILED') {
+      error([
+        'Account setup failed.',
+        'Contact support before creating projects.',
+      ].join('\n'));
+    }
+    throw err;
+  }
 
   success(data.existing
     ? `Found existing project with primary surface ${BOLD}${domain}${RESET}!\n`

@@ -2164,6 +2164,90 @@ describe('CLI', () => {
       }
     });
 
+    it('handles pending account setup when creating a project without retrying', async () => {
+      let postCount = 0;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/projects') {
+          postCount += 1;
+          await readRequestJson(req);
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            code: 'ACCOUNT_SETUP_PENDING',
+            message: 'Account setup is still pending.',
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'create',
+          'source-site',
+          '--domain', 'https://source.example',
+          '--source-scan', 'scan_source',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        const plain = stripAnsi(stdout);
+        assert.notEqual(code, 0);
+        assert.equal(postCount, 1);
+        assert.ok(plain.includes('Account setup is still finishing.'));
+        assert.ok(plain.includes('Run the same create command again shortly:'));
+        assert.ok(plain.includes('npx @agent-analytics/cli create source-site --domain https://source.example --source-scan scan_source'));
+        assert.ok(!plain.includes('Project created'));
+        assert.ok(!plain.includes('Add this snippet'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('handles failed account setup when creating a project', async () => {
+      let postCount = 0;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/projects') {
+          postCount += 1;
+          await readRequestJson(req);
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            code: 'ACCOUNT_SETUP_FAILED',
+            message: 'Account setup failed.',
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          'init',
+          'source-site',
+          '--domain', 'https://source.example',
+        ], {
+          env: {
+            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        const plain = stripAnsi(stdout);
+        assert.notEqual(code, 0);
+        assert.equal(postCount, 1);
+        assert.ok(plain.includes('Account setup failed.'));
+        assert.ok(plain.includes('Contact support before creating projects.'));
+        assert.ok(!plain.includes('Project created'));
+        assert.ok(!plain.includes('Add this snippet'));
+      } finally {
+        await server.close();
+      }
+    });
+
     it('deletes a project by resolving project name to id', async () => {
       let deleteUrl;
       const server = await startServer((req, res) => {
