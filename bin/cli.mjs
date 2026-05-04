@@ -2266,6 +2266,10 @@ function getArg(flag) {
   return idx > -1 && args[idx + 1] ? args[idx + 1] : null;
 }
 
+function hasHelpFlag(commandArgs) {
+  return commandArgs.includes('--help') || commandArgs.includes('-h');
+}
+
 try {
   if (isDemoMutation(command, args)) {
     error('Demo mode is read-only. Use read commands like --demo projects, --demo stats, --demo paths, --demo funnel, or --demo experiments list.');
@@ -2440,10 +2444,14 @@ try {
       await cmdHeatmap(args[1]);
       break;
     case 'funnel':
+      if (hasHelpFlag(args)) {
+        printFunnelHelp();
+        break;
+      }
       await cmdFunnel(args[1], getArg('--steps'), {
         steps_json: getArg('--steps-json'),
         from_context: args.includes('--from-context'),
-        help: args.includes('--help') || args[1] === '--help',
+        help: false,
         jsonOutput: args.includes('--json'),
         window: getArg('--window'),
         since: getArg('--since'),

@@ -118,3 +118,42 @@ test('packed CLI exposes structured funnel flags in help', () => {
     rmSync(join(resolve('.'), filename), { force: true });
   }
 });
+
+test('direct funnel help is available before auth', () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'aa-funnel-help-'));
+
+  try {
+    const output = execFileSync(process.execPath, [resolve('bin/cli.mjs'), '--config-dir', configDir, 'funnel', '--help'], {
+      cwd: resolve('.'),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    assert.match(output, /--steps-json/);
+    assert.match(output, /--from-context/);
+    assert.match(output, /raw_activity/);
+    assert.doesNotMatch(output, /Not logged in/);
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test('direct funnel execution still requires auth', () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'aa-funnel-auth-'));
+
+  try {
+    assert.throws(() => {
+      execFileSync(process.execPath, [resolve('bin/cli.mjs'), '--config-dir', configDir, 'funnel', 'shop'], {
+        cwd: resolve('.'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    }, (err) => {
+      assert.equal(err.status, 1);
+      assert.match(err.stdout, /Not logged in/);
+      return true;
+    });
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
