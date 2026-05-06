@@ -9,31 +9,31 @@ Analytics your AI agent can actually use — track, analyze, experiment, optimiz
 Try the seeded public demo without signing in:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.28 demo
-npx --yes @agent-analytics/cli@0.5.28 --demo projects
-npx --yes @agent-analytics/cli@0.5.28 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
-npx --yes @agent-analytics/cli@0.5.28 --demo experiments list agentanalytics-demo
+npx --yes @agent-analytics/cli@0.5.30 demo
+npx --yes @agent-analytics/cli@0.5.30 --demo projects
+npx --yes @agent-analytics/cli@0.5.30 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
+npx --yes @agent-analytics/cli@0.5.30 --demo experiments list agentanalytics-demo
 ```
 
 Demo mode fetches a short-lived read-only `aas_*` session from the hosted API. It does not expose a raw `aak_*` API key, does not write local CLI config, and blocks mutating commands before making API requests.
 
-Get the fastest path to useful analytics before installing events:
+Get the fastest path to useful analytics for a project you own:
 
 ```bash
-# 1. Preview what your agent should track first
-npx --yes @agent-analytics/cli@0.5.28 scan https://mysite.com --json
+# 1. Sign in
+npx --yes @agent-analytics/cli@0.5.30 login
 
-# 2. Sign in when you want the full instrumentation plan
-npx --yes @agent-analytics/cli@0.5.28 login
+# 2. Create or identify the matching project and primary surface URL
+npx --yes @agent-analytics/cli@0.5.30 create my-site --domain https://mysite.com
 
-# 3. Create or identify the matching project and primary surface URL
-npx --yes @agent-analytics/cli@0.5.28 create my-site --domain https://mysite.com
+# 3. Run the signed-in analysis for that project's surface
+npx --yes @agent-analytics/cli@0.5.30 scan https://mysite.com --project my-site --json
 
-# 4. Run the full signed-in analysis for that project's surface
-npx --yes @agent-analytics/cli@0.5.28 scan https://mysite.com --full --project my-site --json
+# 4. Run the full signed-in analysis when you need the deeper plan
+npx --yes @agent-analytics/cli@0.5.30 scan https://mysite.com --full --project my-site --json
 
-# Or resume and upgrade the anonymous analysis after login
-npx --yes @agent-analytics/cli@0.5.28 scan \
+# Or resume and upgrade a browser preview after login
+npx --yes @agent-analytics/cli@0.5.30 scan \
   --resume <analysis_id> \
   --resume-token <resume_token> \
   --full \
@@ -41,7 +41,7 @@ npx --yes @agent-analytics/cli@0.5.28 scan \
   --json
 ```
 
-Anonymous `scan` returns a one-analysis `rst_*` resume token, not an `aas_*` agent session. Full analysis and project linking require login.
+The browser preview returns a one-analysis `rst_*` resume token, not an `aas_*` agent session. CLI scan creation and project linking require login.
 
 ```bash
 # 1. Start agent login or signup in the browser

@@ -1691,7 +1691,7 @@ describe('CLI', () => {
         },
       });
       const server = await startServer(async (req, res) => {
-        if (req.method === 'POST' && req.url === '/website-scans') {
+        if (req.method === 'POST' && req.url === '/cli/website-scans') {
           requestAuth = req.headers.authorization;
           requestBody = await readRequestJson(req);
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1755,7 +1755,7 @@ describe('CLI', () => {
         },
       });
       const server = await startServer(async (req, res) => {
-        if (req.method === 'POST' && req.url === '/website-scans') {
+        if (req.method === 'POST' && req.url === '/cli/website-scans') {
           requestAuths.push(req.headers.authorization);
           requestBodies.push(await readRequestJson(req));
           if (requestAuths.length === 1) {
@@ -1842,7 +1842,7 @@ describe('CLI', () => {
         },
       });
       const server = await startServer(async (req, res) => {
-        if (req.method === 'POST' && req.url === '/website-scans') {
+        if (req.method === 'POST' && req.url === '/cli/website-scans') {
           requestAuth = req.headers.authorization;
           requestBody = await readRequestJson(req);
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1921,7 +1921,7 @@ describe('CLI', () => {
         },
       });
       const server = await startServer(async (req, res) => {
-        if (req.method === 'POST' && req.url === '/website-scans') {
+        if (req.method === 'POST' && req.url === '/cli/website-scans') {
           await readRequestJson(req);
           res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '17' });
           res.end(JSON.stringify({
