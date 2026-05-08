@@ -64,7 +64,6 @@ import {
   getConfigLocation,
   getStoredAuth,
   setAgentSession,
-  setApiKey,
   setConfigDirOverride,
   updateStoredAccount,
 } from '../lib/config.mjs';
@@ -82,8 +81,10 @@ const DEFAULT_BASE_URL = 'https://api.agentanalytics.sh';
 const CLI_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 function log(msg = '') { console.log(msg); }
+function logStderr(msg = '') { process.stderr.write(`${msg}\n`); }
 function success(msg) { log(`${GREEN}✓${RESET} ${msg}`); }
 function warn(msg) { log(`${YELLOW}⚠${RESET} ${msg}`); }
+function warnStderr(msg) { logStderr(`${YELLOW}⚠${RESET} ${msg}`); }
 function error(msg) { log(`${RED}✗${RESET} ${msg}`); process.exit(1); }
 function heading(msg) { log(`\n${BOLD}${msg}${RESET}`); }
 function parseFiniteNumber(value) {
@@ -148,10 +149,12 @@ function startWaitingIndicator(message, { interruptMessage = 'Stopped waiting fo
   return stop;
 }
 
-function createApiClient(auth = getStoredAuth()) {
-  return new AgentAnalyticsAPI(auth, getBaseUrl(), {
-    onAuthUpdate(nextAuth) {
-      setAgentSession(nextAuth);
+function createApiClient(auth = null) {
+  const baseUrl = getBaseUrl();
+  return new AgentAnalyticsAPI(auth, baseUrl, {
+    async onAuthUpdate(nextAuth) {
+      const saved = await setAgentSession(nextAuth);
+      warnCredentialStorageFallback(saved);
     },
   });
 }
@@ -166,6 +169,18 @@ function getDashboardBaseUrl() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function positiveIntegerEnv(name) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+function loginTimingOptions() {
+  return {
+    timeoutMs: positiveIntegerEnv('AGENT_ANALYTICS_AUTH_TIMEOUT_MS'),
+    pollIntervalMs: positiveIntegerEnv('AGENT_ANALYTICS_AUTH_POLL_INTERVAL_MS'),
+  };
 }
 
 async function createDemoApiClient() {
@@ -204,6 +219,19 @@ function logConnected(account, savedMessage = `Agent session saved to ${getConfi
   log(`${DIM}${savedMessage}${RESET}`);
 }
 
+function savedAgentSessionMessage(saved, label = 'Agent session') {
+  if (saved?.storage === 'native') {
+    return `${label} saved to native keyring; metadata saved to ${getConfigFile()}`;
+  }
+  return `${label} saved to ${getConfigFile()}`;
+}
+
+function warnCredentialStorageFallback(saved) {
+  if (saved?.fallback?.from !== 'native' || saved?.storage !== 'file') return;
+  warnStderr('Native credential storage was unavailable; using file storage for this agent session.');
+  if (saved.fallback.message) logStderr(`${DIM}${saved.fallback.message}${RESET}`);
+}
+
 function isDetachedAlreadyExchangedError(err) {
   const message = String(err?.message || '').toLowerCase();
   return (
@@ -217,7 +245,7 @@ function isDetachedAlreadyExchangedError(err) {
 }
 
 async function verifyStoredAgentSession() {
-  const auth = getStoredAuth();
+  const auth = await getStoredAuth();
   if (!auth?.access_token && !auth?.refresh_token) return null;
   try {
     const api = createApiClient(auth);
@@ -232,6 +260,16 @@ function logDetachedApproval(started) {
   log(`${DIM}Send the approval URL to the user, then complete login with the finish code.${RESET}`);
   log(`${DIM}Resume with:${RESET}`);
   log(`  ${CYAN}${cliInvocationWithConfig()} login --auth-request ${started.auth_request_id} --exchange-code <code>${RESET}`);
+}
+
+function loginUsageMessage() {
+  return [
+    'Usage: npx @agent-analytics/cli login [--detached [--wait]]',
+    '   or: npx @agent-analytics/cli login --auth-request <id> --exchange-code <code>',
+    '',
+    'Login uses browser-approved agent sessions.',
+    'For remote or issue-based agent work, use: npx @agent-analytics/cli login --detached',
+  ].join('\n');
 }
 
 function currentCommandForHandoff() {
@@ -251,15 +289,9 @@ function printUpgradeLinkHint(err) {
 
   const reason = String(err?.message || 'This analytics task needs Pro.');
   const blockedCommand = currentCommandForHandoff();
-  const auth = getStoredAuth();
 
   log('');
   warn('This needs Pro for the full agent analytics loop.');
-  if (auth?.api_key) {
-    log(`Upgrade links require browser-approved CLI login, not a raw API key.`);
-    log(`  ${CYAN}${cliInvocationWithConfig()} login${RESET}`);
-    return;
-  }
   log(`Ask the human to approve payment with one explicit command:`);
   log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --detached --reason ${shellQuote(reason)} --command ${shellQuote(blockedCommand)}${RESET}`);
   log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --wait --reason ${shellQuote(reason)} --command ${shellQuote(blockedCommand)}${RESET}`);
@@ -269,7 +301,7 @@ async function requireClient() {
   if (demoMode) {
     return createDemoApiClient();
   }
-  const auth = getStoredAuth();
+  const auth = await getStoredAuth();
   if (!auth) {
     error('Not logged in. Run: npx @agent-analytics/cli login');
   }
@@ -326,122 +358,117 @@ async function resolveProject(api, target) {
 
 // ==================== COMMANDS ====================
 
-async function cmdLogin({ token, detached, exchangeCode, authRequestId, waitForDetached }) {
-  if (!token) {
-    const api = createApiClient(null);
+async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, waitForDetached }) {
+  if (invalidShape) {
+    error(loginUsageMessage());
+  }
 
-    if (exchangeCode) {
-      if (!authRequestId) {
-        error('Manual exchange requires --auth-request <id> together with --exchange-code <code>');
-      }
-      try {
-        const result = await finishManualExchange(api, authRequestId, exchangeCode);
-        setAgentSession(result.agent_session);
-        updateStoredAccount(result.account);
-        logConnected(result.account);
-      } catch (err) {
-        if (!isDetachedAlreadyExchangedError(err)) {
-          throw err;
-        }
-        const account = await verifyStoredAgentSession();
-        if (!account) {
-          throw err;
-        }
-        updateStoredAccount(account);
-        logConnected(account);
-      }
-      return;
+  const api = createApiClient(null);
+
+  if (exchangeCode) {
+    if (!authRequestId) {
+      error('Manual exchange requires --auth-request <id> together with --exchange-code <code>');
     }
-
-    if (detached) {
-      heading('Agent Analytics — Detached Login');
-      let stopWaiting = () => {};
-      try {
-        if (!waitForDetached) {
-          const started = await startDetachedLogin(api);
-          logDetachedApproval(started);
-          log('');
-          success(`Detached approval request created: ${started.auth_request_id}`);
-          return;
-        }
-
-        const { started, exchanged } = await loginDetached(api, {
-          onPending(started) {
-            logDetachedApproval(started);
-            log(`${DIM}Polling is enabled because --wait/--poll was passed.${RESET}`);
-            log('');
-            stopWaiting = startWaitingIndicator('Waiting for browser approval...');
-          },
-        });
-        stopWaiting(`${DIM}Browser approval received.${RESET}`);
-        setAgentSession(exchanged.agent_session);
-        updateStoredAccount(exchanged.account);
-        logConnected(exchanged.account, `Detached request ${started.auth_request_id} approved and saved to ${getConfigFile()}`);
-        return;
-      } catch (err) {
-        stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
-        if (isDetachedAlreadyExchangedError(err)) {
-          const account = await verifyStoredAgentSession();
-          if (account) {
-            updateStoredAccount(account);
-            logConnected(account);
-            return;
-          }
-        }
-        warn(err.message);
-        log(`Resume detached approval later: ${CYAN}${cliInvocationWithConfig()} login --auth-request <id> --exchange-code <code>${RESET}`);
+    try {
+      const result = await finishManualExchange(api, authRequestId, exchangeCode);
+      const saved = await setAgentSession(result.agent_session);
+      updateStoredAccount(result.account);
+      warnCredentialStorageFallback(saved);
+      logConnected(result.account, savedAgentSessionMessage(saved));
+    } catch (err) {
+      if (!isDetachedAlreadyExchangedError(err)) {
         throw err;
       }
+      const account = await verifyStoredAgentSession();
+      if (!account) {
+        throw err;
+      }
+      updateStoredAccount(account);
+      logConnected(account);
     }
+    return;
+  }
 
-    heading('Agent Analytics — Login');
-    log('');
+  if (detached) {
+    heading('Agent Analytics — Detached Login');
     let stopWaiting = () => {};
     try {
-      const result = await loginInteractive(api, {
+      if (!waitForDetached) {
+        const started = await startDetachedLogin(api);
+        logDetachedApproval(started);
+        log('');
+        success(`Detached approval request created: ${started.auth_request_id}`);
+        return;
+      }
+
+      const { started, exchanged } = await loginDetached(api, {
+        ...loginTimingOptions(),
         onPending(started) {
-          log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
-          log(`${DIM}The browser should open automatically. If it does not, open the URL above.${RESET}`);
+          logDetachedApproval(started);
+          log(`${DIM}Polling is enabled because --wait/--poll was passed.${RESET}`);
           log('');
           stopWaiting = startWaitingIndicator('Waiting for browser approval...');
         },
       });
       stopWaiting(`${DIM}Browser approval received.${RESET}`);
-      setAgentSession(result.agent_session);
-      updateStoredAccount(result.account);
-      logConnected(result.account);
-      log('');
-      log(`Fallbacks:`);
-      log(`  ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
+      const saved = await setAgentSession(exchanged.agent_session);
+      updateStoredAccount(exchanged.account);
+      warnCredentialStorageFallback(saved);
+      logConnected(exchanged.account, savedAgentSessionMessage(saved, `Detached request ${started.auth_request_id} approved and session`));
       return;
     } catch (err) {
       stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
-      warn(`Interactive login failed: ${err.message}`);
-      log(`Retry with detached approval: ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
-      return;
+      if (isDetachedAlreadyExchangedError(err)) {
+        const account = await verifyStoredAgentSession();
+        if (account) {
+          updateStoredAccount(account);
+          logConnected(account);
+          return;
+        }
+      }
+      warn(err.message);
+      log(`Resume detached approval later: ${CYAN}${cliInvocationWithConfig()} login --auth-request <id> --exchange-code <code>${RESET}`);
+      throw err;
     }
   }
 
-  // Advanced/manual fallback: API key login
-  const api = createApiClient({ api_key: token });
+  heading('Agent Analytics — Login');
+  log('');
+  let stopWaiting = () => {};
   try {
-    const account = await api.getAccount();
-    setApiKey(token);
-    updateStoredAccount(account);
-
-    success(`Logged in as ${BOLD}${account.github_login || account.email}${RESET} (${account.tier})`);
-    log(`${DIM}API key saved to ${getConfigFile()}${RESET}`);
+    const result = await loginInteractive(api, {
+      ...loginTimingOptions(),
+      onPending(started) {
+        log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
+        log(`${DIM}The browser should open automatically. If it does not, open the URL above.${RESET}`);
+        log('');
+        stopWaiting = startWaitingIndicator('Waiting for browser approval...');
+      },
+    });
+    stopWaiting(`${DIM}Browser approval received.${RESET}`);
+    let saved;
+    try {
+      saved = await setAgentSession(result.agent_session);
+      updateStoredAccount(result.account);
+    } catch (err) {
+      error(`Login approved, but saving the agent session failed: ${err.message}`);
+    }
+    warnCredentialStorageFallback(saved);
+    logConnected(result.account, savedAgentSessionMessage(saved));
     log('');
-    log(`Next steps:`);
-    log(`  ${CYAN}npx @agent-analytics/cli create my-site --domain https://mysite.com${RESET}`);
-    log(`  ${CYAN}npx @agent-analytics/cli live${RESET}  ${DIM}— real-time view across all projects${RESET}`);
+    log(`Fallbacks:`);
+    log(`  ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
+    return;
   } catch (err) {
-    error(`Invalid API key: ${err.message}`);
+    stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
+    warn(`Interactive login failed: ${err.message}`);
+    log(`Retry with detached approval: ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
+    return;
   }
 }
 
-function cmdLogout() {
-  const cleared = clearStoredAuth();
+async function cmdLogout() {
+  const cleared = await clearStoredAuth();
 
   if (cleared) {
     success('Logged out locally');
@@ -450,12 +477,6 @@ function cmdLogout() {
   }
 
   log(`${DIM}Cleared saved auth from ${getConfigFile()}${RESET}`);
-
-  if (process.env.AGENT_ANALYTICS_API_KEY) {
-    log('');
-    warn('AGENT_ANALYTICS_API_KEY is still set in this shell, so the CLI will keep authenticating.');
-    log(`  ${CYAN}unset AGENT_ANALYTICS_API_KEY${RESET}`);
-  }
 }
 
 function cmdDemo() {
@@ -488,14 +509,10 @@ async function cmdUpgradeLink({ detached, wait, reason, blockedCommand }) {
     error('Usage: npx @agent-analytics/cli upgrade-link --detached|--wait [--reason <text>] [--command <command>]');
   }
 
-  const auth = getStoredAuth();
+  const auth = await getStoredAuth();
   if (!auth) {
     error('Not logged in. Run: npx @agent-analytics/cli login');
   }
-  if (auth.api_key) {
-    error('upgrade-link requires browser-approved CLI login, not a raw API key. Run: npx @agent-analytics/cli login');
-  }
-
   const api = createApiClient(auth);
   const account = await api.getAccount();
   updateStoredAccount(account);
@@ -658,7 +675,7 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
       return;
     }
 
-    const auth = getStoredAuth();
+    const auth = await getStoredAuth();
     if (!auth) {
       error(unauthenticatedWebsiteAnalysisCliMessage());
     }
@@ -1734,30 +1751,7 @@ function cmdDeleteAccount() {
 }
 
 async function cmdRevokeKey() {
-  const auth = getStoredAuth();
-  if (!auth) {
-    error('No raw API key is saved. Use browser-approved CLI login for normal agent work.');
-  }
-  if (auth.access_token || auth.refresh_token) {
-    error('revoke-key only rotates a saved raw API key. Manage keys from https://app.agentanalytics.sh/settings.');
-  }
-
-  const api = createApiClient(auth);
-  let data;
-  try {
-    data = await api.revokeKey();
-  } catch (err) {
-    error(err.message);
-  }
-
-  setApiKey(data.api_key);
-
-  warn('Old API key revoked');
-  success('New API key generated and saved\n');
-  heading('New API key:');
-  log(`${YELLOW}${data.api_key}${RESET}`);
-  log(`${DIM}Saved to ${getConfigFile()}${RESET}\n`);
-  warn('Update your agent with this new key!');
+  error('revoke-key is not supported by the CLI. Manage keys from https://app.agentanalytics.sh/settings.');
 }
 
 const cmdFeedback = withApi(async (api, opts = {}) => {
@@ -1797,6 +1791,40 @@ function logAuthDiagnostics(config = getConfig()) {
   log(`  ${BOLD}Refresh expires:${RESET} ${formatExpiry(session.refresh_expires_at)}`);
 }
 
+function hasAgentSession(config = {}) {
+  const session = config.agent_session;
+  if (!session || typeof session !== 'object') return false;
+  if (session.storage === 'native') return true;
+  return Boolean(session.access_token || session.refresh_token);
+}
+
+function credentialStorageStatus(config = {}) {
+  const session = config.agent_session;
+  if (!hasAgentSession(config)) {
+    return {
+      loggedIn: false,
+      storage: 'none',
+      secretsInConfig: 'no',
+    };
+  }
+
+  if (session.storage === 'native') {
+    const status = {
+      loggedIn: true,
+      storage: 'native',
+      secretsInConfig: session.access_token || session.refresh_token ? 'yes' : 'no',
+    };
+    if (session.credential) status.account = session.credential;
+    return status;
+  }
+
+  return {
+    loggedIn: true,
+    storage: 'file/config',
+    secretsInConfig: session.access_token || session.refresh_token ? 'yes' : 'no',
+  };
+}
+
 const cmdWhoami = withApi(async (api) => {
   const data = await api.getAccount();
   heading('Account');
@@ -1821,12 +1849,19 @@ function cmdAuth(sub) {
   const location = getConfigLocation();
   const config = getConfig();
   const session = config.agent_session || {};
+  const storageStatus = credentialStorageStatus(config);
 
   heading('Auth Status');
-  log(`  ${BOLD}Config dir:${RESET}  ${location.dir}`);
-  log(`  ${BOLD}Config file:${RESET} ${location.file}`);
-  log(`  ${BOLD}Storage:${RESET}     ${location.label}`);
+  log(`  ${BOLD}Config dir:${RESET}         ${location.dir}`);
+  log(`  ${BOLD}Config file:${RESET}        ${location.file}`);
+  log(`  ${BOLD}Config source:${RESET}      ${location.label}`);
+  log(`  ${BOLD}Logged in:${RESET}          ${storageStatus.loggedIn ? 'yes' : 'no'}`);
   log(`  ${BOLD}Auth:${RESET}        ${getAuthSource(config)}`);
+  log(`  ${BOLD}Credential storage:${RESET} ${storageStatus.storage}`);
+  if (storageStatus.account) {
+    log(`  ${BOLD}Credential account:${RESET} ${storageStatus.account}`);
+  }
+  log(`  ${BOLD}Secrets in config:${RESET}  ${storageStatus.secretsInConfig}`);
   log('');
 
   heading('Cached Account');
@@ -2270,6 +2305,39 @@ function hasHelpFlag(commandArgs) {
   return commandArgs.includes('--help') || commandArgs.includes('-h');
 }
 
+function hasInvalidLoginShape(commandArgs) {
+  const flagsWithValues = new Set(['--auth-request', '--exchange-code', '--token']);
+  const flagsWithoutValues = new Set(['--detached', '--wait', '--poll']);
+  const seen = new Set();
+
+  for (let i = 1; i < commandArgs.length; i += 1) {
+    const arg = commandArgs[i];
+    if (flagsWithValues.has(arg)) {
+      seen.add(arg);
+      i += 1;
+      if (i >= commandArgs.length) return true;
+      continue;
+    }
+    if (flagsWithoutValues.has(arg)) {
+      seen.add(arg);
+      continue;
+    }
+    return true;
+  }
+
+  if (seen.has('--token')) return true;
+
+  const hasManualExchange = seen.has('--auth-request') || seen.has('--exchange-code');
+  if (hasManualExchange) {
+    if (!seen.has('--auth-request') || !seen.has('--exchange-code')) return true;
+    if (seen.has('--detached') || seen.has('--wait') || seen.has('--poll')) return true;
+  }
+
+  if ((seen.has('--wait') || seen.has('--poll')) && !seen.has('--detached')) return true;
+
+  return false;
+}
+
 try {
   if (isDemoMutation(command, args)) {
     error('Demo mode is read-only. Use read commands like --demo projects, --demo stats, --demo paths, --demo funnel, or --demo experiments list.');
@@ -2281,7 +2349,7 @@ try {
       break;
     case 'login':
       await cmdLogin({
-        token: getArg('--token'),
+        invalidShape: hasInvalidLoginShape(args),
         detached: args.includes('--detached'),
         exchangeCode: getArg('--exchange-code'),
         authRequestId: getArg('--auth-request'),
@@ -2289,7 +2357,7 @@ try {
       });
       break;
     case 'logout':
-      cmdLogout();
+      await cmdLogout();
       break;
     case 'scan': {
       const scanUrl = args[1] && !args[1].startsWith('--') ? args[1] : null;

@@ -15,7 +15,7 @@ npx --yes @agent-analytics/cli@0.5.30 --demo funnel agentanalytics-demo --steps 
 npx --yes @agent-analytics/cli@0.5.30 --demo experiments list agentanalytics-demo
 ```
 
-Demo mode fetches a short-lived read-only `aas_*` session from the hosted API. It does not expose a raw `aak_*` API key, does not write local CLI config, and blocks mutating commands before making API requests.
+Demo mode fetches a short-lived read-only agent session from the hosted API. It does not write local CLI config and blocks mutating commands before making API requests.
 
 Get the fastest path to useful analytics for a project you own:
 
@@ -130,7 +130,7 @@ feedback --message "..."         Send product/process feedback
 logout                           Clear saved local auth (does not revoke remote sessions)
 ```
 
-The CLI is agent-session-first. It stores a renewable Agent Analytics session locally after browser approval and uses that bearer auth for API calls. Direct HTTP runtimes that cannot use agent sessions should manage raw `aak_*` API keys from the dashboard, not through the normal CLI onboarding path.
+The CLI is agent-session-first. It stores a renewable Agent Analytics session locally after browser approval and uses that bearer auth for CLI API calls. Runtime-specific HTTP integrations should stay tied to the approved agent session, project setup, and project context rather than treating the CLI as a manual key setup path.
 
 When a free account hits a Pro-only analytics task, run an explicit upgrade handoff:
 
@@ -280,7 +280,6 @@ Do not install the skill from this CLI repo. This package is the runtime CLI; th
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_ANALYTICS_API_KEY` | Compatibility API key for direct HTTP-style runtimes; browser-approved CLI login is preferred |
 | `AGENT_ANALYTICS_CONFIG_DIR` | Directory containing CLI `config.json`; use a persistent path in managed runtimes |
 | `AGENT_ANALYTICS_URL` | Custom API URL (for self-hosted) |
 | `AGENT_ANALYTICS_DASHBOARD_URL` | Custom dashboard URL for local upgrade-link testing |

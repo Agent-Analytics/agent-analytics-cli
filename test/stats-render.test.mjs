@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { agentSessionEnv } from './auth-test-helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cli.mjs');
@@ -46,7 +47,7 @@ describe('stats command rendering', () => {
 
     try {
       const { stdout } = await runCli(['stats', 'test-project'], {
-        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        ...agentSessionEnv('aas_test'),
         AGENT_ANALYTICS_URL: url,
       });
 
@@ -69,7 +70,7 @@ describe('stats command rendering', () => {
 
     try {
       const { code, stdout } = await runCli(['stats', 'test-project'], {
-        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        ...agentSessionEnv('aas_test'),
         AGENT_ANALYTICS_URL: url,
       });
 
@@ -94,7 +95,7 @@ describe('stats command rendering', () => {
 
     try {
       const { stdout } = await runCli(['stats', 'test-project'], {
-        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        ...agentSessionEnv('aas_test'),
         AGENT_ANALYTICS_URL: url,
       });
       const plain = stripAnsi(stdout);
@@ -122,7 +123,7 @@ describe('stats command rendering', () => {
 
     try {
       const { stdout } = await runCli(['stats', 'test-project'], {
-        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        ...agentSessionEnv('aas_test'),
         AGENT_ANALYTICS_URL: url,
       });
       const plain = stripAnsi(stdout);

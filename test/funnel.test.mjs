@@ -6,13 +6,14 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { agentSessionEnv } from './auth-test-helpers.mjs';
 
 function runCli(args, { port }) {
   const child = spawn(process.execPath, [resolve('bin/cli.mjs'), ...args], {
     cwd: resolve('.'),
     env: {
       ...process.env,
-      AGENT_ANALYTICS_API_KEY: 'aak_test123',
+      ...agentSessionEnv('aas_test123'),
       AGENT_ANALYTICS_URL: `http://127.0.0.1:${port}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

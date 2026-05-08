@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
+import { agentSessionEnv } from './auth-test-helpers.mjs';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -78,7 +79,7 @@ test('paths command forwards bounded args and prints terminal nodes', async () =
     cwd: resolve('.'),
     env: {
       ...process.env,
-      AGENT_ANALYTICS_API_KEY: 'aak_test123',
+      ...agentSessionEnv('aas_test123'),
       AGENT_ANALYTICS_URL: `http://127.0.0.1:${port}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

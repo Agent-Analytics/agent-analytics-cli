@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { agentSessionEnv } from './auth-test-helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cli.mjs');
@@ -58,7 +59,7 @@ describe('all-sites command rendering', () => {
 
     try {
       const { code, stdout } = await runCli(['all-sites', '--period', '7d'], {
-        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        ...agentSessionEnv('aas_test'),
         AGENT_ANALYTICS_URL: url,
       });
 
@@ -103,7 +104,7 @@ describe('all-sites command rendering', () => {
 
     try {
       const { code, stdout } = await runCli(['all-sites'], {
-        AGENT_ANALYTICS_API_KEY: 'aak_test',
+        ...agentSessionEnv('aas_test'),
         AGENT_ANALYTICS_URL: url,
       });
 

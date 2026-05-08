@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { agentSessionEnv } from './auth-test-helpers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'bin', 'cli.mjs');
@@ -14,7 +15,7 @@ function run(args = [], { env = {}, timeout = 5000 } = {}) {
   return new Promise((resolve) => {
     execFile('node', [CLI, ...args], {
       timeout,
-      env: { ...process.env, ...env },
+      env: { ...process.env, AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'linux', ...env },
     }, (err, stdout, stderr) => {
       resolve({
         code: err ? err.code : 0,
@@ -249,7 +250,7 @@ describe('CLI', () => {
       assert.ok(stripAnsi(both.stdout).includes('upgrade-link --detached|--wait'));
     });
 
-    it('rejects raw API key auth locally', async () => {
+    it('treats saved raw API key auth as not logged in locally', async () => {
       const config = createExplicitConfigDir({ api_key: 'aak_raw' });
 
       try {
@@ -258,7 +259,7 @@ describe('CLI', () => {
         });
 
         assert.notEqual(code, 0);
-        assert.ok(stripAnsi(stdout).includes('requires browser-approved CLI login'));
+        assert.ok(stripAnsi(stdout).includes('Not logged in'));
         assert.ok(stripAnsi(stdout).includes('Run: npx @agent-analytics/cli login'));
       } finally {
         config.cleanup();
@@ -484,18 +485,177 @@ describe('CLI', () => {
       };
     }
 
-    it('writes login --token auth to an explicit --config-dir after the command', async () => {
+    it('rejects login --token instead of storing raw API-key auth', async () => {
       const config = createExplicitConfigDir();
-      const server = await startAccountServer({ expectedAuth: 'aak_config_token' });
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
+      });
 
       try {
         const { code, stdout } = await run(['login', '--token', 'aak_config_token', '--config-dir', config.configDir], {
           env: { AGENT_ANALYTICS_URL: server.baseUrl, XDG_CONFIG_HOME: mkdtempSync(join(tmpdir(), 'agent-analytics-unused-xdg-')) },
         });
+        const plain = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.equal(calls, 0);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /browser/i);
+        assert.match(plain, /detached/i);
+        assert.equal(plain.includes('API key'), false);
+        assert.equal(existsSync(config.configFile), false);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('rejects positional login tokens as invalid command shape', async () => {
+      const config = createExplicitConfigDir();
+      const { code, stdout } = await run(['login', 'aak_positional_token', '--config-dir', config.configDir], {
+        env: { AGENT_ANALYTICS_URL: 'http://127.0.0.1:9' },
+      });
+      const plain = stripAnsi(stdout);
+
+      assert.notEqual(code, 0);
+      assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+      assert.match(plain, /browser/i);
+      assert.match(plain, /detached/i);
+      assert.equal(plain.includes('API key'), false);
+      assert.equal(plain.includes('migration'), false);
+      config.cleanup();
+    });
+
+    it('rejects login --auth-request without an exchange code instead of starting browser login', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['login', '--auth-request', 'req_123'], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.equal(calls, 0);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /browser/i);
+        assert.match(plain, /detached/i);
+        assert.equal(plain.includes('API key'), false);
+        assert.equal(plain.includes('migration'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects login --exchange-code without auth request with browser and detached usage', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['login', '--exchange-code', 'aae_123'], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.equal(calls, 0);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /browser/i);
+        assert.match(plain, /detached/i);
+        assert.equal(plain.includes('API key'), false);
+        assert.equal(plain.includes('migration'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects detached manual exchange shape before making network requests', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['login', '--detached', '--auth-request', 'req_123', '--exchange-code', 'aae_123'], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.notEqual(code, 0);
+        assert.equal(calls, 0);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /browser/i);
+        assert.match(plain, /detached/i);
+        assert.equal(plain.includes('API key'), false);
+        assert.equal(plain.includes('migration'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('does not surface legacy config api_key or env API key in auth status', async () => {
+      const config = createExplicitConfigDir({
+        api_key: 'aak_legacy',
+        email: 'old@example.com',
+      });
+
+      try {
+        const { code, stdout } = await run(['auth', 'status', '--config-dir', config.configDir], {
+          env: {
+            AGENT_ANALYTICS_URL: 'http://127.0.0.1:9',
+            AGENT_ANALYTICS_API_KEY: 'aak_env_legacy',
+          },
+        });
+        const plain = stripAnsi(stdout);
 
         assert.equal(code, 0);
-        assert.ok(stdout.includes(config.configFile));
-        assert.equal(readJson(config.configFile).api_key, 'aak_config_token');
+        assert.ok(plain.includes('Logged in:          no'));
+        assert.ok(plain.includes('Credential storage: none'));
+        assert.ok(plain.includes('Secrets in config:  no'));
+        assert.ok(plain.includes('Auth:        none'));
+        assert.equal(plain.includes('AGENT_ANALYTICS_API_KEY'), false);
+        assert.equal(plain.includes('raw API key'), false);
+        assert.equal(plain.includes('legacy'), false);
+        assert.equal(plain.includes('migration'), false);
+      } finally {
+        config.cleanup();
+      }
+    });
+
+    it('treats env/config API keys as not logged in for auth-required commands', async () => {
+      const config = createExplicitConfigDir({ api_key: 'aak_legacy' });
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout } = await run(['projects', '--config-dir', config.configDir], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: 'aak_env_legacy',
+          },
+        });
+
+        assert.notEqual(code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(stdout).includes('Not logged in'));
       } finally {
         await server.close();
         config.cleanup();
@@ -703,13 +863,14 @@ describe('CLI', () => {
       }
     });
 
-    it('auth status prints local metadata without token values or network access', async () => {
+    it('auth status reports file/config credential storage without token values or network access', async () => {
       const config = createExplicitConfigDir({
         email: 'local@example.com',
         github_login: 'localdev',
         google_name: 'Local Dev',
         tier: 'free',
         agent_session: {
+          storage: 'file',
           id: 'sess_local',
           access_token: 'aas_secret_should_not_print',
           refresh_token: 'aar_secret_should_not_print',
@@ -727,13 +888,48 @@ describe('CLI', () => {
 
         assert.equal(code, 0);
         assert.ok(plain.includes(config.configDir));
-        assert.ok(plain.includes('stored agent session'));
+        assert.ok(plain.includes('Logged in:          yes'));
+        assert.ok(plain.includes('Credential storage: file/config'));
+        assert.ok(plain.includes('Secrets in config:  yes'));
         assert.ok(plain.includes('local@example.com'));
         assert.ok(plain.includes('sess_local'));
         assert.ok(plain.includes('account:read, projects:read'));
         assert.ok(plain.includes('2030-01-01T00:00:00.000Z'));
         assert.equal(plain.includes('aas_secret_should_not_print'), false);
         assert.equal(plain.includes('aar_secret_should_not_print'), false);
+      } finally {
+        config.cleanup();
+      }
+    });
+
+    it('auth status reports native credential metadata without touching keychain or printing tokens', async () => {
+      const config = createExplicitConfigDir({
+        email: 'native@example.com',
+        agent_session: {
+          storage: 'native',
+          credential: 'https://api.example.test|default',
+          id: 'sess_native',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+
+      try {
+        const { code, stdout } = await run(['auth', 'status', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: 'http://127.0.0.1:9' },
+        });
+        const plain = stripAnsi(stdout);
+
+        assert.equal(code, 0);
+        assert.ok(plain.includes('Logged in:          yes'));
+        assert.ok(plain.includes('Credential storage: native'));
+        assert.ok(plain.includes('Credential account: https://api.example.test|default'));
+        assert.ok(plain.includes('Secrets in config:  no'));
+        assert.ok(plain.includes('native@example.com'));
+        assert.ok(plain.includes('sess_native'));
+        assert.equal(plain.includes('access_token'), false);
+        assert.equal(plain.includes('refresh_token'), false);
       } finally {
         config.cleanup();
       }
@@ -748,6 +944,572 @@ describe('CLI', () => {
   });
 
   describe('login without token', () => {
+    it('browser login stores an agent session that a later command uses as bearer auth', async () => {
+      const tempHome = createTempConfigHome();
+      const browserScript = join(tempHome.xdgConfigHome, 'fake-browser.mjs');
+      writeFileSync(browserScript, `
+        const url = process.argv[2];
+        const response = await fetch(url, { redirect: 'follow' });
+        if (!response.ok) process.exit(1);
+      `);
+
+      let callbackUrl;
+      let exchangePayload;
+      let projectsAuth;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          const body = await readRequestJson(req);
+          callbackUrl = body.callback_url;
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-browser',
+            authorize_url: `${server.baseUrl}/approve`,
+            poll_token: 'aap_browser',
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/approve') {
+          const callback = new URL(callbackUrl);
+          callback.searchParams.set('request_id', 'req-browser');
+          callback.searchParams.set('exchange_code', 'aae_browser');
+          res.writeHead(302, { Location: callback.toString() });
+          res.end();
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/exchange') {
+          exchangePayload = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              id: 'sess-browser',
+              access_token: 'aas_browser_saved',
+              refresh_token: 'aar_browser_saved',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read', 'projects:read'],
+            },
+            account: {
+              email: 'browser@example.com',
+              tier: 'pro',
+            },
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/projects') {
+          projectsAuth = req.headers.authorization;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            projects: [{
+              id: 'proj_browser',
+              name: 'browser-site',
+              project_token: 'aat_browser',
+              allowed_origins: 'https://browser.example',
+              created_at: 1893456000000,
+            }],
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const env = {
+          AGENT_ANALYTICS_URL: server.baseUrl,
+          AGENT_ANALYTICS_OPEN_COMMAND: `node ${browserScript}`,
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          AGENT_ANALYTICS_API_KEY: '',
+        };
+        const login = await run(['login'], { env, timeout: 5000 });
+        const config = readJson(tempHome.configFile);
+        const projects = await run(['projects'], { env });
+
+        assert.equal(login.code, 0);
+        assert.equal(exchangePayload.auth_request_id, 'req-browser');
+        assert.equal(exchangePayload.exchange_code, 'aae_browser');
+        assert.ok(exchangePayload.code_verifier);
+        assert.equal(config.agent_session.id, 'sess-browser');
+        assert.equal(config.agent_session.access_token, 'aas_browser_saved');
+        assert.equal(config.api_key, undefined);
+        assert.equal(config.email, 'browser@example.com');
+        assert.equal(projects.code, 0);
+        assert.equal(projectsAuth, 'Bearer aas_browser_saved');
+        assert.ok(projects.stdout.includes('browser-site'));
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('browser login in auto desktop mode stores secrets in fake native keyring and later command reads bearer auth', async () => {
+      const tempHome = createTempConfigHome();
+      const fakeKeyringFile = join(tempHome.xdgConfigHome, 'fake-keyring.json');
+      const browserScript = join(tempHome.xdgConfigHome, 'fake-browser-native.mjs');
+      writeFileSync(browserScript, `
+        const url = process.argv[2];
+        const response = await fetch(url, { redirect: 'follow' });
+        if (!response.ok) process.exit(1);
+      `);
+
+      let callbackUrl;
+      let projectsAuth;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          const body = await readRequestJson(req);
+          callbackUrl = body.callback_url;
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-native-browser',
+            authorize_url: `${server.baseUrl}/approve-native`,
+            poll_token: 'aap_native_browser',
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/approve-native') {
+          const callback = new URL(callbackUrl);
+          callback.searchParams.set('request_id', 'req-native-browser');
+          callback.searchParams.set('exchange_code', 'aae_native_browser');
+          res.writeHead(302, { Location: callback.toString() });
+          res.end();
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/exchange') {
+          await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              id: 'sess-native-browser',
+              access_token: 'aas_native_browser_saved',
+              refresh_token: 'aar_native_browser_saved',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read', 'projects:read'],
+            },
+            account: {
+              email: 'native-browser@example.com',
+              tier: 'pro',
+            },
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/projects') {
+          projectsAuth = req.headers.authorization;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            projects: [{
+              id: 'proj_native_browser',
+              name: 'native-browser-site',
+              project_token: 'aat_native_browser',
+              allowed_origins: 'https://native-browser.example',
+              created_at: 1893456000000,
+            }],
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const env = {
+          AGENT_ANALYTICS_URL: server.baseUrl,
+          AGENT_ANALYTICS_OPEN_COMMAND: `node ${browserScript}`,
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'darwin',
+          AGENT_ANALYTICS_FAKE_KEYRING_FILE: fakeKeyringFile,
+        };
+        const login = await run(['login'], { env, timeout: 5000 });
+        const config = readJson(tempHome.configFile);
+        const fakeKeyring = readJson(fakeKeyringFile);
+        const projects = await run(['projects'], { env });
+
+        assert.equal(login.code, 0);
+        assert.equal(config.agent_session.storage, 'native');
+        assert.equal(config.agent_session.access_token, undefined);
+        assert.equal(config.agent_session.refresh_token, undefined);
+        assert.equal(config.agent_session.id, 'sess-native-browser');
+        assert.equal(config.email, 'native-browser@example.com');
+        assert.equal(JSON.stringify(config).includes('aas_native_browser_saved'), false);
+        assert.deepEqual(Object.keys(fakeKeyring), [`agent-analytics\0${server.baseUrl}|default`]);
+        const nativePayload = JSON.parse(Object.values(fakeKeyring)[0]);
+        assert.equal(nativePayload.access_token, 'aas_native_browser_saved');
+        assert.equal(nativePayload.refresh_token, 'aar_native_browser_saved');
+        assert.equal(nativePayload.id, 'sess-native-browser');
+        assert.deepEqual(nativePayload.scopes, ['account:read', 'projects:read']);
+        assert.equal(projects.code, 0);
+        assert.equal(projectsAuth, 'Bearer aas_native_browser_saved');
+        assert.ok(projects.stdout.includes('native-browser-site'));
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('browser login in auto desktop mode falls back to file storage with a visible warning when native persistence fails', async () => {
+      const tempHome = createTempConfigHome();
+      const browserScript = join(tempHome.xdgConfigHome, 'fake-browser-native-failure.mjs');
+      writeFileSync(browserScript, `
+        const url = process.argv[2];
+        const response = await fetch(url, { redirect: 'follow' });
+        if (!response.ok) process.exit(1);
+      `);
+
+      let callbackUrl;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          const body = await readRequestJson(req);
+          callbackUrl = body.callback_url;
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-native-persist-fail',
+            authorize_url: `${server.baseUrl}/approve-native-persist-fail`,
+            poll_token: 'aap_native_persist_fail',
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/approve-native-persist-fail') {
+          const callback = new URL(callbackUrl);
+          callback.searchParams.set('request_id', 'req-native-persist-fail');
+          callback.searchParams.set('exchange_code', 'aae_native_persist_fail');
+          res.writeHead(302, { Location: callback.toString() });
+          res.end();
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/exchange') {
+          await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              id: 'sess-native-persist-fail',
+              access_token: 'aas_native_persist_fail',
+              refresh_token: 'aar_native_persist_fail',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read'],
+            },
+            account: {
+              email: 'native-persist-fail@example.com',
+              tier: 'pro',
+            },
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const env = {
+          AGENT_ANALYTICS_URL: server.baseUrl,
+          AGENT_ANALYTICS_OPEN_COMMAND: `node ${browserScript}`,
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'darwin',
+          AGENT_ANALYTICS_FAKE_KEYRING_FILE: tempHome.xdgConfigHome,
+        };
+        const login = await run(['login'], { env, timeout: 5000 });
+        const plainStdout = stripAnsi(login.stdout);
+        const plainStderr = stripAnsi(login.stderr);
+        const config = readJson(tempHome.configFile);
+
+        assert.equal(login.code, 0);
+        assert.ok(plainStderr.includes('Native credential storage was unavailable'));
+        assert.ok(plainStderr.includes('using file storage'));
+        assert.equal(plainStdout.includes('Native credential storage was unavailable'), false);
+        assert.equal(plainStdout.includes('using file storage'), false);
+        assert.equal(config.agent_session.storage, 'file');
+        assert.equal(config.agent_session.access_token, 'aas_native_persist_fail');
+        assert.equal(config.agent_session.refresh_token, 'aar_native_persist_fail');
+        assert.equal(config.email, 'native-persist-fail@example.com');
+        assert.equal(plainStdout.includes('Retry with detached approval'), false);
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('token refresh in auto desktop mode falls back to file storage with a visible warning when native persistence fails', async () => {
+      const tempHome = createTempConfigHome({
+        agent_session: {
+          storage: 'file',
+          id: 'sess-refresh-old',
+          access_token: 'aas_refresh_old',
+          refresh_token: 'aar_refresh_old',
+          access_expires_at: 1,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read', 'projects:read'],
+        },
+      });
+
+      let refreshPayload;
+      let projectsCalls = 0;
+      let retriedProjectsAuth;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'GET' && req.url === '/projects') {
+          projectsCalls += 1;
+          if (projectsCalls === 1) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ message: 'expired access token' }));
+            return;
+          }
+
+          retriedProjectsAuth = req.headers.authorization;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            projects: [{
+              id: 'proj_refresh_fallback',
+              name: 'refresh-fallback-site',
+              project_token: 'aat_refresh_fallback',
+              allowed_origins: 'https://refresh-fallback.example',
+              created_at: 1893456000000,
+            }],
+          }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/refresh') {
+          refreshPayload = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              id: 'sess-refresh-new',
+              access_token: 'aas_refresh_new',
+              refresh_token: 'aar_refresh_new',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read', 'projects:read'],
+            },
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const env = {
+          AGENT_ANALYTICS_URL: server.baseUrl,
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'darwin',
+          AGENT_ANALYTICS_FAKE_KEYRING_FILE: tempHome.xdgConfigHome,
+        };
+        const projects = await run(['projects'], { env });
+        const plainStdout = stripAnsi(projects.stdout);
+        const plainStderr = stripAnsi(projects.stderr);
+        const config = readJson(tempHome.configFile);
+
+        assert.equal(projects.code, 0);
+        assert.equal(projectsCalls, 2);
+        assert.deepEqual(refreshPayload, { refresh_token: 'aar_refresh_old' });
+        assert.equal(retriedProjectsAuth, 'Bearer aas_refresh_new');
+        assert.ok(plainStderr.includes('Native credential storage was unavailable'));
+        assert.ok(plainStderr.includes('using file storage'));
+        assert.equal(plainStdout.includes('Native credential storage was unavailable'), false);
+        assert.equal(plainStdout.includes('using file storage'), false);
+        assert.ok(plainStdout.includes('refresh-fallback-site'));
+        assert.equal(plainStdout.includes('aas_refresh_new'), false);
+        assert.equal(plainStdout.includes('aar_refresh_new'), false);
+        assert.equal(plainStderr.includes('aas_refresh_new'), false);
+        assert.equal(plainStderr.includes('aar_refresh_new'), false);
+        assert.equal(config.agent_session.storage, 'file');
+        assert.equal(config.agent_session.id, 'sess-refresh-new');
+        assert.equal(config.agent_session.access_token, 'aas_refresh_new');
+        assert.equal(config.agent_session.refresh_token, 'aar_refresh_new');
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('browser login in explicit native mode fails clearly when native persistence fails after approval', async () => {
+      const tempHome = createTempConfigHome();
+      const browserScript = join(tempHome.xdgConfigHome, 'fake-browser-explicit-native-failure.mjs');
+      writeFileSync(browserScript, `
+        const url = process.argv[2];
+        const response = await fetch(url, { redirect: 'follow' });
+        if (!response.ok) process.exit(1);
+      `);
+
+      let callbackUrl;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          const body = await readRequestJson(req);
+          callbackUrl = body.callback_url;
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-explicit-native-fail',
+            authorize_url: `${server.baseUrl}/approve-explicit-native-fail`,
+            poll_token: 'aap_explicit_native_fail',
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/approve-explicit-native-fail') {
+          const callback = new URL(callbackUrl);
+          callback.searchParams.set('request_id', 'req-explicit-native-fail');
+          callback.searchParams.set('exchange_code', 'aae_explicit_native_fail');
+          res.writeHead(302, { Location: callback.toString() });
+          res.end();
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/exchange') {
+          await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              id: 'sess-explicit-native-fail',
+              access_token: 'aas_explicit_native_fail',
+              refresh_token: 'aar_explicit_native_fail',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read'],
+            },
+            account: {
+              email: 'explicit-native-fail@example.com',
+              tier: 'pro',
+            },
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const env = {
+          AGENT_ANALYTICS_URL: server.baseUrl,
+          AGENT_ANALYTICS_OPEN_COMMAND: `node ${browserScript}`,
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          AGENT_ANALYTICS_CREDENTIAL_STORE: 'native',
+          AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'darwin',
+          AGENT_ANALYTICS_FAKE_KEYRING_FILE: tempHome.xdgConfigHome,
+        };
+        const login = await run(['login'], { env, timeout: 5000 });
+        const plain = stripAnsi(login.stdout);
+
+        assert.notEqual(login.code, 0);
+        assert.ok(plain.includes('Login approved, but saving the agent session failed'));
+        assert.ok(plain.includes('Native credential storage unavailable'));
+        assert.ok(plain.includes('AGENT_ANALYTICS_CREDENTIAL_STORE=file'));
+        assert.equal(existsSync(tempHome.configFile), false);
+        assert.equal(plain.includes('Retry with detached approval'), false);
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
+    it('detached login with polling stores an agent session that a later command uses as bearer auth', async () => {
+      const tempHome = createTempConfigHome();
+      let pollCount = 0;
+      let exchangePayload;
+      let projectsAuth;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/start') {
+          await readRequestJson(req);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            auth_request_id: 'req-detached-green',
+            authorize_url: 'https://approve.example/req-detached-green',
+            poll_token: 'aap_detached_green',
+          }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/poll') {
+          pollCount += 1;
+          await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(
+            pollCount === 1
+              ? { status: 'pending' }
+              : { status: 'approved', exchange_code: 'aae_detached_green' }
+          ));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agent-sessions/exchange') {
+          exchangePayload = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            agent_session: {
+              id: 'sess-detached-green',
+              access_token: 'aas_detached_saved',
+              refresh_token: 'aar_detached_saved',
+              access_expires_at: 1893456000000,
+              refresh_expires_at: 1924992000000,
+              scopes: ['account:read', 'projects:read'],
+            },
+            account: {
+              email: 'detached-green@example.com',
+              tier: 'pro',
+            },
+          }));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/projects') {
+          projectsAuth = req.headers.authorization;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            projects: [{
+              id: 'proj_detached',
+              name: 'detached-site',
+              project_token: 'aat_detached',
+              allowed_origins: 'https://detached.example',
+              created_at: 1893456000000,
+            }],
+          }));
+          return;
+        }
+
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const env = {
+          AGENT_ANALYTICS_URL: server.baseUrl,
+          AGENT_ANALYTICS_AUTH_POLL_INTERVAL_MS: '10',
+          XDG_CONFIG_HOME: tempHome.xdgConfigHome,
+          AGENT_ANALYTICS_API_KEY: '',
+        };
+        const startedAt = Date.now();
+        const login = await run(['login', '--detached', '--wait'], { env, timeout: 5000 });
+        const elapsedMs = Date.now() - startedAt;
+        const config = readJson(tempHome.configFile);
+        const projects = await run(['projects'], { env });
+
+        assert.equal(login.code, 0);
+        assert.equal(pollCount, 2);
+        assert.ok(elapsedMs < 1000, `expected focused detached login test to use fast poll interval, took ${elapsedMs}ms`);
+        assert.equal(exchangePayload.auth_request_id, 'req-detached-green');
+        assert.equal(exchangePayload.exchange_code, 'aae_detached_green');
+        assert.equal(config.agent_session.id, 'sess-detached-green');
+        assert.equal(config.agent_session.access_token, 'aas_detached_saved');
+        assert.equal(config.api_key, undefined);
+        assert.equal(projects.code, 0);
+        assert.equal(projectsAuth, 'Bearer aas_detached_saved');
+        assert.ok(projects.stdout.includes('detached-site'));
+      } finally {
+        await server.close();
+        tempHome.cleanup();
+      }
+    });
+
     it('starts the detached agent-session handoff and exits after printing the manual resume command', async () => {
       let pollCount = 0;
       const server = createServer((req, res) => {
@@ -950,7 +1712,7 @@ describe('CLI', () => {
     it('shows usage guidance when message is missing', async () => {
       const { code, stdout } = await run(['feedback'], {
         env: {
-          AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          ...agentSessionEnv('aas_test123'),
         },
       });
 
@@ -988,7 +1750,7 @@ describe('CLI', () => {
         const { code, stdout } = await run(['context', 'get', 'my-site'], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
           },
         });
 
@@ -1034,7 +1796,7 @@ describe('CLI', () => {
         ], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
           },
         });
 
@@ -1080,7 +1842,7 @@ describe('CLI', () => {
         ], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
           },
         });
 
@@ -1127,7 +1889,7 @@ describe('CLI', () => {
         ], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
           },
         });
 
@@ -1170,7 +1932,7 @@ describe('CLI', () => {
         ], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
           },
         });
 
@@ -1209,7 +1971,7 @@ describe('CLI', () => {
           '--move',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -1221,7 +1983,7 @@ describe('CLI', () => {
           '--move',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -1266,7 +2028,7 @@ describe('CLI', () => {
           '--metrics', 'event_count',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -1314,7 +2076,7 @@ describe('CLI', () => {
           '--limit', '25',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: baseUrl,
           },
         });
@@ -1335,7 +2097,7 @@ describe('CLI', () => {
     it('documents raw event rows as the default count mode', async () => {
       const { code, stdout } = await run(['query'], {
         env: {
-          AGENT_ANALYTICS_API_KEY: 'aak_test123',
+          ...agentSessionEnv('aas_test123'),
         },
       });
       const output = stripAnsi(stdout);
@@ -1368,7 +2130,7 @@ describe('CLI', () => {
           '--days', '30',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -1417,7 +2179,7 @@ describe('CLI', () => {
           '--since', '30d',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -1461,7 +2223,7 @@ describe('CLI', () => {
       try {
         const result = await run(args, {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: baseUrl,
           },
         });
@@ -1626,12 +2388,20 @@ describe('CLI', () => {
       }
     });
 
-    it('upgrades a resumed analysis with auth when --full is passed', async () => {
+    it('upgrades a resumed analysis with agent-session auth when --full is passed', async () => {
       let requestBody;
       let requestAuth;
+      const config = createExplicitConfigDir({
+        agent_session: {
+          access_token: 'aas_scan_upgrade',
+          refresh_token: 'aar_scan_upgrade',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+        },
+      });
       const server = await startServer(async (req, res) => {
         if (req.method === 'POST' && req.url === '/website-scans/scan_anon/upgrade') {
-          requestAuth = req.headers['x-api-key'];
+          requestAuth = req.headers.authorization;
           requestBody = await readRequestJson(req);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -1657,16 +2427,16 @@ describe('CLI', () => {
           '--full',
           '--project', 'example-site',
           '--json',
+          '--config-dir', config.configDir,
         ], {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
           },
         });
         const data = JSON.parse(stdout);
 
         assert.equal(code, 0);
-        assert.equal(requestAuth, 'aak_test123');
+        assert.equal(requestAuth, 'Bearer aas_scan_upgrade');
         assert.deepEqual(requestBody, {
           resume_token: 'rst_preview',
           project: 'example-site',
@@ -1674,6 +2444,7 @@ describe('CLI', () => {
         assert.equal(data.mode, 'full');
       } finally {
         await server.close();
+        config.cleanup();
       }
     });
 
@@ -1740,7 +2511,7 @@ describe('CLI', () => {
       }
     });
 
-    it('refreshes an expired agent session before a direct full scan', async () => {
+    it('keeps JSON stdout parseable and warns on stderr when refresh fallback uses file storage', async () => {
       const requestAuths = [];
       const requestBodies = [];
       let refreshCalls = 0;
@@ -1798,7 +2569,7 @@ describe('CLI', () => {
       });
 
       try {
-        const { code, stdout } = await run([
+        const result = await run([
           '--config-dir', config.configDir,
           'scan',
           'https://example.com/',
@@ -1809,18 +2580,32 @@ describe('CLI', () => {
           env: {
             AGENT_ANALYTICS_URL: server.baseUrl,
             AGENT_ANALYTICS_API_KEY: '',
+            AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'darwin',
+            AGENT_ANALYTICS_FAKE_KEYRING_FILE: config.configDir,
           },
         });
-        const data = JSON.parse(stdout);
+        const plainStdout = stripAnsi(result.stdout);
+        const plainStderr = stripAnsi(result.stderr);
+        const data = JSON.parse(result.stdout);
 
-        assert.equal(code, 0);
+        assert.equal(result.code, 0);
         assert.equal(refreshCalls, 1);
+        assert.ok(plainStderr.includes('Native credential storage was unavailable'));
+        assert.ok(plainStderr.includes('using file storage'));
+        assert.equal(plainStdout.includes('Native credential storage was unavailable'), false);
+        assert.equal(plainStdout.includes('using file storage'), false);
+        assert.equal(plainStdout.includes('aas_refreshed_scan'), false);
+        assert.equal(plainStdout.includes('aar_scan_refresh'), false);
+        assert.equal(plainStderr.includes('aas_refreshed_scan'), false);
+        assert.equal(plainStderr.includes('aar_scan_refresh'), false);
         assert.deepEqual(requestAuths, ['Bearer aas_expired_scan', 'Bearer aas_refreshed_scan']);
         assert.deepEqual(requestBodies, [
           { url: 'https://example.com/', mode: 'full', project: 'example-site' },
           { url: 'https://example.com/', mode: 'full', project: 'example-site' },
         ]);
-        assert.equal(readJson(config.configFile).agent_session.access_token, 'aas_refreshed_scan');
+        const storedSession = readJson(config.configFile).agent_session;
+        assert.equal(storedSession.storage, 'file');
+        assert.equal(storedSession.access_token, 'aas_refreshed_scan');
         assert.equal(data.analysis_id, 'scan_full_after_refresh');
       } finally {
         await server.close();
@@ -1982,7 +2767,7 @@ describe('CLI', () => {
       try {
         const { code, stdout } = await run(['projects'], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2025,7 +2810,7 @@ describe('CLI', () => {
           'https://stylio.app,http://lvh.me:3101',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2070,7 +2855,7 @@ describe('CLI', () => {
           'https://stylio.app,http://lvh.me:3101',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2105,7 +2890,7 @@ describe('CLI', () => {
       try {
         const { code, stdout } = await run(['project', 'stylio'], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2147,7 +2932,7 @@ describe('CLI', () => {
           '--source-scan', 'scan_source',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2189,7 +2974,7 @@ describe('CLI', () => {
           '--source-scan', 'scan_source',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2231,7 +3016,7 @@ describe('CLI', () => {
           '--domain', 'https://source.example',
         ], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2269,7 +3054,7 @@ describe('CLI', () => {
       try {
         const { code, stdout } = await run(['delete', 'stylio'], {
           env: {
-            AGENT_ANALYTICS_API_KEY: 'aak_test123',
+            ...agentSessionEnv('aas_test123'),
             AGENT_ANALYTICS_URL: server.baseUrl,
           },
         });
@@ -2351,7 +3136,7 @@ describe('CLI', () => {
       }
     });
 
-    it('warns when AGENT_ANALYTICS_API_KEY is still set', async () => {
+    it('does not warn about AGENT_ANALYTICS_API_KEY during logout', async () => {
       const temp = createTempConfigHome({
         api_key: 'aak_saved',
         email: 'dev@example.com',
@@ -2366,8 +3151,9 @@ describe('CLI', () => {
         });
 
         assert.equal(code, 0);
-        assert.ok(stdout.includes('AGENT_ANALYTICS_API_KEY'));
-        assert.ok(stdout.includes('unset AGENT_ANALYTICS_API_KEY'));
+        assert.ok(stdout.includes('Logged out locally'));
+        assert.ok(!stdout.includes('unset AGENT_ANALYTICS_API_KEY'));
+        assert.deepEqual(readJson(temp.configFile), {});
       } finally {
         temp.cleanup();
       }

@@ -13,6 +13,8 @@ import {
   saveConfig,
   getConfigFile,
   getConfigLocation,
+  getStoredAuth,
+  getAuthSource,
   setApiKey,
   setConfigDirOverride,
 } from '../lib/config.mjs';
@@ -127,13 +129,18 @@ describe('config', () => {
   });
 
   describe('getApiKey', () => {
-    it('returns env var when set', () => {
+    it('does not read AGENT_ANALYTICS_API_KEY for CLI auth', async () => {
       process.env.AGENT_ANALYTICS_API_KEY = 'aak_from_env';
-      assert.equal(getApiKey(), 'aak_from_env');
+      assert.equal(getApiKey(), null);
+      assert.equal(await getStoredAuth(), null);
+      assert.equal(getAuthSource(), 'none');
     });
 
-    it('returns null when no env var and no config key', () => {
+    it('returns null when no agent session is stored, even if config has api_key', async () => {
+      saveConfig({ api_key: 'aak_saved' });
       assert.equal(getApiKey(), null);
+      assert.equal(await getStoredAuth(), null);
+      assert.equal(getAuthSource(), 'none');
     });
   });
 
@@ -158,7 +165,7 @@ describe('config', () => {
   });
 
   describe('clearStoredAuth', () => {
-    it('removes saved auth fields and preserves base_url', () => {
+    it('removes saved auth fields and preserves base_url', async () => {
       saveConfig({
         api_key: 'aak_saved',
         email: 'dev@example.com',
@@ -166,23 +173,23 @@ describe('config', () => {
         base_url: 'https://custom.example.com',
       });
 
-      assert.equal(clearStoredAuth(), true);
+      assert.equal(await clearStoredAuth(), true);
       assert.deepEqual(getConfig(), {
         base_url: 'https://custom.example.com',
       });
     });
 
-    it('returns false when config file is missing', () => {
-      assert.equal(clearStoredAuth(), false);
+    it('returns false when config file is missing', async () => {
+      assert.equal(await clearStoredAuth(), false);
       assert.deepEqual(getConfig(), {});
     });
 
-    it('returns false when auth keys are absent', () => {
+    it('returns false when auth keys are absent', async () => {
       saveConfig({
         base_url: 'https://custom.example.com',
       });
 
-      assert.equal(clearStoredAuth(), false);
+      assert.equal(await clearStoredAuth(), false);
       assert.deepEqual(getConfig(), {
         base_url: 'https://custom.example.com',
       });

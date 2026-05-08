@@ -35,5 +35,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@zowe/secrets-for-zowe-sdk": "^8.32.0"
   }
 }
