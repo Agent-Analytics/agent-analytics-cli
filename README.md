@@ -130,7 +130,19 @@ feedback --message "..."         Send product/process feedback
 logout                           Clear saved local auth (does not revoke remote sessions)
 ```
 
-The CLI is agent-session-first. It stores a renewable Agent Analytics session locally after browser approval and uses that bearer auth for CLI API calls. Runtime-specific HTTP integrations should stay tied to the approved agent session, project setup, and project context rather than treating the CLI as a manual key setup path.
+The CLI is agent-session-first. It stores a renewable Agent Analytics session after browser approval and uses that bearer auth for CLI API calls. By default, macOS and Windows store the session secret in the OS keychain; Linux and headless environments use the CLI config file. Existing file-stored sessions migrate automatically to native storage on the next authenticated command when native storage is available. Runtime-specific HTTP integrations should stay tied to the approved agent session, project setup, and project context rather than treating the CLI as a manual key setup path.
+
+Check local storage state without printing secrets:
+
+```bash
+npx --yes @agent-analytics/cli@0.5.30 auth status
+```
+
+Credential storage is automatic. Only use `AGENT_ANALYTICS_CREDENTIAL_STORE` for troubleshooting or managed runtimes:
+
+- `file`: force config-file storage
+- `native`: require OS keychain and fail if unavailable
+- `auto`: default; usually not needed
 
 When a free account hits a Pro-only analytics task, run an explicit upgrade handoff:
 
@@ -283,6 +295,7 @@ Do not install the skill from this CLI repo. This package is the runtime CLI; th
 | `AGENT_ANALYTICS_CONFIG_DIR` | Directory containing CLI `config.json`; use a persistent path in managed runtimes |
 | `AGENT_ANALYTICS_URL` | Custom API URL (for self-hosted) |
 | `AGENT_ANALYTICS_DASHBOARD_URL` | Custom dashboard URL for local upgrade-link testing |
+| `AGENT_ANALYTICS_CREDENTIAL_STORE` | Optional credential storage override: `auto` (default), `native`, or `file` |
 
 ## Links
 
