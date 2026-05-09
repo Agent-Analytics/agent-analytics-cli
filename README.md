@@ -304,7 +304,7 @@ Do not install the skill from this CLI repo. This package is the runtime CLI; th
 - **Website:** https://agentanalytics.sh
 - **GitHub:** https://github.com/Agent-Analytics
 - **Self-host:** https://github.com/Agent-Analytics/agent-analytics
-- **Agent Skill:** https://github.com/agent-analytics/skills
+- **Agent Skill:** https://github.com/Agent-Analytics/skills
 
 ## License
 
