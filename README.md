@@ -20,30 +20,6 @@ Demo mode fetches a short-lived read-only agent session from the hosted API. It 
 Get the fastest path to useful analytics for a project you own:
 
 ```bash
-# 1. Sign in
-npx --yes @agent-analytics/cli@0.5.32 login
-
-# 2. Create or identify the matching project and primary surface URL
-npx --yes @agent-analytics/cli@0.5.32 create my-site --domain https://mysite.com
-
-# 3. Run the signed-in analysis for that project's surface
-npx --yes @agent-analytics/cli@0.5.32 scan https://mysite.com --project my-site --json
-
-# 4. Run the full signed-in analysis when you need the deeper plan
-npx --yes @agent-analytics/cli@0.5.32 scan https://mysite.com --full --project my-site --json
-
-# Or resume and upgrade a browser preview after login
-npx --yes @agent-analytics/cli@0.5.32 scan \
-  --resume <analysis_id> \
-  --resume-token <resume_token> \
-  --full \
-  --project my-site \
-  --json
-```
-
-The browser preview returns a one-analysis `rst_*` resume token, not an `aas_*` agent session. CLI scan creation and project linking require login.
-
-```bash
 # 1. Start agent login or signup in the browser
 npx --yes @agent-analytics/cli@0.5.32 login
 
@@ -71,17 +47,7 @@ upgrade-link --detached          Print a human Pro payment handoff link
 upgrade-link --wait              Print the handoff link and wait for Pro activation
 logout                           Clear local auth and revoke the stored agent session when possible
 auth status                      Show local auth path and expiry metadata
-scan <url>                       Analyze what your agent should track first
-scan <url> --json                Return anonymous preview JSON for agents
-scan <url> --full --project <name> --json
-                                  Run a full signed-in analysis for a project surface
-scan --resume <id> --resume-token <token>
-                                  Resume a preview by analysis id and token
-scan --resume <id> --resume-token <token> --full --project <name>
-                                  Upgrade a resumed analysis after login
 create <name> --domain <url>     Create a project with a primary surface URL/origin and get your tracking snippet
-create <name> --domain <url> --source-scan <id>
-                                  Link project activation to an analysis
 projects                         List all your projects with IDs
 project <project>                Get project details by exact name or ID
 update <project>                 Update project name or origins by exact name or ID
@@ -160,9 +126,7 @@ Project management commands accept exact project names or project IDs. The `--do
 npx --yes @agent-analytics/cli@0.5.32 update stylio --origins 'https://stylio.app,http://lvh.me:3101'
 ```
 
-Use `scan` before tracker installation when you want judgment instead of generic event lists. The preview is intentionally small: prioritized minimum viable instrumentation, what each event unlocks, current blind spots, and what not to track yet. The stable JSON is designed for agent skills to install only the high-priority events first and verify the first useful recommended event.
-
-Each recommendation includes an `implementation_hint` that should map to tracker.js capabilities. Do not add custom duplicates for automatic tracker signals such as `page_view`, path, referrer, UTMs, device/browser fields, country, session IDs, session count, days since first visit, or first-touch attribution. Prefer `data-aa-event`, `data-aa-impression`, `window.aa.track(...)`, server-side durable outcome tracking, or script opt-ins only when they unlock the stated decision.
+For tracker setup, start from the product action you want your agent to optimize. Do not add custom duplicates for automatic tracker signals such as `page_view`, path, referrer, UTMs, device/browser fields, country, session IDs, session count, days since first visit, or first-touch attribution. Prefer `data-aa-event`, `data-aa-impression`, `window.aa.track(...)`, server-side durable outcome tracking, or script opt-ins only when they unlock a concrete decision.
 
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
