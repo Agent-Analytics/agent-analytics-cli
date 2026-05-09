@@ -6,7 +6,7 @@
  * Usage:
  *   npx @agent-analytics/cli login                — Start browser-based agent session login
  *   npx @agent-analytics/cli login --detached     — Detached approval handoff
- *   npx @agent-analytics/cli logout               — Clear saved local auth
+ *   npx @agent-analytics/cli logout               — Clear local auth and revoke the stored agent session when possible
  *   npx @agent-analytics/cli upgrade-link --detached — Print a human payment handoff link
  *   npx @agent-analytics/cli scan <url>           — Preview what your agent should track first
  *   npx @agent-analytics/cli create <name>         — Create a project and get your snippet
@@ -467,7 +467,33 @@ async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, w
   }
 }
 
+function hasUsableAgentSessionTokenMaterial(auth) {
+  return Boolean(auth?.access_token || auth?.refresh_token);
+}
+
+async function revokeStoredAgentSessionBeforeLocalClear(auth) {
+  if (!auth?.id || !hasUsableAgentSessionTokenMaterial(auth)) return false;
+
+  try {
+    const api = createApiClient(auth);
+    await api.revokeAgentSession(auth.id);
+    return true;
+  } catch {
+    warnStderr('Could not revoke the remote agent session; local auth will still be cleared.');
+    return false;
+  }
+}
+
 async function cmdLogout() {
+  let storedAuth = null;
+  try {
+    storedAuth = await getStoredAuth();
+  } catch {
+    storedAuth = null;
+  }
+
+  await revokeStoredAgentSessionBeforeLocalClear(storedAuth);
+
   const cleared = await clearStoredAuth();
 
   if (cleared) {
@@ -2137,7 +2163,7 @@ ${BOLD}SETUP${RESET}
   ${CYAN}upgrade-link${RESET} --wait      Print the handoff link and wait for Pro activation
   ${CYAN}demo${RESET}                   Print no-sign-in public demo prompts and commands
   ${CYAN}--demo${RESET} <command>        Run a read-only command against seeded demo data
-  ${CYAN}logout${RESET}                 Clear saved local auth
+  ${CYAN}logout${RESET}                 Clear local auth and revoke the stored agent session when possible
   ${CYAN}scan${RESET} <url>              Preview what your agent should track first
   ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
   ${CYAN}projects${RESET}               List all your projects

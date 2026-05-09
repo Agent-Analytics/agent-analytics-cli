@@ -18,6 +18,10 @@ import {
   setApiKey,
   setConfigDirOverride,
 } from '../lib/config.mjs';
+import {
+  clearCredentialStoreTestSeams,
+  setCredentialStoreTestSeams,
+} from '../lib/credential-store.mjs';
 
 const ORIGINAL_XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
 const ORIGINAL_CONFIG_DIR = process.env.AGENT_ANALYTICS_CONFIG_DIR;
@@ -40,6 +44,7 @@ beforeEach(() => {
   tempConfigHome = mkdtempSync(join(tmpdir(), 'agent-analytics-config-'));
   extraTempDirs = [];
   clearConfigDirOverride();
+  clearCredentialStoreTestSeams();
   process.env.XDG_CONFIG_HOME = tempConfigHome;
   delete process.env.AGENT_ANALYTICS_CONFIG_DIR;
   delete process.env.AGENT_ANALYTICS_API_KEY;
@@ -48,6 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   clearConfigDirOverride();
+  clearCredentialStoreTestSeams();
   restoreEnv('XDG_CONFIG_HOME', ORIGINAL_XDG_CONFIG_HOME);
   restoreEnv('AGENT_ANALYTICS_CONFIG_DIR', ORIGINAL_CONFIG_DIR);
   restoreEnv('AGENT_ANALYTICS_API_KEY', ORIGINAL_API_KEY);
@@ -193,6 +199,33 @@ describe('config', () => {
       assert.deepEqual(getConfig(), {
         base_url: 'https://custom.example.com',
       });
+    });
+
+    it('clears native metadata even when native credential deletion fails after a read failure', async () => {
+      saveConfig({
+        email: 'native-fail@example.com',
+        agent_session: {
+          storage: 'native',
+          credential: 'https://api.agentanalytics.sh|default',
+          id: 'sess_native_delete_fail',
+        },
+      });
+      setCredentialStoreTestSeams({
+        platform: 'darwin',
+        nativeKeyring: {
+          async getPassword() {
+            throw new Error('keyring read failed');
+          },
+          async setPassword() {},
+          async deletePassword() {
+            throw new Error('keyring delete failed');
+          },
+        },
+      });
+
+      await assert.rejects(() => getStoredAuth(), /keyring read failed/);
+      assert.equal(await clearStoredAuth(), true);
+      assert.deepEqual(getConfig(), {});
     });
   });
 });

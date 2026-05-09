@@ -56,7 +56,7 @@ npx --yes @agent-analytics/cli@0.5.31 live
 # Optional detached login for remote or issue-based agent work
 npx --yes @agent-analytics/cli@0.5.31 login --detached
 
-# Optional: clear your saved local auth later
+# Optional: clear local auth and revoke the stored agent session when possible
 npx --yes @agent-analytics/cli@0.5.31 logout
 ```
 
@@ -69,7 +69,7 @@ login --detached                 Detached handoff: print approval URL and exit
 login --detached --wait          Detached approval with polling for local shells
 upgrade-link --detached          Print a human Pro payment handoff link
 upgrade-link --wait              Print the handoff link and wait for Pro activation
-logout                           Clear your saved local auth
+logout                           Clear local auth and revoke the stored agent session when possible
 auth status                      Show local auth path and expiry metadata
 scan <url>                       Analyze what your agent should track first
 scan <url> --json                Return anonymous preview JSON for agents
@@ -127,7 +127,7 @@ experiments complete <id>        Ship the winner
 # Account
 whoami                           Show current account & tier
 feedback --message "..."         Send product/process feedback
-logout                           Clear saved local auth (does not revoke remote sessions)
+logout                           Clear local auth and revoke the stored agent session when possible
 ```
 
 The CLI is agent-session-first. It stores a renewable Agent Analytics session after browser approval and uses that bearer auth for CLI API calls. By default, macOS and Windows store the session secret in the OS keychain; Linux and headless environments use the CLI config file. Existing file-stored sessions migrate automatically to native storage on the next authenticated command when native storage is available. Runtime-specific HTTP integrations should stay tied to the approved agent session, project setup, and project context rather than treating the CLI as a manual key setup path.

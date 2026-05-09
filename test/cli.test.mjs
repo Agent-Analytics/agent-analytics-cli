@@ -796,6 +796,283 @@ describe('CLI', () => {
       }
     });
 
+    it('logout revokes a stored agent session before clearing local auth', async () => {
+      const config = createExplicitConfigDir({
+        email: 'logout@example.com',
+        agent_session: {
+          id: 'sess_logout',
+          access_token: 'aas_logout_secret',
+          refresh_token: 'aar_logout_secret',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      let revokeCalls = 0;
+      let revokePayload;
+      let revokeAuth;
+      let hadLocalAuthDuringRevoke = false;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/revoke') {
+          revokeCalls += 1;
+          revokeAuth = req.headers.authorization;
+          revokePayload = await readRequestJson(req);
+          hadLocalAuthDuringRevoke = Boolean(readJson(config.configFile).agent_session);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout, stderr } = await run(['logout', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const combined = `${stdout}\n${stderr}`;
+
+        assert.equal(code, 0);
+        assert.equal(revokeCalls, 1);
+        assert.equal(revokeAuth, 'Bearer aas_logout_secret');
+        assert.deepEqual(revokePayload, { session_id: 'sess_logout' });
+        assert.equal(hadLocalAuthDuringRevoke, true);
+        assert.deepEqual(readJson(config.configFile), {});
+        assert.equal(combined.includes('aas_logout_secret'), false);
+        assert.equal(combined.includes('aar_logout_secret'), false);
+        assert.equal(combined.includes('aak_'), false);
+        assert.equal(combined.includes('agent_session'), false);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('logout revokes and clears a native-keyring backed agent session using the fake keyring', async () => {
+      const config = createExplicitConfigDir({
+        email: 'native-logout@example.com',
+        agent_session: {
+          storage: 'native',
+          credential: 'placeholder-is-not-used-for-lookup',
+          id: 'sess_native_logout_metadata',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const fakeKeyringFile = join(config.configDir, 'fake-keyring.json');
+      let revokeCalls = 0;
+      let revokePayload;
+      let revokeAuth;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/revoke') {
+          revokeCalls += 1;
+          revokeAuth = req.headers.authorization;
+          revokePayload = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        writeFileSync(fakeKeyringFile, JSON.stringify({
+          [`agent-analytics\0${server.baseUrl}|default`]: JSON.stringify({
+            id: 'sess_native_logout',
+            access_token: 'aas_native_logout_secret',
+            refresh_token: 'aar_native_logout_secret',
+            access_expires_at: 1893456000000,
+            refresh_expires_at: 1924992000000,
+            scopes: ['account:read'],
+          }),
+        }, null, 2) + '\n');
+
+        const { code, stdout, stderr } = await run(['logout', '--config-dir', config.configDir], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'darwin',
+            AGENT_ANALYTICS_FAKE_KEYRING_FILE: fakeKeyringFile,
+          },
+        });
+        const combined = `${stdout}\n${stderr}`;
+
+        assert.equal(code, 0);
+        assert.equal(revokeCalls, 1);
+        assert.equal(revokeAuth, 'Bearer aas_native_logout_secret');
+        assert.deepEqual(revokePayload, { session_id: 'sess_native_logout' });
+        assert.deepEqual(readJson(config.configFile), {});
+        assert.deepEqual(readJson(fakeKeyringFile), {});
+        assert.equal(combined.includes('aas_native_logout_secret'), false);
+        assert.equal(combined.includes('aar_native_logout_secret'), false);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('logout skips revoke and still clears native metadata when fake keyring cleanup fails', async () => {
+      const config = createExplicitConfigDir({
+        email: 'native-read-fail@example.com',
+        agent_session: {
+          storage: 'native',
+          credential: 'broken-keyring-reference',
+          id: 'sess_native_metadata_only',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout, stderr } = await run(['logout', '--config-dir', config.configDir], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_CREDENTIAL_PLATFORM: 'darwin',
+            AGENT_ANALYTICS_FAKE_KEYRING_FILE: config.configDir,
+          },
+        });
+        const combined = `${stdout}\n${stderr}`;
+
+        assert.equal(code, 0);
+        assert.equal(calls, 0);
+        assert.deepEqual(readJson(config.configFile), {});
+        assert.ok(stripAnsi(combined).includes('Logged out locally'));
+        assert.equal(combined.includes('sess_native_metadata_only'), false);
+        assert.equal(combined.includes('agent_session'), false);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('logout still clears local auth and exits 0 when session revoke fails', async () => {
+      const config = createExplicitConfigDir({
+        email: 'logout-fail@example.com',
+        agent_session: {
+          id: 'sess_logout_fail',
+          access_token: 'aas_revoke_fail_secret',
+          refresh_token: 'aar_revoke_fail_secret',
+        },
+      });
+      let revokeCalls = 0;
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/agent-sessions/revoke') {
+          revokeCalls += 1;
+          await readRequestJson(req);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ message: 'server unavailable' }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not found' }));
+      });
+
+      try {
+        const { code, stdout, stderr } = await run(['logout', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+        const combined = `${stdout}\n${stderr}`;
+
+        assert.equal(code, 0);
+        assert.equal(revokeCalls, 1);
+        assert.deepEqual(readJson(config.configFile), {});
+        assert.ok(stripAnsi(combined).includes('Logged out locally'));
+        assert.equal(combined.includes('aas_revoke_fail_secret'), false);
+        assert.equal(combined.includes('aar_revoke_fail_secret'), false);
+        assert.equal(combined.includes('agent_session'), false);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('logout does not revoke when there is no stored auth', async () => {
+      const config = createExplicitConfigDir();
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const { code } = await run(['logout', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(calls, 0);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('logout does not revoke without a stored session id', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: {
+          access_token: 'aas_no_session_id_secret',
+          refresh_token: 'aar_no_session_id_secret',
+        },
+      });
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const { code, stdout, stderr } = await run(['logout', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(calls, 0);
+        assert.deepEqual(readJson(config.configFile), {});
+        assert.equal(`${stdout}\n${stderr}`.includes('aas_no_session_id_secret'), false);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('logout does not revoke without usable token material', async () => {
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_without_tokens',
+          access_expires_at: 1893456000000,
+        },
+      });
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const { code } = await run(['logout', '--config-dir', config.configDir], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+
+        assert.equal(code, 0);
+        assert.equal(calls, 0);
+        assert.deepEqual(readJson(config.configFile), {});
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
     it('prints detached resume commands with explicit --config-dir', async () => {
       const config = createExplicitConfigDir();
       const server = await startServer(async (req, res) => {
