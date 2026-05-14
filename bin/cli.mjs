@@ -349,6 +349,18 @@ function authenticatedWebsiteAnalysisProjectMessage(url) {
   ].join('\n');
 }
 
+function isProjectRequiredScanError(err) {
+  const code = err?.code || err?.body?.error || err?.body?.code;
+  const message = String(err?.message || '');
+  return code === 'MISSING_FIELDS' && /project required/i.test(message);
+}
+
+function printProjectRequiredScanHint(err, url) {
+  if (!isProjectRequiredScanError(err)) return;
+  log('');
+  log(authenticatedWebsiteAnalysisProjectMessage(url));
+}
+
 async function resolveProject(api, target) {
   const { projects } = await api.listProjects();
   const match = projects?.find(p => p.id === target) || projects?.find(p => p.name === target);
@@ -659,17 +671,14 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
       const api = await requireClient();
       let data;
       if (resumeId) {
-        if (!resumeToken || !project) {
-          error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full --project <name> [--json]');
+        if (!resumeToken) {
+          error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
         }
         data = await api.upgradeWebsiteScan(resumeId, { resumeToken, project });
       } else if (url) {
-        if (!project) {
-          error('Usage: npx @agent-analytics/cli scan <url> --full --project <name> [--json]');
-        }
         data = await api.createWebsiteScan(url, { full: true, project });
       } else {
-        error('Usage: npx @agent-analytics/cli scan <url> --full --project <name> [--json]\n   or: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full --project <name> [--json]');
+        error('Usage: npx @agent-analytics/cli scan <url> --full [--project <name>] [--json]\n   or: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
       }
       if (jsonOutput) {
         printJson(data);
@@ -678,6 +687,7 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
       }
       return;
     } catch (err) {
+      printProjectRequiredScanHint(err, url);
       error(err.message);
     }
   }
@@ -705,9 +715,6 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
     if (!auth) {
       error(unauthenticatedWebsiteAnalysisCliMessage());
     }
-    if (!project) {
-      error(authenticatedWebsiteAnalysisProjectMessage(url));
-    }
 
     const api = createApiClient(auth);
     const data = await api.createWebsiteScan(url, { project });
@@ -721,6 +728,7 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
       const retry = err.body?.retry_after_seconds || err.body?.retry_after || 'a few';
       error(`The free analyzer is busy. Try again in ${retry} seconds.`);
     }
+    printProjectRequiredScanHint(err, url);
     error(err.message);
   }
 }

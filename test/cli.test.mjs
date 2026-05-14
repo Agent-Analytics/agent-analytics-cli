@@ -2583,7 +2583,7 @@ describe('CLI', () => {
       }
     });
 
-    it('requires --project for authenticated CLI website analysis', async () => {
+    it('lets hosted enforce --project for normal authenticated CLI website analysis', async () => {
       const config = createExplicitConfigDir({
         agent_session: {
           id: 'sess_scan_preview',
@@ -2594,11 +2594,21 @@ describe('CLI', () => {
           scopes: ['account:read'],
         },
       });
-      let requests = 0;
+      let requestAuth;
+      let requestBody;
       const server = await startServer(async (req, res) => {
-        requests += 1;
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'should not be called' }));
+        if (req.method === 'POST' && req.url === '/cli/website-scans') {
+          requestAuth = req.headers.authorization;
+          requestBody = await readRequestJson(req);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'MISSING_FIELDS',
+            message: 'project required for authenticated website analysis',
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
       });
 
       try {
@@ -2616,10 +2626,68 @@ describe('CLI', () => {
         const plain = stripAnsi(stdout);
 
         assert.notEqual(code, 0);
-        assert.equal(requests, 0);
+        assert.equal(requestAuth, 'Bearer aas_scan_preview');
+        assert.deepEqual(requestBody, { url: 'https://example.com/' });
         assert.match(plain, /requires --project for authenticated scans/i);
         assert.match(plain, /create my-site --domain https:\/\/example\.com\//i);
         assert.match(plain, /scan https:\/\/example\.com\/ --project my-site --json/i);
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('allows projectless authenticated scan responses for complimentary accounts', async () => {
+      let requestAuth;
+      let requestBody;
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_comp_scan_preview',
+          access_token: 'aas_comp_scan_preview',
+          refresh_token: 'aar_comp_scan_preview',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/cli/website-scans') {
+          requestAuth = req.headers.authorization;
+          requestBody = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_comp_projectless_preview',
+            mode: 'authenticated_preview',
+            normalized_url: 'https://example.com/',
+            preview: {
+              minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
+            },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          '--config-dir', config.configDir,
+          'scan',
+          'https://example.com/',
+          '--json',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(requestAuth, 'Bearer aas_comp_scan_preview');
+        assert.deepEqual(requestBody, { url: 'https://example.com/' });
+        assert.equal(data.analysis_id, 'scan_comp_projectless_preview');
       } finally {
         await server.close();
         config.cleanup();
@@ -2782,6 +2850,67 @@ describe('CLI', () => {
           project: 'example-site',
         });
         assert.equal(data.mode, 'full');
+      } finally {
+        await server.close();
+        config.cleanup();
+      }
+    });
+
+    it('sends direct authenticated full scans without --project so hosted can allow complimentary accounts', async () => {
+      let requestBody;
+      let requestAuth;
+      const config = createExplicitConfigDir({
+        agent_session: {
+          id: 'sess_comp_scan_full',
+          access_token: 'aas_comp_scan_full',
+          refresh_token: 'aar_comp_scan_full',
+          access_expires_at: 1893456000000,
+          refresh_expires_at: 1924992000000,
+          scopes: ['account:read'],
+        },
+      });
+      const server = await startServer(async (req, res) => {
+        if (req.method === 'POST' && req.url === '/cli/website-scans') {
+          requestAuth = req.headers.authorization;
+          requestBody = await readRequestJson(req);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            analysis_id: 'scan_comp_full_projectless',
+            mode: 'full',
+            normalized_url: 'https://example.com/',
+            result: {
+              minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
+            },
+          }));
+          return;
+        }
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+      });
+
+      try {
+        const { code, stdout } = await run([
+          '--config-dir', config.configDir,
+          'scan',
+          'https://example.com/',
+          '--full',
+          '--json',
+        ], {
+          env: {
+            AGENT_ANALYTICS_URL: server.baseUrl,
+            AGENT_ANALYTICS_API_KEY: '',
+          },
+        });
+        const data = JSON.parse(stdout);
+
+        assert.equal(code, 0);
+        assert.equal(requestAuth, 'Bearer aas_comp_scan_full');
+        assert.deepEqual(requestBody, {
+          url: 'https://example.com/',
+          mode: 'full',
+        });
+        assert.equal(data.analysis_id, 'scan_comp_full_projectless');
       } finally {
         await server.close();
         config.cleanup();
