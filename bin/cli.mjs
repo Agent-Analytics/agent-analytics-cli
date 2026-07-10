@@ -46,6 +46,10 @@
  *   npx @agent-analytics/cli experiments resume <id>     — Resume experiment
  *   npx @agent-analytics/cli experiments complete <id>   — Complete experiment
  *   npx @agent-analytics/cli experiments delete <id>     — Delete experiment
+ *   npx @agent-analytics/cli replays settings <project>  — Show replay settings
+ *   npx @agent-analytics/cli replays enable <project>    — Explicitly enable replay
+ *   npx @agent-analytics/cli replays list [project]      — List replay metadata
+ *   npx @agent-analytics/cli replays open <id>           — Create a short-lived viewer URL
  *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
  *   npx @agent-analytics/cli feedback --message "..." — Send product/process feedback
  *   npx @agent-analytics/cli whoami               — Show current account
@@ -94,6 +98,13 @@ function parseFiniteNumber(value) {
 }
 function formatDollars(value) {
   return `$${value.toFixed(2)}`;
+}
+
+function formatBytes(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function normalizeEmail(email) {
@@ -2155,6 +2166,125 @@ const cmdExperiments = withApi(async (api, sub, ...rest) => {
   }
 });
 
+// ==================== SESSION REPLAY ====================
+
+function selectorOption(flag, fallback) {
+  const value = getArg(flag);
+  if (value == null) return fallback || [];
+  return value.split(',').map((selector) => selector.trim()).filter(Boolean);
+}
+
+function printReplaySettings(data) {
+  const settings = data.settings || {};
+  heading(`Replay Settings: ${data.project}`);
+  log(`  ${BOLD}Enabled:${RESET}         ${settings.enabled ? `${GREEN}yes${RESET}` : `${DIM}no${RESET}`}`);
+  log(`  ${BOLD}Recording start:${RESET} ${settings.recording_start}`);
+  log(`  ${BOLD}Inputs masked:${RESET}   yes (mandatory)`);
+  log(`  ${BOLD}PII redaction:${RESET}   yes (mandatory)`);
+  log(`  ${BOLD}Mask selectors:${RESET}  ${(settings.mask_selectors || []).join(', ') || 'none'}`);
+  log(`  ${BOLD}Block selectors:${RESET} ${(settings.block_selectors || []).join(', ') || 'none'}`);
+  log(`  ${BOLD}Ignore selectors:${RESET} ${(settings.ignore_selectors || []).join(', ') || 'none'}`);
+  log(`  ${BOLD}Session limits:${RESET}  ${formatBytes(data.limits?.max_bytes)} / ${Math.round((data.limits?.max_duration_ms || 0) / 60000)} minutes`);
+  log(`  ${BOLD}Retention:${RESET}       ${data.limits?.retention_days || 30} days`);
+  log('');
+}
+
+const cmdReplays = withApi(async (api, sub, target, opts = {}) => {
+  if (!sub) error('Usage: npx @agent-analytics/cli replays <settings|enable|disable|list|get|open|delete|usage> ...');
+
+  switch (sub) {
+    case 'settings': {
+      if (!target) error('Usage: npx @agent-analytics/cli replays settings <project> [--json]');
+      const data = await api.getReplaySettings(target);
+      if (opts.json) process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+      else printReplaySettings(data);
+      break;
+    }
+    case 'enable':
+    case 'disable': {
+      if (!target) error(`Usage: npx @agent-analytics/cli replays ${sub} <project>`);
+      const current = await api.getReplaySettings(target);
+      const existing = current.settings || {};
+      const data = await api.updateReplaySettings(target, {
+        enabled: sub === 'enable',
+        recording_start: opts.recordingStart || existing.recording_start || 'immediate',
+        mask_inputs: true,
+        redact_pii: true,
+        mask_selectors: selectorOption('--mask', existing.mask_selectors),
+        block_selectors: selectorOption('--block', existing.block_selectors),
+        ignore_selectors: selectorOption('--ignore', existing.ignore_selectors),
+      });
+      success(`Replay ${sub === 'enable' ? 'enabled' : 'disabled'} for ${target}`);
+      printReplaySettings(data);
+      if (sub === 'enable') {
+        log(`${YELLOW}Replay remains off until the separate replay.js script is installed on the site.${RESET}`);
+      }
+      break;
+    }
+    case 'list': {
+      const data = await api.listReplays({ project: target, limit: opts.limit, before: opts.before });
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+        break;
+      }
+      heading(target ? `Replays: ${target}` : 'Replays');
+      if (ifEmpty(data.replays, 'replays')) break;
+      for (const replay of data.replays) {
+        const started = replay.started_at ? new Date(replay.started_at).toISOString() : 'unknown';
+        log(`  ${BOLD}${replay.id}${RESET}  ${replay.status}  ${formatBytes(replay.committed_bytes)}  ${replay.event_count || 0} events`);
+        log(`    ${DIM}${started}  project: ${replay.project_id}  session: ${replay.analytics_session_id}${RESET}`);
+      }
+      if (data.next_before) log(`\n  ${DIM}Next page: --before ${data.next_before}${RESET}`);
+      log('');
+      break;
+    }
+    case 'get': {
+      if (!target) error('Usage: npx @agent-analytics/cli replays get <replay-id>');
+      const data = await api.getReplay(target);
+      process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+      break;
+    }
+    case 'open': {
+      if (!target) error('Usage: npx @agent-analytics/cli replays open <replay-id>');
+      const data = await api.openReplay(target);
+      heading('Short-lived Replay Viewer');
+      log(`  ${data.viewer_url}`);
+      log(`  ${DIM}Expires: ${new Date(data.expires_at).toISOString()}${RESET}`);
+      log('');
+      break;
+    }
+    case 'delete': {
+      if (opts.all) {
+        if (opts.confirm !== 'delete_replay_data') {
+          error('Deleting all replay data requires: --all --confirm delete_replay_data [--project <project>]');
+        }
+        const data = await api.deleteReplayData({ project: opts.project });
+        success(`Deleted ${data.deleted} replay${data.deleted === 1 ? '' : 's'}${data.project ? ` for ${data.project}` : ''}`);
+      } else {
+        if (!target) error('Usage: npx @agent-analytics/cli replays delete <replay-id>');
+        await api.deleteReplay(target);
+        success(`Replay ${target} deleted`);
+      }
+      break;
+    }
+    case 'usage': {
+      const data = await api.getReplayUsage();
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+        break;
+      }
+      heading('Replay Usage');
+      log(`  ${BOLD}Retained:${RESET}    ${formatBytes(data.storage?.committed_bytes)} / ${formatBytes(data.storage?.limit_bytes)}`);
+      log(`  ${BOLD}Reserved:${RESET}    ${formatBytes(data.storage?.reserved_bytes)}`);
+      log(`  ${BOLD}30d ingestion:${RESET} ${formatBytes(data.rolling_30d_ingestion?.observed_bytes)} / ${formatBytes(data.rolling_30d_ingestion?.limit_bytes)}`);
+      log('');
+      break;
+    }
+    default:
+      error(`Unknown replays subcommand: ${sub}. Use: settings, enable, disable, list, get, open, delete, usage`);
+  }
+});
+
 function showHelp() {
   log(`
 ${BOLD}Agent Analytics${RESET} — Stop juggling dashboards. Let your agent do it.
@@ -2213,6 +2343,17 @@ ${BOLD}EXPERIMENTS${RESET} ${DIM}— A/B testing your agent can actually use${RE
   ${CYAN}experiments complete${RESET} <id>      Ship the winner
   ${CYAN}experiments delete${RESET} <id>        Delete experiment
 
+${BOLD}SESSION REPLAY${RESET} ${DIM}— explicit opt-in, privacy-sensitive, Pro/complimentary${RESET}
+  ${CYAN}replays settings${RESET} <project>     Show enablement, privacy defaults, and limits
+  ${CYAN}replays enable${RESET} <project>       Enable server-side eligibility; separate replay.js install still required
+  ${CYAN}replays disable${RESET} <project>      Stop new replay starts and upload authorizations
+  ${CYAN}replays list${RESET} [project]         List replay metadata
+  ${CYAN}replays get${RESET} <id>               Get replay metadata and committed chunk boundaries
+  ${CYAN}replays open${RESET} <id>              Print a short-lived sandboxed viewer URL
+  ${CYAN}replays delete${RESET} <id>            Delete one replay immediately
+  ${CYAN}replays delete --all${RESET}            Delete all replay data with explicit --confirm
+  ${CYAN}replays usage${RESET}                  Show retained storage and rolling 30-day ingestion
+
 ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show current account & tier
   ${CYAN}auth status${RESET}            Show local auth path and token expiry metadata
@@ -2245,6 +2386,10 @@ ${BOLD}KEY OPTIONS${RESET}
   --entry-limit <N>  Max entry pages to include (1-20)
   --path-limit <N>   Max children kept at each path branch (1-10)
   --candidate-session-cap <N>  Max sessions scanned for /paths (100-10000)
+  --recording-start <mode>  Replay start mode: immediate or after_consent
+  --mask/--block/--ignore <selectors>  Comma-separated replay privacy selectors
+  --before <timestamp> Replay list pagination cursor
+  --confirm delete_replay_data  Required with replays delete --all
   --config-dir <dir> Read/write auth config from an explicit directory
 
 ${BOLD}QUICK START${RESET}
@@ -2326,6 +2471,9 @@ function isDemoMutation(commandName, commandArgs) {
   }
   if (commandName === 'experiments') {
     return ['create', 'pause', 'resume', 'complete', 'delete'].includes(commandArgs[1]);
+  }
+  if (commandName === 'replays') {
+    return ['enable', 'disable', 'delete', 'open'].includes(commandArgs[1]);
   }
   return false;
 }
@@ -2580,6 +2728,17 @@ try {
     }
     case 'experiments':
       await cmdExperiments(args[1], args[2]);
+      break;
+    case 'replays':
+      await cmdReplays(args[1], args[2] && !args[2].startsWith('--') ? args[2] : null, {
+        json: args.includes('--json'),
+        limit: getArg('--limit'),
+        before: getArg('--before'),
+        recordingStart: getArg('--recording-start') || (args.includes('--after-consent') ? 'after_consent' : null),
+        all: args.includes('--all'),
+        confirm: getArg('--confirm'),
+        project: getArg('--project'),
+      });
       break;
     case 'delete':
       await cmdDelete(args[1]);

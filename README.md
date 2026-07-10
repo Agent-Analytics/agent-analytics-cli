@@ -90,6 +90,18 @@ experiments create <project>     Create experiment
 experiments get <id>             Get experiment with results & significance
 experiments complete <id>        Ship the winner
 
+# Session replay — explicit opt-in; Pro or complimentary projects
+replays settings <project>       Show replay settings, privacy defaults, and limits
+replays enable <project>         Enable server eligibility; separate replay.js installation is still required
+replays disable <project>        Stop new starts and upload authorizations
+replays list [project]           List bounded replay metadata
+replays get <id>                 Get one replay and its committed chunk boundaries
+replays open <id>                Print a short-lived sandboxed viewer URL
+replays delete <id>              Delete one replay immediately
+replays delete --all --confirm delete_replay_data [--project <project>]
+                                 Disable replay and delete all matching replay data
+replays usage                    Show retained storage and rolling 30-day ingestion
+
 # Account
 whoami                           Show current account & tier
 feedback --message "..."         Send product/process feedback
@@ -97,6 +109,16 @@ logout                           Clear local auth and revoke the stored agent se
 ```
 
 The CLI is agent-session-first. It stores a renewable Agent Analytics session after browser approval and uses that bearer auth for CLI API calls. By default, macOS and Windows store the session secret in the OS keychain; Linux and headless environments use the CLI config file. Existing file-stored sessions migrate automatically to native storage on the next authenticated command when native storage is available. Runtime-specific HTTP integrations should stay tied to the approved agent session, project setup, and project context rather than treating the CLI as a manual key setup path.
+
+Replay commands require agent-session scopes `replays:read` and `replays:write`. If the saved session predates replay support, run `login` again to approve the added scopes. Replay remains disabled by default even for eligible accounts, and enabling it does not modify or activate the base tracker. A customer must separately install:
+
+```html
+<script src="https://api.agentanalytics.sh/replay.js" data-token="aat_PROJECT_TOKEN"></script>
+```
+
+Use `--recording-start after_consent` when recording must wait for site consent, then call `window.aaReplay.consent()` from the site's consent flow. All form/contenteditable values remain mandatorily masked. Use `--mask`, `--block`, and `--ignore` for comma-separated domain-specific selectors; automatic PII redaction is defense in depth, not a substitute for those selectors.
+
+For sites with CSP, allow the Agent Analytics API in `script-src` and `connect-src`, the account R2 S3 endpoint (`https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com`) in `connect-src`, and `blob:` in `worker-src`. Replay fails closed when those permissions or required browser capabilities are unavailable.
 
 Check local storage state without printing secrets:
 
