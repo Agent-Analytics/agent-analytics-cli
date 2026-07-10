@@ -94,9 +94,11 @@ experiments complete <id>        Ship the winner
 replays settings <project>       Show replay settings, privacy defaults, and limits
 replays enable <project>         Enable server eligibility; separate replay.js installation is still required
 replays disable <project>        Stop new starts and upload authorizations
-replays list [project]           List bounded replay metadata
+replays list [project]           List bounded replay metadata; add --session <id> to find linked segments
 replays get <id>                 Get one replay and its committed chunk boundaries
 replays open <id>                Print a short-lived sandboxed viewer URL
+replays open --session <id> --project <project>
+                                 Find the newest linked segment and open it
 replays delete <id>              Delete one replay immediately
 replays delete --all --confirm delete_replay_data [--project <project>]
                                  Disable replay and delete all matching replay data

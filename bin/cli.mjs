@@ -50,6 +50,7 @@
  *   npx @agent-analytics/cli replays enable <project>    — Explicitly enable replay
  *   npx @agent-analytics/cli replays list [project]      — List replay metadata
  *   npx @agent-analytics/cli replays open <id>           — Create a short-lived viewer URL
+ *   npx @agent-analytics/cli replays open --session <id> --project <project> — Open by analytics session
  *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
  *   npx @agent-analytics/cli feedback --message "..." — Send product/process feedback
  *   npx @agent-analytics/cli whoami               — Show current account
@@ -1454,7 +1455,14 @@ const cmdSessions = withApi(async (api, project, opts = {}) => {
     const start = new Date(s.start_time).toLocaleString();
     const dur = s.duration ? `${Math.round(s.duration / 1000)}s` : '0s';
     const bounce = s.is_bounce ? `${RED}bounce${RESET}` : `${GREEN}engaged${RESET}`;
-    log(`  ${DIM}${start}${RESET}  ${dur}  ${bounce}  ${s.event_count} events  ${DIM}${s.entry_page} → ${s.exit_page}${RESET}`);
+    const replay = s.has_replay
+      ? `  ${CYAN}▶ ${s.replay_count} replay${s.replay_count === 1 ? '' : 's'}${RESET}`
+      : '';
+    log(`  ${DIM}${start}${RESET}  ${dur}  ${bounce}  ${s.event_count} events${replay}  ${DIM}${s.entry_page} → ${s.exit_page}${RESET}`);
+    log(`    ${DIM}session ${s.session_id}${RESET}`);
+    if (s.has_replay) {
+      log(`    ${DIM}Open: agent-analytics replays open --session ${s.session_id} --project ${project}${RESET}`);
+    }
   }
   log('');
 });
@@ -2222,12 +2230,18 @@ const cmdReplays = withApi(async (api, sub, target, opts = {}) => {
       break;
     }
     case 'list': {
-      const data = await api.listReplays({ project: target, limit: opts.limit, before: opts.before });
+      const project = target || opts.project;
+      const data = await api.listReplays({
+        project,
+        session_id: opts.session,
+        limit: opts.limit,
+        before: opts.before,
+      });
       if (opts.json) {
         process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
         break;
       }
-      heading(target ? `Replays: ${target}` : 'Replays');
+      heading(project ? `Replays: ${project}` : 'Replays');
       if (ifEmpty(data.replays, 'replays')) break;
       for (const replay of data.replays) {
         const started = replay.started_at ? new Date(replay.started_at).toISOString() : 'unknown';
@@ -2245,8 +2259,29 @@ const cmdReplays = withApi(async (api, sub, target, opts = {}) => {
       break;
     }
     case 'open': {
-      if (!target) error('Usage: npx @agent-analytics/cli replays open <replay-id>');
-      const data = await api.openReplay(target);
+      let replayId = target;
+      if (!replayId && opts.session) {
+        if (!opts.project) {
+          error('Opening by session requires --project <project-name>');
+        }
+        const matches = await api.listReplays({
+          project: opts.project,
+          session_id: opts.session,
+          limit: 100,
+        });
+        const playable = (matches.replays || []).filter((replay) => (
+          ['complete', 'incomplete'].includes(replay.status) && replay.has_full_snapshot
+        ));
+        if (playable.length === 0) error(`No playable replay found for session ${opts.session}`);
+        replayId = playable[0].id;
+        if (playable.length > 1) {
+          log(`${DIM}Found ${playable.length} replay segments; opening the newest.${RESET}`);
+        }
+      }
+      if (!replayId) {
+        error('Usage: npx @agent-analytics/cli replays open <replay-id> | replays open --session <session-id> --project <project>');
+      }
+      const data = await api.openReplay(replayId);
       heading('Short-lived Replay Viewer');
       log(`  ${data.viewer_url}`);
       log(`  ${DIM}Expires: ${new Date(data.expires_at).toISOString()}${RESET}`);
@@ -2347,9 +2382,11 @@ ${BOLD}SESSION REPLAY${RESET} ${DIM}— explicit opt-in, privacy-sensitive, Pro/
   ${CYAN}replays settings${RESET} <project>     Show enablement, privacy defaults, and limits
   ${CYAN}replays enable${RESET} <project>       Enable server-side eligibility; separate replay.js install still required
   ${CYAN}replays disable${RESET} <project>      Stop new replay starts and upload authorizations
-  ${CYAN}replays list${RESET} [project]         List replay metadata
+  ${CYAN}replays list${RESET} [project]         List replay metadata; filter with --session <id>
   ${CYAN}replays get${RESET} <id>               Get replay metadata and committed chunk boundaries
   ${CYAN}replays open${RESET} <id>              Print a short-lived sandboxed viewer URL
+  ${CYAN}replays open${RESET} --session <id> --project <project>
+                                 Find and open the newest linked replay segment
   ${CYAN}replays delete${RESET} <id>            Delete one replay immediately
   ${CYAN}replays delete --all${RESET}            Delete all replay data with explicit --confirm
   ${CYAN}replays usage${RESET}                  Show retained storage and rolling 30-day ingestion
@@ -2734,6 +2771,7 @@ try {
         json: args.includes('--json'),
         limit: getArg('--limit'),
         before: getArg('--before'),
+        session: getArg('--session'),
         recordingStart: getArg('--recording-start') || (args.includes('--after-consent') ? 'after_consent' : null),
         all: args.includes('--all'),
         confirm: getArg('--confirm'),

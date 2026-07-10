@@ -71,11 +71,13 @@ describe('session replay CLI', () => {
     try {
       const api = new AgentAnalyticsAPI({ access_token: 'aas_test' }, 'https://api.test');
       await api.getReplaySettings('my site');
+      await api.listReplays({ project: 'my site', session_id: 'session-123' });
       await api.openReplay('rpl_123');
       await api.deleteReplayData({ project: 'my site' });
       assert.equal(calls[0].url, 'https://api.test/replays/settings?project=my%20site');
-      assert.equal(calls[1].url, 'https://api.test/replays/rpl_123/open');
-      assert.deepEqual(JSON.parse(calls[2].options.body), {
+      assert.equal(calls[1].url, 'https://api.test/replays?project=my%20site&session_id=session-123');
+      assert.equal(calls[2].url, 'https://api.test/replays/rpl_123/open');
+      assert.deepEqual(JSON.parse(calls[3].options.body), {
         confirm: 'delete_replay_data',
         project: 'my site',
       });
@@ -145,5 +147,67 @@ describe('session replay CLI', () => {
     assert.match(result.stdout, /--confirm delete_replay_data/);
     assert.equal(requests, 0);
   });
-});
 
+  it('finds and opens the newest playable replay for an analytics session', async () => {
+    const requests = [];
+    const baseUrl = await listen(async (request, response) => {
+      requests.push({ method: request.method, url: request.url });
+      response.writeHead(request.method === 'POST' ? 201 : 200, { 'Content-Type': 'application/json' });
+      if (request.method === 'GET') {
+        response.end(JSON.stringify({
+          replays: [
+            { id: 'rpl_newest', status: 'complete', has_full_snapshot: 1 },
+            { id: 'rpl_older', status: 'complete', has_full_snapshot: 1 },
+          ],
+        }));
+      } else {
+        response.end(JSON.stringify({
+          viewer_url: 'https://api.test/replay-viewer#aarv_test',
+          expires_at: Date.now() + 300_000,
+        }));
+      }
+    });
+    const configDir = tempConfig(baseUrl);
+
+    const result = await run([
+      'replays', 'open',
+      '--session', 'analytics-session-1',
+      '--project', 'my-site',
+      '--config-dir', configDir,
+    ]);
+
+    assert.equal(result.code, 0);
+    assert.equal(requests[0].url, '/replays?project=my-site&session_id=analytics-session-1&limit=100');
+    assert.equal(requests[1].url, '/replays/rpl_newest/open');
+    assert.match(result.stdout, /Found 2 replay segments; opening the newest/);
+    assert.match(result.stdout, /replay-viewer#aarv_test/);
+  });
+
+  it('marks replay availability in session listings and prints the direct open command', async () => {
+    const baseUrl = await listen((_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({
+        project: 'my-site',
+        sessions: [{
+          session_id: 'analytics-session-1',
+          start_time: Date.now(),
+          duration: 2_000,
+          is_bounce: 0,
+          event_count: 3,
+          entry_page: '/',
+          exit_page: '/pricing',
+          has_replay: true,
+          replay_count: 2,
+        }],
+      }));
+    });
+    const configDir = tempConfig(baseUrl);
+
+    const result = await run(['sessions', 'my-site', '--config-dir', configDir]);
+
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /2 replays/);
+    assert.match(result.stdout, /session analytics-session-1/);
+    assert.match(result.stdout, /replays open --session analytics-session-1 --project my-site/);
+  });
+});
