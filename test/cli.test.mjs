@@ -311,8 +311,9 @@ describe('CLI', () => {
         assert.ok(plain.includes('https://app.example.test/account/billing/agent-upgrade?'));
         assert.ok(plain.includes('account=acct-free'));
         assert.ok(plain.includes('mode=detached'));
-        assert.ok(plain.includes('Need+funnels'));
-        assert.ok(plain.includes('command='));
+        assert.ok(plain.includes('The+requested+analytics+task+needs+Pro.'));
+        assert.ok(!plain.includes('command='));
+        assert.ok(!plain.includes('Need+funnels'));
       } finally {
         await server.close();
         config.cleanup();
@@ -427,7 +428,8 @@ describe('CLI', () => {
         assert.equal(checkoutCalls, 0);
         assert.ok(plain.includes('upgrade-link --detached'));
         assert.ok(plain.includes('upgrade-link --wait'));
-        assert.ok(plain.includes('properties my-site'));
+        assert.ok(!plain.includes('--command'));
+        assert.ok(plain.includes('Keep the original analytics command in this agent session'));
       } finally {
         await server.close();
         config.cleanup();

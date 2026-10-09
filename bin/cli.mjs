@@ -299,14 +299,12 @@ function isUpgradeableError(err) {
 function printUpgradeLinkHint(err) {
   if (!isUpgradeableError(err)) return;
 
-  const reason = String(err?.message || 'This analytics task needs Pro.');
-  const blockedCommand = currentCommandForHandoff();
-
   log('');
   warn('This needs Pro for the full agent analytics loop.');
   log(`Ask the human to approve payment with one explicit command:`);
-  log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --detached --reason ${shellQuote(reason)} --command ${shellQuote(blockedCommand)}${RESET}`);
-  log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --wait --reason ${shellQuote(reason)} --command ${shellQuote(blockedCommand)}${RESET}`);
+  log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --detached${RESET}`);
+  log(`  ${CYAN}${cliInvocationWithConfig()} upgrade-link --wait${RESET}`);
+  log('Keep the original analytics command in this agent session for retrying after approval.');
 }
 
 async function requireClient() {
@@ -551,12 +549,17 @@ function cmdDemo() {
   log(`${DIM}Demo mode uses a short-lived read-only session and does not touch your saved CLI login.${RESET}`);
 }
 
-async function cmdUpgradeLink({ detached, wait, reason, blockedCommand }) {
+async function cmdUpgradeLink({ detached, wait, jsonOutput = false }) {
+  // Full commands and custom reasons can contain private data; keep them out of browser URLs.
+  const handoffReason = 'The requested analytics task needs Pro.';
   if (demoMode) {
     error('Demo mode is read-only. Upgrade links require a real browser-approved account.');
   }
   if ((detached && wait) || (!detached && !wait)) {
     error('Usage: npx @agent-analytics/cli upgrade-link --detached|--wait [--reason <text>] [--command <command>]');
+  }
+  if (jsonOutput && wait) {
+    error('Use upgrade-link --detached --json for a structured handoff; poll account-usage --json after payment.');
   }
 
   const auth = await getStoredAuth();
@@ -564,6 +567,19 @@ async function cmdUpgradeLink({ detached, wait, reason, blockedCommand }) {
     error('Not logged in. Run: npx @agent-analytics/cli login');
   }
   const api = createApiClient(auth);
+  if (jsonOutput) {
+    const data = await api.getAccountUsage();
+    if (data.payment?.next_action && data.payment.state === 'upgrade_available') {
+      const url = new URL(data.payment.next_action.url);
+      url.searchParams.set('mode', 'detached');
+      url.searchParams.delete('command');
+      url.searchParams.set('reason', handoffReason);
+      data.payment.next_action.reason = handoffReason;
+      data.payment.next_action.url = url.toString();
+    }
+    printJson(data);
+    return;
+  }
   const account = await api.getAccount();
   updateStoredAccount(account);
 
@@ -579,8 +595,7 @@ async function cmdUpgradeLink({ detached, wait, reason, blockedCommand }) {
   const link = new URL('/account/billing/agent-upgrade', getDashboardBaseUrl());
   link.searchParams.set('account', account.id);
   link.searchParams.set('mode', mode);
-  link.searchParams.set('reason', reason || 'The requested analytics task needs Pro.');
-  if (blockedCommand) link.searchParams.set('command', blockedCommand);
+  link.searchParams.set('reason', handoffReason);
 
   heading('Agent Analytics — Pro Upgrade Handoff');
   log(`Open this link in the human browser:`);
@@ -619,11 +634,37 @@ async function cmdUpgradeLink({ detached, wait, reason, blockedCommand }) {
   }
 
   warn('Still waiting for Pro activation. The payment webhook may still be processing.');
-  error(`Return to the agent after the browser says Pro is active, then rerun: ${blockedCommand || 'the blocked command'}`);
+  error('Return to the agent after the browser says Pro is active, then rerun the original analytics command.');
 }
 
 function printJson(data) {
   process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+}
+
+async function cmdAccountUsage({ jsonOutput = false } = {}) {
+  if (demoMode) error('Account usage requires a real browser-approved account.');
+  const auth = await getStoredAuth();
+  if (!auth) error('Not logged in. Run: npx @agent-analytics/cli login');
+  const data = await createApiClient(auth).getAccountUsage();
+  if (jsonOutput) {
+    printJson(data);
+    return;
+  }
+  heading('Agent Analytics — Account Usage');
+  log(`Plan: ${data.tier} (${data.entitlement_source})`);
+  log(`Events this month: ${data.usage.total_events_this_month}`);
+  log(`Agent/API reads this month: ${data.usage.total_reads_this_month}`);
+  if (data.entitlement_source === 'subscription') {
+    log(`Estimated monthly bill: $${data.usage.estimated_bill} USD (before taxes and discounts)`);
+    if (data.spend_cap.monthly_spend_cap_dollars != null) log(`Monthly spend cap: $${data.spend_cap.monthly_spend_cap_dollars} USD`);
+  }
+  if (data.payment) {
+    log(`Payment handoff: ${data.payment.state}`);
+    if (data.payment.next_action) {
+      log(data.payment.next_action.reason);
+      log(`Open in the human browser: ${data.payment.next_action.url}`);
+    }
+  }
 }
 
 function printScanResult(data, { full = false } = {}) {
@@ -2343,6 +2384,8 @@ ${BOLD}SETUP${RESET}
   ${CYAN}login${RESET} --detached --wait  Detached approval with polling
   ${CYAN}upgrade-link${RESET} --detached  Print a human Pro payment handoff link
   ${CYAN}upgrade-link${RESET} --wait      Print the handoff link and wait for Pro activation
+  ${CYAN}upgrade-link${RESET} --detached --json  Structured pricing, status, and human handoff
+  ${CYAN}account-usage${RESET} [--json]   Current usage, estimate, pricing, and payment handoff
   ${CYAN}demo${RESET}                   Print no-sign-in public demo prompts and commands
   ${CYAN}--demo${RESET} <command>        Run a read-only command against seeded demo data
   ${CYAN}logout${RESET}                 Clear local auth and revoke the stored agent session when possible
@@ -2615,7 +2658,11 @@ try {
         wait: args.includes('--wait'),
         reason: getArg('--reason'),
         blockedCommand: getArg('--command'),
+        jsonOutput: args.includes('--json'),
       });
+      break;
+    case 'account-usage':
+      await cmdAccountUsage({ jsonOutput: args.includes('--json') });
       break;
     case 'all-sites':
       await cmdAllSites({
