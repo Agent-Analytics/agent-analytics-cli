@@ -35,6 +35,36 @@ function runCli(args, env) {
 }
 
 describe('stats command rendering', () => {
+  it('renders countries, raw event counts, unknown geography and users', async () => {
+    const { server, url } = await startMockServer({
+      totals: { total_events: 7, unique_users: 2 },
+      countries: [{ country: 'NL', count: 5, unique_users: 1 }, { country: null, count: 2, unique_users: 1 }],
+    });
+    try {
+      const result = await runCli(['stats', 'test-project'], { ...agentSessionEnv(), AGENT_ANALYTICS_URL: url });
+      const plain = stripAnsi(result.stdout);
+      assert.equal(result.code, 0);
+      assert.ok(plain.includes('Countries:'));
+      assert.ok(plain.includes('NL  5 events'));
+      assert.ok(plain.includes('Unknown  2 events'));
+      assert.ok(plain.includes('Users can appear in more than one country.'));
+    } finally { server.close(); }
+  });
+
+  it('shows event country outside the properties JSON', async () => {
+    const { server, url } = await startMockServer({ events: [
+      { event: 'play', country: 'NL', timestamp: 1, properties: { stage: 2 } },
+      { event: 'play', country: null, timestamp: 2, properties: null },
+    ] });
+    try {
+      const result = await runCli(['events', 'test-project'], { ...agentSessionEnv(), AGENT_ANALYTICS_URL: url });
+      const plain = stripAnsi(result.stdout);
+      assert.equal(result.code, 0);
+      assert.ok(plain.includes('country: NL'));
+      assert.ok(plain.includes('country: Unknown'));
+      assert.ok(plain.includes('"stage":2'));
+    } finally { server.close(); }
+  });
   it('renders timeSeries as daily chart', async () => {
     const { server, url } = await startMockServer({
       totals: { total_events: 100, unique_users: 10 },

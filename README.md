@@ -56,7 +56,7 @@ delete <project>                 Delete a project by exact name or ID
 # Analytics
 all-sites                        Historical summary across all projects
 bot-traffic <name>               Filtered automated traffic by project or --all
-stats <name>                     Overview: events, users, daily trends
+stats <name>                     Overview: events, users, daily trends, countries
 live [name]                      Real-time terminal dashboard across all projects
 insights <name>                  Period-over-period comparison with trends
 breakdown <name> --property path Top pages, referrers, UTM sources, countries
@@ -67,7 +67,7 @@ funnel <name> --steps-json <arg> Structured funnel analysis with raw-vs-strict d
 funnel <name> --steps a,b,c      Legacy comma-separated funnel steps
 retention <name>                 Cohort retention: % of users who return
 sessions-dist <name>             Session duration distribution
-events <name>                    Raw event log
+events <name>                    Raw event log, including each event's country
 sessions <name>                  Individual session records
 query <name>                     Flexible analytics query (metrics, group_by, filters)
 properties <name>                Discover event names & property keys
