@@ -710,29 +710,19 @@ function printScanResult(data, { full = false } = {}) {
     log(data.agent_handoff.prompt);
     log('');
   }
-
-  if (data.resume_token && !full) {
-    log(`${DIM}To unlock the full plan after login:${RESET}`);
-    log(`  ${CYAN}npx @agent-analytics/cli scan --resume ${data.analysis_id} --resume-token ${data.resume_token} --full --project <project> --json${RESET}`);
-    log('');
-  }
 }
 
 async function cmdScan({ url, resumeId, resumeToken, full = false, project, jsonOutput = false } = {}) {
   if (full) {
+    if (resumeId) {
+      error('Preview upgrades are no longer supported. Start a new scan: scan <url> --full [--project <name>] [--json]');
+    }
+    if (!url) {
+      error('Usage: npx @agent-analytics/cli scan <url> --full [--project <name>] [--json]');
+    }
     try {
       const api = await requireClient();
-      let data;
-      if (resumeId) {
-        if (!resumeToken) {
-          error('Usage: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
-        }
-        data = await api.upgradeWebsiteScan(resumeId, { resumeToken, project });
-      } else if (url) {
-        data = await api.createWebsiteScan(url, { full: true, project });
-      } else {
-        error('Usage: npx @agent-analytics/cli scan <url> --full [--project <name>] [--json]\n   or: npx @agent-analytics/cli scan --resume <id> --resume-token <token> --full [--project <name>] [--json]');
-      }
+      const data = await api.createWebsiteScan(url, { full: true, project });
       if (jsonOutput) {
         printJson(data);
       } else {
@@ -2456,9 +2446,7 @@ ${BOLD}KEY OPTIONS${RESET}
   --limit <N>        Max results (default: 100)
   --domain <url>     Primary surface URL/origin (required for create)
   --source-scan <id> Link project creation to a prior website analysis
-  --resume <id>      Resume a website analysis by id
-  --resume-token <t> Resume token for one analysis
-  --full             Upgrade a resumed analysis after login
+  --full             Create a new signed-in full website analysis
   --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
   --since <VALUE>    Lookback start for commands that support explicit ranges
   --property <key>   Property to break down (path, referrer, utm_source, country)

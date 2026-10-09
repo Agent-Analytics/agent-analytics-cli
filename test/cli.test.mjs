@@ -2735,63 +2735,24 @@ describe('CLI', () => {
       }
     });
 
-    it('upgrades a resumed analysis with agent-session auth when --full is passed', async () => {
-      let requestBody;
-      let requestAuth;
-      const config = createExplicitConfigDir({
-        agent_session: {
-          access_token: 'aas_scan_upgrade',
-          refresh_token: 'aar_scan_upgrade',
-          access_expires_at: 1893456000000,
-          refresh_expires_at: 1924992000000,
-        },
+    it('rejects preview upgrades before making an API request and explains the fresh full scan command', async () => {
+      let requests = 0;
+      const tempHome = createTempConfigHome();
+      const server = await startServer((_req, res) => {
+        requests += 1;
+        res.writeHead(500);
+        res.end('{}');
       });
-      const server = await startServer(async (req, res) => {
-        if (req.method === 'POST' && req.url === '/website-scans/scan_anon/upgrade') {
-          requestAuth = req.headers.authorization;
-          requestBody = await readRequestJson(req);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            ok: true,
-            analysis_id: 'scan_anon',
-            mode: 'full',
-            normalized_url: 'https://example.com/',
-            result: {
-              minimum_viable_instrumentation: [{ event: 'primary_cta_clicked', priority: 1 }],
-            },
-          }));
-          return;
-        }
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'not found' }));
-      });
-
       try {
-        const { code, stdout } = await run([
-          'scan',
-          '--resume', 'scan_anon',
-          '--resume-token', 'rst_preview',
-          '--full',
-          '--project', 'example-site',
-          '--json',
-          '--config-dir', config.configDir,
-        ], {
-          env: {
-            AGENT_ANALYTICS_URL: server.baseUrl,
-          },
+        const { code, stdout, stderr } = await run(['scan', '--resume', 'scan_anon', '--resume-token', 'rst_preview', '--full'], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl, XDG_CONFIG_HOME: tempHome.xdgConfigHome },
         });
-        const data = JSON.parse(stdout);
-
-        assert.equal(code, 0);
-        assert.equal(requestAuth, 'Bearer aas_scan_upgrade');
-        assert.deepEqual(requestBody, {
-          resume_token: 'rst_preview',
-          project: 'example-site',
-        });
-        assert.equal(data.mode, 'full');
+        assert.notEqual(code, 0);
+        assert.match(stripAnsi(stdout + stderr), /Start a new scan: scan <url> --full/);
+        assert.equal(requests, 0);
       } finally {
         await server.close();
-        config.cleanup();
+        tempHome.cleanup();
       }
     });
 
@@ -3086,8 +3047,7 @@ describe('CLI', () => {
       const tempHome = createTempConfigHome();
       const { code, stdout } = await run([
         'scan',
-        '--resume', 'scan_anon',
-        '--resume-token', 'rst_preview',
+        'https://example.com/',
         '--full',
       ], {
         env: {
