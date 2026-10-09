@@ -949,6 +949,15 @@ const cmdStats = withApi(async (api, project, days = 7) => {
     }
   }
 
+  if (Array.isArray(data.countries) && data.countries.length > 0) {
+    log('');
+    heading('Countries:');
+    for (const row of data.countries) {
+      log(`  ${BOLD}${row.country || 'Unknown'}${RESET}  ${row.count} events  ${DIM}(${row.unique_users} users)${RESET}`);
+    }
+    log(`  ${DIM}Users can appear in more than one country.${RESET}`);
+  }
+
   // Monthly usage summary from response headers
   const monthlyUsage = headers['x-monthly-usage'];
   if (monthlyUsage) {
@@ -987,7 +996,7 @@ const cmdEvents = withApi(async (api, project, opts = {}) => {
 
   for (const e of data.events) {
     const time = new Date(e.timestamp).toLocaleString();
-    log(`  ${DIM}${time}${RESET}  ${BOLD}${e.event}${RESET}  ${DIM}${e.user_id || ''}${RESET}`);
+    log(`  ${DIM}${time}${RESET}  ${BOLD}${e.event}${RESET}  ${DIM}${e.user_id || ''}${RESET}  ${DIM}country: ${e.country || 'Unknown'}${RESET}`);
     if (e.properties) {
       log(`    ${DIM}${JSON.stringify(e.properties)}${RESET}`);
     }
@@ -2344,7 +2353,7 @@ ${BOLD}SETUP${RESET}
 ${BOLD}ANALYTICS${RESET}
   ${CYAN}all-sites${RESET}              Historical summary across all projects
   ${CYAN}bot-traffic${RESET} <name>     Filtered automated traffic by project or --all
-  ${CYAN}stats${RESET} <name>           Overview: events, users, daily trends
+  ${CYAN}stats${RESET} <name>           Overview: events, users, daily trends, countries
   ${CYAN}live${RESET} [name]            Real-time terminal dashboard across all projects
   ${CYAN}insights${RESET} <name>        Period-over-period comparison with trends
   ${CYAN}breakdown${RESET} <name>       Top pages, referrers, UTM sources, countries
