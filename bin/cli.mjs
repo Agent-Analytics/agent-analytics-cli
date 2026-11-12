@@ -1724,7 +1724,7 @@ const cmdContext = withApi(async (api, subcommand, project, opts = {}) => {
 });
 
 function compareUsageText() {
-  return `Usage: npx @agent-analytics/cli compare <project> --goal <event> [--ship-date <YYYY-MM-DD>] [--days <N>] [--denominator <event>] [--keep-threshold <fraction>] [--revert-threshold <fraction>] [--min-denominator <N>] [--min-goal-events <N>] [--filter <json>] [--json]
+  return `Usage: npx @agent-analytics/cli compare <project> --goal <event> [--ship-date <YYYY-MM-DD>] [--days <N>] [--denominator <event>] [--exclude-denominator <field>=<value>] [--keep-threshold <fraction>] [--revert-threshold <fraction>] [--min-denominator <N>] [--min-goal-events <N>] [--filter <json>] [--json]
        npx @agent-analytics/cli compare <project> --goal <event> --baseline-from <YYYY-MM-DD> --baseline-to <YYYY-MM-DD> --compare-from <YYYY-MM-DD> --compare-to <YYYY-MM-DD>
 
 Compare is a free read. A successful call counts as one metered read. It is not a Pro-only query.
@@ -1732,6 +1732,7 @@ The goal is counted as unique converters (count_mode unique_users). A user who f
 A 7-day read should run on ship day + 8. If either window includes today UTC, the verdict is extend with reason incomplete_current_day.
 Ship day is excluded from both windows. --days is window_days: an integer multiple of 7, from 1 to 90. Omitted with --ship-date, it defaults to 7.
 --denominator defaults to page_view. Do not filter on event; pass --goal and --denominator.
+--exclude-denominator is repeatable. Each use is split on the first = and sent as denominator_filters {field, op: "neq", value}. It excludes those denominator events only. --filter is unchanged. At most 10 entries. Example: --exclude-denominator "properties.title=Page not found | grokbotpages.com"
 Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.
 Verdicts: extend below_min_sample; extend zero_denominator; extend zero_baseline (lift is null); revert revert_threshold_met only when lift is at or below the revert threshold and the 90% interval is entirely below zero; extend inconclusive; keep keep_threshold_met when lift is at or above the keep threshold and interval.low is above 0; extend interval_includes_zero; extend no_evidence_of_gain.
 Explicit windows are baseline and compare objects with date_from and date_to. Do not combine them with --ship-date or --days.
@@ -1739,6 +1740,7 @@ Explicit windows are baseline and compare objects with date_from and date_to. Do
 
 Examples:
   npx @agent-analytics/cli compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
+  npx @agent-analytics/cli compare my-site --ship-date 2026-11-04 --days 7 --goal template_opened --exclude-denominator "properties.title=Page not found | grokbotpages.com"
   npx @agent-analytics/cli compare my-site --goal signup --baseline-from 2026-04-01 --baseline-to 2026-04-07 --compare-from 2026-04-09 --compare-to 2026-04-15 --json`;
 }
 
@@ -1861,6 +1863,11 @@ function logCompareResult(project, data) {
   if (data.ship_date) log(`  ${DIM}Ship date:${RESET} ${data.ship_date}  ${DIM}window_days:${RESET} ${data.window_days}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
   else if (data.window_source) log(`  ${DIM}window_source:${RESET} ${data.window_source}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
   if (data.goal_event) log(`  ${DIM}Goal:${RESET} ${data.goal_event}  ${DIM}Denominator:${RESET} ${data.denominator_event}  ${DIM}count_mode:${RESET} ${data.count_mode}`);
+  if (Array.isArray(data.denominator_filters) && data.denominator_filters.length > 0) {
+    for (const filter of data.denominator_filters) {
+      log(`  ${DIM}Exclude denominator:${RESET} ${filter.field} ${filter.op} ${filter.value}`);
+    }
+  }
   log('');
   logCompareWindow('Baseline', data.windows?.baseline);
   logCompareWindow('Compare', data.windows?.compare);
@@ -1898,6 +1905,25 @@ function logCompareResult(project, data) {
     log('');
     logAnnotationEntries('Annotations in either window:', guardrails.annotations);
   }
+}
+
+function parseExcludeDenominator(rawValues) {
+  if (!Array.isArray(rawValues) || rawValues.length === 0) return undefined;
+  if (rawValues.length > 10) error('--exclude-denominator accepts at most 10 entries');
+  return rawValues.map((raw) => {
+    const text = String(raw);
+    const eq = text.indexOf('=');
+    if (eq <= 0) {
+      error('--exclude-denominator requires <field>=<value>. Example: --exclude-denominator "properties.title=Page not found | grokbotpages.com"');
+    }
+    const field = text.slice(0, eq).trim();
+    const value = text.slice(eq + 1).trim();
+    if (!field || value === '') {
+      error('--exclude-denominator requires <field>=<value>. Example: --exclude-denominator "properties.title=Page not found | grokbotpages.com"');
+    }
+    if (field === 'event') error('denominator_filters cannot set event; pass --goal and --denominator');
+    return { field, op: 'neq', value };
+  });
 }
 
 function parseCompareFilters(raw) {
@@ -1950,6 +1976,7 @@ const cmdCompare = withApi(async (api, project, opts = {}) => {
     goal_event: opts.goal,
     denominator_event: opts.denominator || undefined,
     filters: parseCompareFilters(opts.filter),
+    denominator_filters: parseExcludeDenominator(opts.excludeDenominator),
     ship_date: shipDate,
     window_days: windowDays,
     baseline: hasExplicit ? { date_from: baselineFrom, date_to: baselineTo } : undefined,
@@ -2743,6 +2770,7 @@ ${BOLD}KEY OPTIONS${RESET}
   --goal <event>     Goal event for paths, experiments, and compare
   --ship-date <date> Compare ship date (YYYY-MM-DD). Ship day is excluded from both windows
   --denominator <event>  Compare denominator event (default page_view)
+  --exclude-denominator <field>=<value>  Repeatable. Excludes denominator events where field != value. Example: --exclude-denominator "properties.title=Page not found | grokbotpages.com"
   --keep-threshold <fraction>  rule.keep_threshold. 0.15 = +15%. Absolute value must be 5 or less
   --revert-threshold <fraction>  rule.revert_threshold. -0.10 = -10%. Absolute value must be 5 or less
   --min-denominator <N>  rule.min_denominator, users per window
@@ -2854,6 +2882,20 @@ function isDemoMutation(commandName, commandArgs) {
 function getArg(flag) {
   const idx = args.indexOf(flag);
   return idx > -1 && args[idx + 1] ? args[idx + 1] : null;
+}
+
+function getAllArgs(flag) {
+  const values = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] !== flag) continue;
+    const value = args[i + 1];
+    if (!value || String(value).startsWith('--')) {
+      error(`${flag} requires <field>=<value>. Example: --exclude-denominator "properties.title=Page not found | grokbotpages.com"`);
+    }
+    values.push(value);
+    i += 1;
+  }
+  return values;
 }
 
 function hasHelpFlag(commandArgs) {
@@ -3011,6 +3053,7 @@ try {
         compareFrom: getArg('--compare-from'),
         compareTo: getArg('--compare-to'),
         denominator: getArg('--denominator'),
+        excludeDenominator: getAllArgs('--exclude-denominator'),
         goal: getArg('--goal'),
         filter: getArg('--filter'),
         keepThreshold: getArg('--keep-threshold'),
