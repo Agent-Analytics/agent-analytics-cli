@@ -3527,4 +3527,506 @@ describe('CLI', () => {
       }
     });
   });
+
+  describe('compare and annotate', () => {
+    const compareResponse = {
+      project: 'my-site',
+      project_id: 'proj_1',
+      verdict: 'keep',
+      reason: 'keep_threshold_met',
+      reason_detail: 'Compare rate is above the keep threshold and the 90% interval excludes zero.',
+      goal_event: 'landing_signup_cta_clicked',
+      denominator_event: 'page_view',
+      count_mode: 'unique_users',
+      filters: [],
+      window_source: 'ship_date',
+      ship_date: '2026-04-08',
+      window_days: 7,
+      weekday_aligned: true,
+      windows: {
+        baseline: {
+          date_from: '2026-04-01',
+          date_to: '2026-04-07',
+          day_count: 7,
+          denominator_unique_users: 400,
+          goal_unique_users: 42,
+          goal_converters: 40,
+          goal_users_outside_denominator: 2,
+          count_mode: 'unique_users',
+          rate: 0.1,
+        },
+        compare: {
+          date_from: '2026-04-09',
+          date_to: '2026-04-15',
+          day_count: 7,
+          denominator_unique_users: 400,
+          goal_unique_users: 81,
+          goal_converters: 80,
+          goal_users_outside_denominator: 1,
+          count_mode: 'unique_users',
+          rate: 0.2,
+        },
+      },
+      lift: 1,
+      interval: {
+        level: 0.9,
+        method: 'newcombe_wilson_90',
+        estimate: 'rate_difference',
+        low: 0.081597,
+        high: 0.118,
+        excludes_zero: true,
+        note: '90% interval for compare_rate - baseline_rate',
+      },
+      rule: {
+        keep_threshold: 0.15,
+        revert_threshold: -0.1,
+        min_denominator: 200,
+        min_goal_events: 20,
+        defaults_applied: [],
+      },
+      guardrails: {
+        confounded: true,
+        annotations: [{
+          occurred_at: '2026-04-10T13:00:00.000Z',
+          title: 'Pricing copy changed',
+          note: 'Moved the annual plan.',
+          windows: ['compare'],
+        }],
+        traffic_mix: {
+          shifted: true,
+          properties: {
+            utm_source: {
+              shifts: [{ value: 'newsletter', baseline_share: 0.1, compare_share: 0.4 }],
+            },
+          },
+        },
+        incomplete_current_day: false,
+        caveat: 'Before/after is not causal. A keep or revert verdict is a deterministic reading of this rule on these two windows, not proof that the change caused the difference.',
+      },
+    };
+
+    it('prints compare usage without auth and says the read is free', async () => {
+      const help = await run(['compare', '--help']);
+      const plain = stripAnsi(help.stdout);
+      assert.equal(help.code, 0);
+      assert.ok(plain.includes('free read'));
+      assert.ok(plain.includes('ship day + 8'));
+      assert.ok(plain.includes('unique converters'));
+      assert.ok(plain.includes('incomplete_current_day'));
+      assert.ok(plain.includes('revert_threshold_met'));
+      assert.ok(plain.includes('Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.'));
+
+      const main = await run(['--help']);
+      assert.ok(stripAnsi(main.stdout).includes('ship day + 8'));
+    });
+
+    it('rejects a window length that is not a multiple of 7 before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const result = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-04-08',
+          '--days', '10',
+          '--goal', 'signup',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.notEqual(result.code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(result.stdout).includes('multiple of 7'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('posts ship_date compare fields and prints the API verdict', async () => {
+      let body = null;
+      const server = await startServer(async (req, res) => {
+        body = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(compareResponse));
+      });
+
+      try {
+        const result = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-04-08',
+          '--days', '7',
+          '--goal', 'landing_signup_cta_clicked',
+          '--denominator', 'page_view',
+          '--keep-threshold', '0.15',
+          '--revert-threshold', '-0.10',
+          '--min-denominator', '200',
+          '--min-goal-events', '20',
+          '--filter', '[{"field":"country","op":"eq","value":"US"}]',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(body, {
+          project: 'my-site',
+          goal_event: 'landing_signup_cta_clicked',
+          denominator_event: 'page_view',
+          filters: [{ field: 'country', op: 'eq', value: 'US' }],
+          ship_date: '2026-04-08',
+          window_days: 7,
+          rule: {
+            keep_threshold: 0.15,
+            revert_threshold: -0.1,
+            min_denominator: 200,
+            min_goal_events: 20,
+          },
+        });
+        assert.ok(plain.includes('Verdict:'));
+        assert.ok(plain.includes('keep'));
+        assert.ok(plain.includes('keep_threshold_met'));
+        assert.ok(plain.includes('2026-04-01'));
+        assert.ok(plain.includes('2026-04-09'));
+        assert.ok(plain.includes('Compare rate is above the keep threshold and the 90% interval excludes zero.'));
+        assert.ok(plain.includes('40 converters / 400 denominator users'));
+        assert.ok(plain.includes('80 converters / 400 denominator users'));
+        assert.ok(plain.includes('2 outside the denominator'));
+        assert.ok(plain.includes('unique_users'));
+        assert.ok(!plain.includes('goal events'));
+        assert.ok(plain.includes('Lift:'));
+        assert.ok(plain.includes('+100%'));
+        assert.ok(plain.includes('90% interval'));
+        assert.ok(plain.includes('newcombe_wilson_90'));
+        assert.ok(plain.includes('rate_difference'));
+        assert.ok(plain.includes('90% interval for compare_rate - baseline_rate'));
+        assert.ok(plain.includes('Pricing copy changed'));
+        assert.ok(plain.includes('newsletter'));
+        assert.ok(plain.includes('Before/after is not causal'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects a threshold whose absolute value is above 5 before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const keep = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-04-08',
+          '--goal', 'signup',
+          '--keep-threshold', '15',
+        ], { env });
+        const revert = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-04-08',
+          '--goal', 'signup',
+          '--revert-threshold', '-5.1',
+        ], { env });
+        const message = 'Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.';
+
+        assert.notEqual(keep.code, 0);
+        assert.notEqual(revert.code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(keep.stdout).includes(message));
+        assert.ok(stripAnsi(revert.stdout).includes(message));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints n/a for a null lift and handles a null interval', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          project: 'my-site',
+          verdict: 'extend',
+          reason: 'zero_baseline',
+          reason_detail: 'Baseline rate is zero, so lift is not defined.',
+          count_mode: 'unique_users',
+          lift: null,
+          interval: null,
+          windows: {
+            baseline: {
+              date_from: '2026-04-01',
+              date_to: '2026-04-07',
+              day_count: 7,
+              denominator_unique_users: 400,
+              goal_unique_users: 0,
+              goal_converters: 0,
+              goal_users_outside_denominator: 0,
+              count_mode: 'unique_users',
+              rate: 0,
+            },
+            compare: {
+              date_from: '2026-04-09',
+              date_to: '2026-04-15',
+              day_count: 7,
+              denominator_unique_users: 400,
+              goal_unique_users: 10,
+              goal_converters: 10,
+              goal_users_outside_denominator: 0,
+              count_mode: 'unique_users',
+              rate: 0.025,
+            },
+          },
+        }));
+      });
+
+      try {
+        const result = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-04-08',
+          '--goal', 'signup',
+          '--keep-threshold', '5',
+          '--revert-threshold', '-5',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.ok(plain.includes('extend'));
+        assert.ok(plain.includes('zero_baseline'));
+        assert.ok(plain.includes('Baseline rate is zero, so lift is not defined.'));
+        assert.ok(plain.includes('Lift: n/a'));
+        assert.ok(plain.includes('not computed'));
+        assert.ok(plain.includes('0 converters / 400 denominator users'));
+        assert.ok(!plain.includes('undefined'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints the incomplete-day verdict as extend', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          project: 'my-site',
+          verdict: 'extend',
+          reason: 'incomplete_current_day',
+          reason_detail: 'Either window includes today UTC.',
+          count_mode: 'unique_users',
+          lift: 0.2,
+          interval: {
+            level: 0.9,
+            method: 'newcombe_wilson_90',
+            estimate: 'rate_difference',
+            low: 0.01,
+            high: 0.04,
+            excludes_zero: true,
+          },
+          windows: compareResponse.windows,
+        }));
+      });
+
+      try {
+        const result = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-04-08',
+          '--goal', 'signup',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.ok(plain.includes('extend'));
+        assert.ok(plain.includes('incomplete_current_day'));
+        assert.ok(plain.includes('Either window includes today UTC.'));
+        assert.ok(plain.includes('ship day + 8'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('omits optional compare fields and prints --json as the API body', async () => {
+      let body = null;
+      const server = await startServer(async (req, res) => {
+        body = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(compareResponse));
+      });
+
+      try {
+        const result = await run([
+          'compare', 'my-site',
+          '--goal', 'signup',
+          '--baseline-from', '2026-04-01',
+          '--baseline-to', '2026-04-07',
+          '--compare-from', '2026-04-09',
+          '--compare-to', '2026-04-15',
+          '--json',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(body, {
+          project: 'my-site',
+          goal_event: 'signup',
+          baseline: { date_from: '2026-04-01', date_to: '2026-04-07' },
+          compare: { date_from: '2026-04-09', date_to: '2026-04-15' },
+        });
+        assert.deepEqual(JSON.parse(result.stdout), compareResponse);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('appends an annotation and reports a duplicate without replacing the stored note', async () => {
+      const bodies = [];
+      let calls = 0;
+      const server = await startServer(async (req, res) => {
+        bodies.push(await readRequestJson(req));
+        calls += 1;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(calls === 1
+          ? {
+            ok: true,
+            appended: true,
+            project: 'my-site',
+            project_id: 'proj_1',
+            annotation: {
+              occurred_at: '2026-04-25T10:00:00.000Z',
+              title: 'Changed pricing page offer',
+              note: 'Moved annual plan discount above the fold.',
+            },
+            annotation_count: 4,
+          }
+          : {
+            ok: true,
+            appended: false,
+            project: 'my-site',
+            project_id: 'proj_1',
+            annotation: {
+              occurred_at: '2026-04-25T10:00:00.000Z',
+              title: 'Changed pricing page offer',
+              note: 'original note',
+            },
+            annotation_count: 4,
+          }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const created = await run([
+          'annotate', 'my-site',
+          '--title', 'Changed pricing page offer',
+          '--note', 'Moved annual plan discount above the fold.',
+          '--at', '2026-04-25T13:00:00+03:00',
+        ], { env });
+        const duplicate = await run([
+          'annotate', 'my-site',
+          '--title', 'Changed pricing page offer',
+          '--note', 'a different note',
+          '--at', '2026-04-25T13:00:00+03:00',
+        ], { env });
+
+        assert.equal(created.code, 0);
+        assert.equal(bodies[0].occurred_at, '2026-04-25T13:00:00+03:00');
+        assert.equal(bodies[0].title, 'Changed pricing page offer');
+        assert.equal(bodies[0].note, 'Moved annual plan discount above the fold.');
+        assert.equal(bodies[0].project, 'my-site');
+        assert.ok(stripAnsi(created.stdout).includes('annotation_count: 4'));
+
+        assert.equal(duplicate.code, 0);
+        const duplicateText = stripAnsi(duplicate.stdout);
+        assert.ok(duplicateText.includes('appended: false'));
+        assert.ok(duplicateText.includes('original note'));
+        assert.ok(!duplicateText.includes('a different note'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('omits a blank annotation note and surfaces the 100 annotation cap', async () => {
+      let body = null;
+      const server = await startServer(async (req, res) => {
+        body = await readRequestJson(req);
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          message: 'annotations can include at most 100 entries; this project already has 100, so the new annotation was not stored',
+        }));
+      });
+
+      try {
+        const result = await run([
+          'annotate', 'my-site',
+          '--title', 'Changed pricing page offer',
+          '--note', '   ',
+          '--at', '2026-04-25T13:00:00.000Z',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.notEqual(result.code, 0);
+        assert.deepEqual(body, {
+          project: 'my-site',
+          occurred_at: '2026-04-25T13:00:00.000Z',
+          title: 'Changed pricing page offer',
+        });
+        assert.ok(stripAnsi(result.stdout).includes('at most 100 entries'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('blocks annotate in demo mode before making API requests', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const result = await run([
+          '--demo', 'annotate', 'my-site', '--title', 'Changed pricing page offer',
+        ], {
+          env: { AGENT_ANALYTICS_URL: server.baseUrl },
+        });
+
+        assert.notEqual(result.code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(result.stdout).includes('Demo mode is read-only'));
+      } finally {
+        await server.close();
+      }
+    });
+  });
 });
