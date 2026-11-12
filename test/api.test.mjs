@@ -357,6 +357,28 @@ describe('AgentAnalyticsAPI', () => {
       }));
     });
 
+    it('query → POST /query forwards property aggregations and omits an unset property', async () => {
+      await api.query('my-site', {
+        metrics: ['p75', 'avg'],
+        property: 'lcp',
+        filters: [{ field: 'event', op: 'eq', value: '$web_vitals' }],
+      });
+      assert.equal(lastUrl, 'https://api.test/query');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        metrics: ['p75', 'avg'],
+        filters: [{ field: 'event', op: 'eq', value: '$web_vitals' }],
+        property: 'lcp',
+      }));
+
+      await api.query('my-site', { metrics: ['event_count'] });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        metrics: ['event_count'],
+      }));
+    });
+
     it('compare → POST /compare sends ship_date fields and omits unset optionals', async () => {
       await api.compare('my-site', { goal_event: 'signup', ship_date: '2026-04-08' });
       assert.equal(lastUrl, 'https://api.test/compare');
@@ -408,6 +430,53 @@ describe('AgentAnalyticsAPI', () => {
         compare: { date_from: '2026-04-09', date_to: '2026-04-15' },
         rule: { keep_threshold: 0.15 },
       }));
+    });
+
+    it('compare → POST /compare sends metric and better only when set', async () => {
+      await api.compare('my-site', {
+        goal_event: '$web_vitals',
+        ship_date: '2026-11-04',
+        metric: 'p75(lcp)',
+        better: 'lower',
+      });
+      assert.equal(lastUrl, 'https://api.test/compare');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        goal_event: '$web_vitals',
+        ship_date: '2026-11-04',
+        metric: 'p75(lcp)',
+        better: 'lower',
+      }));
+
+      await api.compare('my-site', {
+        goal_event: 'signup',
+        ship_date: '2026-04-08',
+        metric: 'sum(revenue)',
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        goal_event: 'signup',
+        ship_date: '2026-04-08',
+        metric: 'sum(revenue)',
+      }));
+    });
+
+    it('getErrors → GET /errors omits unset until and new_since', async () => {
+      await api.getErrors('my-site', { since: '7d', limit: 20 });
+      assert.equal(lastMethod, 'GET');
+      assert.equal(lastUrl, 'https://api.test/errors?project=my-site&since=7d&limit=20');
+
+      await api.getErrors('my site', {
+        since: '2026-11-01',
+        until: '2026-11-12',
+        new_since: 'Changed pricing page offer',
+        limit: 5,
+      });
+      assert.equal(
+        lastUrl,
+        'https://api.test/errors?project=my%20site&since=2026-11-01&until=2026-11-12&new_since=Changed%20pricing%20page%20offer&limit=5',
+      );
     });
 
     it('appendProjectAnnotation → POST /project-context/annotations omits an empty note', async () => {

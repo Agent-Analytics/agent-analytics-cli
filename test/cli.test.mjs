@@ -2384,7 +2384,79 @@ describe('CLI', () => {
       assert.notEqual(code, 0);
       assert.ok(output.includes('--count-mode raw or session_then_user (default: raw event rows)'));
       assert.ok(output.includes('--count-mode session_then_user'));
+      assert.ok(output.includes('--property  Numeric event property key'));
+      assert.ok(output.includes('--metrics p75 --property lcp'));
       assert.ok(!output.includes('mixed session/no-session duplicates collapse by user'));
+    });
+
+    it('posts sum and p75 with --property and prints n and skipped', async () => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        requestBody = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          period: { from: '2026-11-05', to: '2026-11-12' },
+          rows: [{ event: 'purchase', sum: 290, avg: 29, n: 10, skipped: 2 }],
+          count: 1,
+        }));
+      });
+
+      try {
+        const result = await run([
+          'query', 'my-site',
+          '--metrics', 'sum, avg, P75',
+          '--property', 'revenue',
+          '--filter', '[{"field":"event","op":"eq","value":"purchase"}]',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(requestBody, {
+          project: 'my-site',
+          metrics: ['sum', 'avg', 'p75'],
+          filters: [{ field: 'event', op: 'eq', value: 'purchase' }],
+          property: 'revenue',
+        });
+        assert.ok(plain.includes('Query: my-site — revenue'));
+        assert.ok(plain.includes('sum'));
+        assert.ok(plain.includes('290'));
+        assert.ok(plain.includes('skipped'));
+        assert.ok(plain.includes('2'));
+        assert.ok(plain.includes('n'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects an aggregate metric without --property before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const missing = await run(['query', 'my-site', '--metrics', 'p75'], { env });
+        const invalid = await run(['query', 'my-site', '--metrics', 'avg', '--property', 'properties.revenue'], { env });
+
+        assert.notEqual(missing.code, 0);
+        assert.notEqual(invalid.code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(missing.stdout).includes('--property <key> is required when --metrics includes sum, avg, p50, p75, or p95.'));
+        assert.ok(stripAnsi(invalid.stdout).includes('Do not prefix it with properties.'));
+      } finally {
+        await server.close();
+      }
     });
   });
 
@@ -3611,6 +3683,9 @@ describe('CLI', () => {
       assert.equal(help.code, 0);
       assert.ok(plain.includes('free read'));
       assert.ok(plain.includes('ship day + 8'));
+      assert.ok(plain.includes("--metric 'p75(lcp)' --better lower"));
+      assert.ok(plain.includes('interval_method: "none"'));
+      assert.ok(plain.includes('per_user: true'));
       assert.ok(plain.includes('unique converters'));
       assert.ok(plain.includes('incomplete_current_day'));
       assert.ok(plain.includes('revert_threshold_met'));
@@ -4098,6 +4173,309 @@ describe('CLI', () => {
         assert.notEqual(result.code, 0);
         assert.equal(calls, 0);
         assert.ok(stripAnsi(result.stdout).includes('Demo mode is read-only'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('posts --metric and --better and prints value, n, and no interval', async () => {
+      const bodies = [];
+      const metricResponse = {
+        project: 'my-site',
+        verdict: 'keep',
+        reason: 'keep_threshold_met',
+        reason_detail: 'p75 moved in the better direction.',
+        goal_event: '$web_vitals',
+        denominator_event: 'page_view',
+        metric: 'p75(lcp)',
+        better: 'lower',
+        per_user: false,
+        ship_date: '2026-11-04',
+        window_days: 7,
+        weekday_aligned: true,
+        lift: -0.125,
+        interval: null,
+        interval_method: 'none',
+        windows: {
+          baseline: { date_from: '2026-10-28', date_to: '2026-11-03', day_count: 7, value: 2400, n: 80, skipped: 4 },
+          compare: { date_from: '2026-11-05', date_to: '2026-11-11', day_count: 7, value: 2100, n: 92, skipped: 1 },
+        },
+      };
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        bodies.push(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body?.metric === 'sum(revenue)'
+          ? {
+            ...metricResponse,
+            metric: 'sum(revenue)',
+            better: 'higher',
+            per_user: true,
+            goal_event: 'purchase',
+            windows: {
+              baseline: { date_from: '2026-10-28', date_to: '2026-11-03', day_count: 7, value: 12.5, n: 40 },
+              compare: { date_from: '2026-11-05', date_to: '2026-11-11', day_count: 7, value: 18, n: 44 },
+            },
+          }
+          : metricResponse));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const result = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-11-04',
+          '--days', '7',
+          '--goal', '$web_vitals',
+          '--metric', 'P75(lcp)',
+          '--better', 'LOWER',
+        ], { env });
+        const plain = stripAnsi(result.stdout);
+        const summed = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-11-04',
+          '--goal', 'purchase',
+          '--metric', 'sum(revenue)',
+          '--json',
+        ], { env });
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(bodies[0], {
+          project: 'my-site',
+          goal_event: '$web_vitals',
+          ship_date: '2026-11-04',
+          window_days: 7,
+          metric: 'p75(lcp)',
+          better: 'lower',
+        });
+        assert.deepEqual(bodies[1], {
+          project: 'my-site',
+          goal_event: 'purchase',
+          ship_date: '2026-11-04',
+          metric: 'sum(revenue)',
+        });
+        assert.ok(plain.includes('Metric: p75(lcp)'));
+        assert.ok(plain.includes('better: lower'));
+        assert.ok(!plain.includes('per_user: true'));
+        assert.ok(plain.includes('value: 2400'));
+        assert.ok(plain.includes('n=80'));
+        assert.ok(plain.includes('skipped=4'));
+        assert.ok(plain.includes('value: 2100'));
+        assert.ok(plain.includes('n=92'));
+        assert.ok(plain.includes('not computed'));
+        assert.ok(plain.includes('none'));
+        assert.ok(plain.includes('keep'));
+        assert.ok(!plain.includes('undefined'));
+
+        assert.equal(summed.code, 0);
+        const summedBody = JSON.parse(summed.stdout);
+        assert.equal(summedBody.per_user, true);
+        assert.equal(summedBody.metric, 'sum(revenue)');
+        assert.equal(summedBody.better, 'higher');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects a bad --metric or --better before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const metric = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-11-04',
+          '--goal', 'purchase',
+          '--metric', 'p75(lcp-ms)',
+        ], { env });
+        const better = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-11-04',
+          '--goal', 'purchase',
+          '--metric', 'p75(lcp)',
+          '--better', 'sideways',
+        ], { env });
+        const alone = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-11-04',
+          '--goal', 'purchase',
+          '--better', 'lower',
+        ], { env });
+
+        assert.notEqual(metric.code, 0);
+        assert.notEqual(better.code, 0);
+        assert.notEqual(alone.code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(metric.stdout).includes("--metric must be sum(key), avg(key), p50(key), p75(key), or p95(key)."));
+        assert.ok(stripAnsi(better.stdout).includes('--better must be higher or lower.'));
+        assert.ok(stripAnsi(alone.stdout).includes('--better applies only with --metric.'));
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
+  describe('errors', () => {
+    const errorsResponse = {
+      project: 'my-site',
+      since: '7d',
+      until: '2026-11-12',
+      new_since: '2026-11-12',
+      limit: 20,
+      count: 1,
+      groups: [{
+        fingerprint: 'fp_undefined_read',
+        message: 'Cannot read properties of undefined',
+        source: 'app.js',
+        count: 12,
+        users: 4,
+        sessions: 5,
+        first_seen: '2026-11-12T01:00:00.000Z',
+        last_seen: '2026-11-12T08:00:00.000Z',
+        top_paths: ['/checkout', { path: '/pricing', count: 3 }, '/account', '/ignored-fourth'],
+        new_since: true,
+      }],
+    };
+
+    it('prints errors usage without auth', async () => {
+      const help = await run(['errors', '--help']);
+      const plain = stripAnsi(help.stdout);
+      assert.equal(help.code, 0);
+      assert.ok(plain.includes('GET /errors'));
+      assert.ok(plain.includes('one metered read'));
+      assert.ok(plain.includes('--since 7d --new-since 2026-11-12'));
+      assert.ok(plain.includes('message, source, line, and col'));
+      assert.ok(plain.includes('does not send a stack'));
+
+      const main = await run(['--help']);
+      const mainPlain = stripAnsi(main.stdout);
+      assert.ok(mainPlain.includes('errors'));
+      assert.ok(mainPlain.includes('Grouped $error events'));
+      assert.ok(mainPlain.includes("--metric <fn(key)>"));
+      assert.ok(mainPlain.includes('--new-since'));
+    });
+
+    it('calls GET /errors and prints groups, including --json', async () => {
+      const urls = [];
+      const server = await startServer((req, res) => {
+        urls.push(req.url);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(errorsResponse));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const result = await run([
+          'errors', 'my-site',
+          '--since', '7d',
+          '--until', '2026-11-12',
+          '--new-since', 'Changed pricing page offer',
+          '--limit', '20',
+        ], { env });
+        const plain = stripAnsi(result.stdout);
+        const json = await run([
+          'errors', 'my-site',
+          '--since', '2026-11-01',
+          '--json',
+        ], { env });
+
+        assert.equal(result.code, 0);
+        assert.equal(urls[0], '/errors?project=my-site&since=7d&until=2026-11-12&new_since=Changed%20pricing%20page%20offer&limit=20');
+        assert.equal(urls[1], '/errors?project=my-site&since=2026-11-01&limit=20');
+        assert.ok(plain.includes('Errors: my-site'));
+        assert.ok(plain.includes('Cannot read properties of undefined'));
+        assert.ok(plain.includes('new'));
+        assert.ok(plain.includes('12 events  4 users  5 sessions'));
+        assert.ok(plain.includes('source: app.js'));
+        assert.ok(plain.includes('fingerprint: fp_undefined_read'));
+        assert.ok(plain.includes('2026-11-12T01:00:00.000Z'));
+        assert.ok(plain.includes('/checkout, /pricing (3), /account'));
+        assert.ok(!plain.includes('/ignored-fourth'));
+        assert.ok(plain.includes('1 groups'));
+        assert.equal(json.code, 0);
+        assert.deepEqual(JSON.parse(json.stdout), errorsResponse);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('defaults since to 7d and limit to 20', async () => {
+      let url = '';
+      const server = await startServer((req, res) => {
+        url = req.url;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ project: 'my-site', since: '7d', limit: 20, count: 0, groups: [] }));
+      });
+
+      try {
+        const result = await run(['errors', 'my-site'], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.equal(url, '/errors?project=my-site&since=7d&limit=20');
+        assert.ok(plain.includes('No errors found.'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects a bad window or limit before calling the API and surfaces an ambiguous annotation', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        if (calls === 1) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            message: 'new_since matched 2 annotations: "Shipped checkout" (2026-11-01), "Shipped pricing" (2026-11-04)',
+          }));
+          return;
+        }
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const ambiguous = await run([
+          'errors', 'my-site',
+          '--new-since', 'Shipped',
+        ], { env });
+        const since = await run(['errors', 'my-site', '--since', 'yesterday'], { env });
+        const until = await run(['errors', 'my-site', '--until', '2026-02-31'], { env });
+        const limit = await run(['errors', 'my-site', '--limit', '101'], { env });
+
+        assert.notEqual(ambiguous.code, 0);
+        assert.equal(calls, 1);
+        assert.ok(stripAnsi(ambiguous.stdout).includes('new_since matched 2 annotations'));
+        assert.notEqual(since.code, 0);
+        assert.notEqual(until.code, 0);
+        assert.notEqual(limit.code, 0);
+        assert.equal(calls, 1);
+        assert.ok(stripAnsi(since.stdout).includes('--since must be a day window like 7d, or a YYYY-MM-DD date.'));
+        assert.ok(stripAnsi(until.stdout).includes('--until must be a day window like 7d, or a YYYY-MM-DD date.'));
+        assert.ok(stripAnsi(limit.stdout).includes('--limit must be an integer from 1 to 100.'));
       } finally {
         await server.close();
       }
