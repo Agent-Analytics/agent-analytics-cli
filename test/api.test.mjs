@@ -368,6 +368,26 @@ describe('AgentAnalyticsAPI', () => {
       }));
     });
 
+    it('compare → POST /compare sends denominator_filters and omits them when unset', async () => {
+      await api.compare('my-site', {
+        goal_event: 'template_opened',
+        ship_date: '2026-11-04',
+        denominator_filters: [
+          { field: 'properties.title', op: 'neq', value: 'Page not found | grokbotpages.com' },
+          { field: 'properties.path', op: 'neq', value: 'a=b' },
+        ],
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        goal_event: 'template_opened',
+        denominator_filters: [
+          { field: 'properties.title', op: 'neq', value: 'Page not found | grokbotpages.com' },
+          { field: 'properties.path', op: 'neq', value: 'a=b' },
+        ],
+        ship_date: '2026-11-04',
+      }));
+    });
+
     it('compare → POST /compare nests explicit windows and a partial rule', async () => {
       await api.compare('my-site', {
         goal_event: 'signup',

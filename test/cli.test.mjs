@@ -3615,9 +3615,83 @@ describe('CLI', () => {
       assert.ok(plain.includes('incomplete_current_day'));
       assert.ok(plain.includes('revert_threshold_met'));
       assert.ok(plain.includes('Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.'));
+      assert.ok(plain.includes('--exclude-denominator "properties.title=Page not found | grokbotpages.com"'));
 
       const main = await run(['--help']);
-      assert.ok(stripAnsi(main.stdout).includes('ship day + 8'));
+      const mainPlain = stripAnsi(main.stdout);
+      assert.ok(mainPlain.includes('ship day + 8'));
+      assert.ok(mainPlain.includes('--exclude-denominator "properties.title=Page not found | grokbotpages.com"'));
+    });
+
+    it('sends repeatable --exclude-denominator values as denominator_filters', async () => {
+      let body = null;
+      const server = await startServer(async (req, res) => {
+        body = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ...compareResponse,
+          denominator_filters: [
+            { field: 'properties.title', op: 'neq', value: 'Page not found | grokbotpages.com' },
+            { field: 'properties.path', op: 'neq', value: 'a=b' },
+          ],
+        }));
+      });
+
+      try {
+        const result = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-11-04',
+          '--days', '7',
+          '--goal', 'template_opened',
+          '--exclude-denominator', 'properties.title=Page not found | grokbotpages.com',
+          '--exclude-denominator', 'properties.path=a=b',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(body.denominator_filters, [
+          { field: 'properties.title', op: 'neq', value: 'Page not found | grokbotpages.com' },
+          { field: 'properties.path', op: 'neq', value: 'a=b' },
+        ]);
+        assert.equal(body.filters, undefined);
+        assert.ok(plain.includes('properties.title neq Page not found | grokbotpages.com'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects an --exclude-denominator value without = before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const result = await run([
+          'compare', 'my-site',
+          '--ship-date', '2026-11-04',
+          '--goal', 'template_opened',
+          '--exclude-denominator', 'properties.title',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+
+        assert.notEqual(result.code, 0);
+        assert.equal(calls, 0);
+        assert.ok(stripAnsi(result.stdout).includes('--exclude-denominator requires <field>=<value>'));
+      } finally {
+        await server.close();
+      }
     });
 
     it('rejects a window length that is not a multiple of 7 before calling the API', async () => {
