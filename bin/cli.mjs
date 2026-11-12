@@ -1728,12 +1728,14 @@ function compareUsageText() {
        npx @agent-analytics/cli compare <project> --goal <event> --baseline-from <YYYY-MM-DD> --baseline-to <YYYY-MM-DD> --compare-from <YYYY-MM-DD> --compare-to <YYYY-MM-DD>
 
 Compare is a free read. A successful call counts as one metered read. It is not a Pro-only query.
-A 7-day read should run on ship day + 8. Ship day + 7 ends on a partial day and sets guardrails.incomplete_current_day.
+The goal is counted as unique converters (count_mode unique_users). A user who fires the goal 3 times counts once. rate is goal_converters / denominator_unique_users.
+A 7-day read should run on ship day + 8. If either window includes today UTC, the verdict is extend with reason incomplete_current_day.
 Ship day is excluded from both windows. --days is window_days: an integer multiple of 7, from 1 to 90. Omitted with --ship-date, it defaults to 7.
 --denominator defaults to page_view. Do not filter on event; pass --goal and --denominator.
-Thresholds are fractions on rule.keep_threshold and rule.revert_threshold. 0.15 means +15%, not 15.
+Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.
+Verdicts: extend below_min_sample; extend zero_denominator; extend zero_baseline (lift is null); revert revert_threshold_met only when lift is at or below the revert threshold and the 90% interval is entirely below zero; extend inconclusive; keep keep_threshold_met when lift is at or above the keep threshold and interval.low is above 0; extend interval_includes_zero; extend no_evidence_of_gain.
 Explicit windows are baseline and compare objects with date_from and date_to. Do not combine them with --ship-date or --days.
---json prints the API response: verdict keep, revert, or extend, plus lift, a 90% interval, and guardrails.
+--json prints the API response, including verdict, reason, reason_detail, lift, the 90% interval, and guardrails.
 
 Examples:
   npx @agent-analytics/cli compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
@@ -1774,10 +1776,14 @@ function parseWindowDays(raw) {
 
 function parseRelativeThreshold(flag, raw) {
   if (raw == null || String(raw).trim() === '') return undefined;
-  if (String(raw).startsWith('--') || !Number.isFinite(Number(raw))) {
-    error(`${flag} must be a finite number (a relative change, so 0.15 means +15%)`);
+  const value = Number(raw);
+  if (String(raw).startsWith('--') || !Number.isFinite(value)) {
+    error(`${flag} must be a finite number. Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.`);
   }
-  return Number(raw);
+  if (Math.abs(value) > 5) {
+    error('Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.');
+  }
+  return value;
 }
 
 function parseCountMinimum(flag, raw) {
@@ -1825,8 +1831,10 @@ function logAnnotationEntries(title, annotations) {
 function logCompareWindow(label, window) {
   if (!window) return;
   const rate = typeof window.rate === 'number' ? formatFraction(window.rate) : window.rate;
+  const outside = window.goal_users_outside_denominator == null ? '' : `, ${window.goal_users_outside_denominator} outside the denominator`;
   log(`  ${BOLD}${label}:${RESET} ${window.date_from} → ${window.date_to}  ${DIM}${window.day_count} days${RESET}`);
-  log(`    ${rate}  ${window.goal_event_count} goal events / ${window.denominator_unique_users} denominator users  ${DIM}${window.goal_unique_users} goal users, ${window.count_mode}${RESET}`);
+  log(`    ${rate}  ${window.goal_converters} converters / ${window.denominator_unique_users} denominator users`);
+  log(`    ${DIM}${window.goal_unique_users} goal users${outside}, ${window.count_mode}${RESET}`);
 }
 
 function logTrafficShifts(mix) {
@@ -1847,6 +1855,9 @@ function logCompareResult(project, data) {
   const color = data.verdict === 'keep' ? GREEN : data.verdict === 'revert' ? RED : YELLOW;
   log(`  ${BOLD}Verdict:${RESET} ${color}${data.verdict || ''}${RESET}${data.reason ? `  ${DIM}${data.reason}${RESET}` : ''}`);
   if (data.reason_detail) log(`  ${data.reason_detail}`);
+  if (data.reason === 'incomplete_current_day') {
+    log(`  ${YELLOW}Either window includes today UTC.${RESET} A 7-day read should run on ship day + 8.`);
+  }
   if (data.ship_date) log(`  ${DIM}Ship date:${RESET} ${data.ship_date}  ${DIM}window_days:${RESET} ${data.window_days}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
   else if (data.window_source) log(`  ${DIM}window_source:${RESET} ${data.window_source}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
   if (data.goal_event) log(`  ${DIM}Goal:${RESET} ${data.goal_event}  ${DIM}Denominator:${RESET} ${data.denominator_event}  ${DIM}count_mode:${RESET} ${data.count_mode}`);
@@ -1854,10 +1865,12 @@ function logCompareResult(project, data) {
   logCompareWindow('Baseline', data.windows?.baseline);
   logCompareWindow('Compare', data.windows?.compare);
   log('');
-  log(`  ${BOLD}Lift:${RESET} ${data.lift == null ? `${DIM}undefined${RESET}` : formatFraction(data.lift, { signed: true })}`);
+  log(`  ${BOLD}Lift:${RESET} ${data.lift == null ? 'n/a' : formatFraction(data.lift, { signed: true })}`);
   if (data.interval) {
     log(`  ${BOLD}90% interval:${RESET} ${formatFraction(Number(data.interval.low), { signed: true })} to ${formatFraction(Number(data.interval.high), { signed: true })}  ${DIM}${data.interval.method || ''}${RESET}`);
+    if (data.interval.estimate) log(`  ${DIM}estimate:${RESET} ${data.interval.estimate}`);
     log(`  ${DIM}excludes_zero:${RESET} ${data.interval.excludes_zero}`);
+    if (data.interval.note) log(`  ${DIM}${data.interval.note}${RESET}`);
   } else {
     log(`  ${BOLD}90% interval:${RESET} ${DIM}not computed${RESET}`);
   }
@@ -1870,7 +1883,7 @@ function logCompareResult(project, data) {
     log('');
     heading('Guardrails:');
     log(`  ${BOLD}Confounded:${RESET} ${guardrails.confounded ? `${YELLOW}yes${RESET}` : `${GREEN}no${RESET}`}`);
-    if (guardrails.incomplete_current_day) {
+    if (guardrails.incomplete_current_day && data.reason !== 'incomplete_current_day') {
       log(`  ${YELLOW}Incomplete current day.${RESET} A 7-day read should run on ship day + 8.`);
     }
     if (guardrails.traffic_mix) {
@@ -2667,7 +2680,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}journey${RESET} <name>         Chronological journey by --user-id or --email
   ${CYAN}sessions${RESET} <name>        Individual session records
   ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, country)
-  ${CYAN}compare${RESET} <name>         Free before/after read. A 7-day read should run on ship day + 8
+  ${CYAN}compare${RESET} <name>         Free before/after read of unique converters. A 7-day read should run on ship day + 8
   ${CYAN}annotate${RESET} <name>        Append one annotation (duplicate returns appended: false)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
   ${CYAN}context get${RESET} <name>     Read stored goals, activation events, and event glossary
@@ -2730,8 +2743,8 @@ ${BOLD}KEY OPTIONS${RESET}
   --goal <event>     Goal event for paths, experiments, and compare
   --ship-date <date> Compare ship date (YYYY-MM-DD). Ship day is excluded from both windows
   --denominator <event>  Compare denominator event (default page_view)
-  --keep-threshold <fraction>  rule.keep_threshold. 0.15 means +15% relative lift
-  --revert-threshold <fraction>  rule.revert_threshold. -0.10 means -10%
+  --keep-threshold <fraction>  rule.keep_threshold. 0.15 = +15%. Absolute value must be 5 or less
+  --revert-threshold <fraction>  rule.revert_threshold. -0.10 = -10%. Absolute value must be 5 or less
   --min-denominator <N>  rule.min_denominator, users per window
   --min-goal-events <N>  rule.min_goal_events across both windows
   --baseline-from <date>  Explicit baseline date_from (with --baseline-to, --compare-from, --compare-to)
