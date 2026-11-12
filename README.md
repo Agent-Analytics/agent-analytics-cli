@@ -174,12 +174,14 @@ Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce whe
 npx --yes @agent-analytics/cli@0.5.40 query my-site --metrics event_count --count-mode raw
 ```
 
-`sum`, `avg`, `p50`, `p75`, and `p95` are numeric property metrics on the same Pro `POST /query` read. They require `--property <key>`. The key is the event property itself (`cwv_lcp`, `revenue`): letters, numbers, and underscores, at most 128 characters, with no `properties.` prefix. Only JSON numbers are aggregated. Each row includes the requested metric plus `n` and `skipped`. Percentiles are nearest-rank: `percentile_method` is `nearest_rank` when a percentile is requested, and `null` for sum or avg only. Web Vitals LCP is `cwv_lcp` on `$web_vitals`, not a field on `page_view`.
+`sum`, `avg`, `p50`, `p75`, and `p95` are numeric property metrics on the same Pro `POST /query` read. They require `--property <key>`. The key is the event property itself (`cwv_lcp`, `revenue`): letters, numbers, and underscores, at most 128 characters, with no `properties.` prefix. Only JSON numbers are aggregated. Each row includes the requested metric plus `n` and `skipped`. An empty aggregation row prints `n` 0 and `skipped` 0. Percentiles are nearest-rank: `percentile_method` is `nearest_rank` when a percentile is requested, and `null` for sum or avg only. The stock tracker sends `$web_vitals` only with `data-track-vitals`. Some sites attach `cwv_*` to `page_view`.
 
 ```bash
 npx --yes @agent-analytics/cli@0.5.40 query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"$web_vitals"}]'
 npx --yes @agent-analytics/cli@0.5.40 query shop --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'
 ```
+
+If the `$web_vitals` query returns `n` 0, check which event carries `cwv_lcp` (properties) and use that, for example `page_view`.
 
 `funnel` is for ordered conversion, `query` is for aggregate slicing/grouping, and `paths` is for bounded session-local journey exploration. For precise funnels, prefer structured JSON steps with per-step filters:
 
@@ -261,6 +263,8 @@ npx --yes @agent-analytics/cli@0.5.40 compare my-site --ship-date 2026-11-04 --d
 npx --yes @agent-analytics/cli@0.5.40 compare my-site --ship-date 2026-11-05 --days 7 --goal signup --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower
 npx --yes @agent-analytics/cli@0.5.40 compare shop --ship-date 2026-11-04 --days 7 --goal purchase --metric 'sum(revenue)'
 ```
+
+If the `$web_vitals` metric returns `n` 0, check which event carries `cwv_lcp` (properties) and use that as `--metric-event`, for example `page_view`. The stock tracker sends `$web_vitals` only with `data-track-vitals`. Some sites attach `cwv_*` to `page_view`.
 
 `errors` is a Pro read on `GET /errors`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. It groups `$error` events. The tracker sends `message`, `source`, `line`, and `col` and does not send a stack. Grouping uses the normalized message, the source filename, and `line`. `--since` defaults to `7d` and accepts `7d` or `YYYY-MM-DD`. `--until` is an optional `YYYY-MM-DD` end; omitted, the API uses today UTC. `--limit` defaults to 20 and the maximum is 100. `--new-since` is a `YYYY-MM-DD` date or an annotation title. Zero annotation matches is HTTP 400. More than one match is HTTP 400 with `matches` of `occurred_at` and `title`, which the CLI prints. Each group includes `fingerprint`, `message`, `source`, `line`, `count`, `users`, `sessions`, `first_seen`, `last_seen`, and `top_paths` (up to 3). When `--new-since` is set, `new_since` is true when `first_seen` is on or after that date. `first_seen` uses every stored `$error` for that fingerprint, not only the window. Every response includes boolean `approximate`. When `approximate` is true, `caps` is an array of the caps that were hit: `distinct_triples` and `window_rows`. The human output lists `caps`. `--json` prints the API body.
 

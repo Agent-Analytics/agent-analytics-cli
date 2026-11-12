@@ -1512,6 +1512,19 @@ const cmdSessions = withApi(async (api, project, opts = {}) => {
 });
 
 const AGGREGATE_METRICS = new Set(['sum', 'avg', 'p50', 'p75', 'p95']);
+
+function isEmptyAggregationRow(row, metrics) {
+  const aggregates = (metrics || []).filter((metric) => AGGREGATE_METRICS.has(metric));
+  if (aggregates.length === 0) return false;
+  return aggregates.every((metric) => row?.[metric] == null || row[metric] === '');
+}
+
+function queryCell(row, key, emptyAggregation) {
+  const value = row?.[key];
+  if (emptyAggregation && (key === 'n' || key === 'skipped') && (value == null || value === '')) return 0;
+  return value ?? '';
+}
+
 const PROPERTY_KEY_PATTERN = /^[a-zA-Z0-9_]{1,128}$/;
 
 function invalidPropertyKeyMessage(flag) {
@@ -1556,8 +1569,9 @@ Property filters must use the canonical properties.<key> form.
 Example: properties.referrer, properties.utm_source, properties.first_utm_source
 --property is the key alone (cwv_lcp, revenue), using letters, numbers, and underscores, at most 128 characters.
 sum, avg, p50, p75, and p95 require --property. Only JSON numbers are aggregated. Rows include n and skipped whenever an aggregation is requested.
+An empty aggregation row prints n 0 and skipped 0.
 Percentiles are nearest-rank. percentile_method is nearest_rank when a percentile is requested, and null for sum or avg only.
-Web Vitals LCP is cwv_lcp on $web_vitals. Filter that event; it is not a field on page_view.
+The stock tracker sends $web_vitals only with data-track-vitals. Some sites attach cwv_* to page_view.
 Email lookup sends the email to Agent Analytics over HTTPS and matches with a project-scoped HMAC index. Raw email is not stored in event rows or profile traits.
 Invalid filter fields now fail loudly instead of being ignored.
 
@@ -1565,6 +1579,7 @@ ${BOLD}Examples:${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode session_then_user${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"$web_vitals"}]'${RESET}
+  If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view.
   ${CYAN}npx @agent-analytics/cli query my-site --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}
@@ -1616,10 +1631,16 @@ ${BOLD}Examples:${RESET}
     return;
   }
 
+  const aggregateRequested = (metrics || []).some((metric) => AGGREGATE_METRICS.has(metric));
   const keys = [...new Set(data.rows.flatMap((row) => Object.keys(row || {})))];
+  if (aggregateRequested) {
+    if (!keys.includes('n')) keys.push('n');
+    if (!keys.includes('skipped')) keys.push('skipped');
+  }
   log(`  ${BOLD}${keys.join('\t')}${RESET}`);
   for (const row of data.rows) {
-    log(`  ${keys.map((key) => row?.[key] ?? '').join('\t')}`);
+    const emptyAggregation = isEmptyAggregationRow(row, metrics);
+    log(`  ${keys.map((key) => queryCell(row, key, emptyAggregation)).join('\t')}`);
   }
   log(`\n${DIM}${data.count} rows${RESET}`);
   log('');
@@ -1794,6 +1815,7 @@ Examples:
   npx @agent-analytics/cli compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
   npx @agent-analytics/cli compare my-site --ship-date 2026-11-04 --days 7 --goal template_opened --exclude-denominator "properties.title=Page not found | grokbotpages.com"
   npx @agent-analytics/cli compare my-site --ship-date 2026-11-05 --days 7 --goal signup --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower
+  If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view. The stock tracker sends $web_vitals only with data-track-vitals. Some sites attach cwv_* to page_view.
   npx @agent-analytics/cli compare my-site --goal signup --baseline-from 2026-04-01 --baseline-to 2026-04-07 --compare-from 2026-04-09 --compare-to 2026-04-15 --json`;
 }
 

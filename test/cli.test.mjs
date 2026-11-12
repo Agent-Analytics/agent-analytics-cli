@@ -2386,7 +2386,13 @@ describe('CLI', () => {
       assert.ok(output.includes('--count-mode session_then_user'));
       assert.ok(output.includes('--property  Numeric event property key'));
       assert.ok(output.includes('--metrics p75 --property cwv_lcp --filter \'[{"field":"event","op":"eq","value":"$web_vitals"}]\''));
+      assert.ok(output.includes('If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view.'));
+      assert.ok(output.includes('data-track-vitals'));
+      assert.ok(output.includes('Some sites attach cwv_* to page_view.'));
+      assert.ok(!output.includes('not a field on page_view'));
+      assert.ok(!output.includes('not on page_view'));
       assert.ok(output.includes('Rows include n and skipped'));
+      assert.ok(output.includes('An empty aggregation row prints n 0 and skipped 0.'));
       assert.ok(output.includes('nearest-rank'));
       assert.ok(!output.includes('mixed session/no-session duplicates collapse by user'));
     });
@@ -2435,6 +2441,45 @@ describe('CLI', () => {
         assert.ok(plain.includes('10'));
         assert.ok(plain.includes('skipped'));
         assert.ok(plain.includes('2'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints n 0 and skipped 0 for an empty aggregation row', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          period: { from: '2026-11-05', to: '2026-11-12' },
+          metrics: ['p75'],
+          property: 'cwv_lcp',
+          percentile_method: 'nearest_rank',
+          rows: [
+            { event: '$web_vitals', p75: null },
+            { event: 'checkout', p75: null, n: null, skipped: null },
+            { event: 'page_view', p75: 1800, n: 158, skipped: 3 },
+          ],
+          count: 3,
+        }));
+      });
+
+      try {
+        const result = await run([
+          'query', 'my-site',
+          '--metrics', 'p75',
+          '--property', 'cwv_lcp',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.ok(plain.includes('$web_vitals\t\t0\t0'));
+        assert.ok(plain.includes('checkout\t\t0\t0'));
+        assert.ok(plain.includes('page_view\t1800\t158\t3'));
       } finally {
         await server.close();
       }
@@ -3691,6 +3736,10 @@ describe('CLI', () => {
       assert.ok(plain.includes('free read'));
       assert.ok(plain.includes('ship day + 8'));
       assert.ok(plain.includes("--metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower"));
+      assert.ok(plain.includes('If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view.'));
+      assert.ok(plain.includes('data-track-vitals'));
+      assert.ok(!plain.includes('not a field on page_view'));
+      assert.ok(!plain.includes('not on page_view'));
       assert.ok(plain.includes('interval_method: "none"'));
       assert.ok(plain.includes('no_interval_for_metric'));
       assert.ok(plain.includes('raw_lift'));
