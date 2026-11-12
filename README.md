@@ -70,6 +70,8 @@ sessions-dist <name>             Session duration distribution
 events <name>                    Raw event log, including each event's country
 sessions <name>                  Individual session records
 query <name>                     Flexible analytics query (metrics, group_by, filters)
+compare <name>                   Free before/after read. A 7-day read should run on ship day + 8
+annotate <name> --title <text>   Append one project annotation without replacing context
 properties <name>                Discover event names & property keys
 properties-received <name>       Property keys grouped by received event name
 context get <name>               Read stored goals, activation events, event glossary, and annotations
@@ -232,6 +234,18 @@ npx --yes @agent-analytics/cli@0.5.37 context set my-site --json '{
     }
   ]
 }'
+```
+
+`annotate` appends one annotation on `POST /project-context/annotations`. It does not replace goals, glossary, activation events, or earlier annotations. The same `occurred_at` and title returns HTTP 200 with `appended: false` and the stored annotation. A project can hold 100 annotations; the next append returns HTTP 409. `context set` still replaces the whole document.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.37 annotate my-site --title "Changed pricing page offer" --note "Moved annual plan discount above the fold." --at 2026-04-25T13:00:00.000Z
+```
+
+`compare` is a free read on `POST /compare`. A successful call counts as one metered read. Pass `--ship-date` and optional `--days` (`window_days`, a multiple of 7 from 1 to 90, default 7), or pass both windows with `--baseline-from`, `--baseline-to`, `--compare-from`, and `--compare-to`. Ship day is excluded from both windows. A 7-day read should run on ship day + 8 so the compare window is not a partial day. `--denominator` defaults to `page_view`. Thresholds are fractions: `--keep-threshold 0.15` means +15%. `--json` prints the API body, including `verdict`, `reason`, `lift`, the 90% interval, and `guardrails`.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.37 compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
 ```
 
 ## Feedback

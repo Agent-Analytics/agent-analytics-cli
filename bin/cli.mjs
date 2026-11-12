@@ -17,6 +17,8 @@
  *   npx @agent-analytics/cli events <name>        — Get recent events
  *   npx @agent-analytics/cli journey <name>       — Show one user's chronological journey
  *   npx @agent-analytics/cli query <name>         — Flexible analytics query
+ *   npx @agent-analytics/cli compare <name>       — Free before/after read: keep, revert, or extend
+ *   npx @agent-analytics/cli annotate <name>      — Append one project annotation
  *   npx @agent-analytics/cli properties <name>    — Discover event names & property keys
  *   npx @agent-analytics/cli properties-received <name> — Show property keys per event
  *   npx @agent-analytics/cli sessions <name>      — List individual sessions
@@ -32,6 +34,7 @@
  *   npx @agent-analytics/cli project <name-or-id>  — Get single project details
  *   npx @agent-analytics/cli context get <project> — Get stored project analytics context
  *   npx @agent-analytics/cli context set <project> --json '{...}' — Set goals, activation events, glossary
+ *   npx @agent-analytics/cli annotate <project> --title "..." — Append one annotation without replacing context
  *   npx @agent-analytics/cli portfolio-context get — Get stored account portfolio context
  *   npx @agent-analytics/cli portfolio-context set --json '{...}' — Set goals, surface roles, milestones, glossary
  *   npx @agent-analytics/cli portfolios list — List identity lookup portfolios
@@ -1720,6 +1723,270 @@ const cmdContext = withApi(async (api, subcommand, project, opts = {}) => {
   logProjectContext(data);
 });
 
+function compareUsageText() {
+  return `Usage: npx @agent-analytics/cli compare <project> --goal <event> [--ship-date <YYYY-MM-DD>] [--days <N>] [--denominator <event>] [--keep-threshold <fraction>] [--revert-threshold <fraction>] [--min-denominator <N>] [--min-goal-events <N>] [--filter <json>] [--json]
+       npx @agent-analytics/cli compare <project> --goal <event> --baseline-from <YYYY-MM-DD> --baseline-to <YYYY-MM-DD> --compare-from <YYYY-MM-DD> --compare-to <YYYY-MM-DD>
+
+Compare is a free read. A successful call counts as one metered read. It is not a Pro-only query.
+A 7-day read should run on ship day + 8. Ship day + 7 ends on a partial day and sets guardrails.incomplete_current_day.
+Ship day is excluded from both windows. --days is window_days: an integer multiple of 7, from 1 to 90. Omitted with --ship-date, it defaults to 7.
+--denominator defaults to page_view. Do not filter on event; pass --goal and --denominator.
+Thresholds are fractions on rule.keep_threshold and rule.revert_threshold. 0.15 means +15%, not 15.
+Explicit windows are baseline and compare objects with date_from and date_to. Do not combine them with --ship-date or --days.
+--json prints the API response: verdict keep, revert, or extend, plus lift, a 90% interval, and guardrails.
+
+Examples:
+  npx @agent-analytics/cli compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
+  npx @agent-analytics/cli compare my-site --goal signup --baseline-from 2026-04-01 --baseline-to 2026-04-07 --compare-from 2026-04-09 --compare-to 2026-04-15 --json`;
+}
+
+function annotateUsageText() {
+  return `Usage: npx @agent-analytics/cli annotate <project> --title <text> [--note <text>] [--at <ISO-8601 datetime>] [--json]
+
+Appends one annotation on POST /project-context/annotations. It does not replace goals, glossary, activation events, or earlier annotations.
+Fields are project, occurred_at, title, and optional note. --title is at most 120 characters. --note is at most 500 characters.
+The same occurred_at and title returns HTTP 200 with appended: false and the stored annotation. The new note is not written.
+The cap is 100 annotations. The next append returns HTTP 409.
+--at defaults to the current UTC time. Example: 2026-04-25T13:00:00.000Z.
+
+Example:
+  npx @agent-analytics/cli annotate my-site --title "Changed pricing page offer" --note "Moved annual plan discount above the fold." --at 2026-04-25T13:00:00.000Z`;
+}
+
+function printCompareUsage() {
+  log(compareUsageText());
+}
+
+function printAnnotateUsage() {
+  log(annotateUsageText());
+}
+
+function parseWindowDays(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  if (!/^-?\d+$/.test(String(raw).trim())) error('--days must be an integer');
+  const days = Number(raw);
+  if (days < 1 || days > 90) error('--days must be from 1 to 90');
+  if (days % 7 !== 0) {
+    error(`--days must be a multiple of 7 when using --ship-date so the before and after windows cover the same weekdays; got ${days}. Pass baseline and compare dates to use another length.`);
+  }
+  return days;
+}
+
+function parseRelativeThreshold(flag, raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  if (String(raw).startsWith('--') || !Number.isFinite(Number(raw))) {
+    error(`${flag} must be a finite number (a relative change, so 0.15 means +15%)`);
+  }
+  return Number(raw);
+}
+
+function parseCountMinimum(flag, raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  if (!/^\d+$/.test(String(raw).trim())) error(`${flag} must be an integer of 0 or more`);
+  return Number(raw);
+}
+
+function parseCompareDate(flag, raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00.000Z`))) {
+    error(`${flag} must be a YYYY-MM-DD date`);
+  }
+  return value;
+}
+
+function parseOccurredAt(raw) {
+  if (raw == null || String(raw).trim() === '') return new Date().toISOString();
+  const value = String(raw).trim();
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value) || Number.isNaN(Date.parse(value))) {
+    error('--at must be an ISO-8601 datetime, for example 2026-04-25T13:00:00.000Z');
+  }
+  return value;
+}
+
+function formatFraction(value, { signed = false } = {}) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return String(value);
+  const text = (Math.round(value * 1000) / 10).toFixed(1).replace(/\.0$/, '');
+  if (signed && value > 0) return `+${text}%`;
+  return `${text}%`;
+}
+
+function logAnnotationEntries(title, annotations) {
+  if (!Array.isArray(annotations) || annotations.length === 0) return;
+  heading(title);
+  for (const entry of annotations) {
+    const windows = Array.isArray(entry.windows) && entry.windows.length ? ` (${entry.windows.join(', ')})` : '';
+    log(`  - ${entry.occurred_at || ''}${entry.occurred_at ? ': ' : ''}${entry.title || ''}${windows}`);
+    if (entry.note) log(`    ${DIM}${entry.note}${RESET}`);
+  }
+  log('');
+}
+
+function logCompareWindow(label, window) {
+  if (!window) return;
+  const rate = typeof window.rate === 'number' ? formatFraction(window.rate) : window.rate;
+  log(`  ${BOLD}${label}:${RESET} ${window.date_from} → ${window.date_to}  ${DIM}${window.day_count} days${RESET}`);
+  log(`    ${rate}  ${window.goal_event_count} goal events / ${window.denominator_unique_users} denominator users  ${DIM}${window.goal_unique_users} goal users, ${window.count_mode}${RESET}`);
+}
+
+function logTrafficShifts(mix) {
+  const properties = mix?.properties || {};
+  for (const name of Object.keys(properties)) {
+    const shifts = properties[name]?.shifts || [];
+    for (const shift of shifts) {
+      const from = typeof shift.baseline_share === 'number' ? formatFraction(shift.baseline_share) : shift.baseline_share;
+      const to = typeof shift.compare_share === 'number' ? formatFraction(shift.compare_share) : shift.compare_share;
+      log(`    ${name} ${shift.value}: ${from} → ${to}`);
+    }
+  }
+}
+
+function logCompareResult(project, data) {
+  heading(`Compare: ${data.project || project}`);
+  log('');
+  const color = data.verdict === 'keep' ? GREEN : data.verdict === 'revert' ? RED : YELLOW;
+  log(`  ${BOLD}Verdict:${RESET} ${color}${data.verdict || ''}${RESET}${data.reason ? `  ${DIM}${data.reason}${RESET}` : ''}`);
+  if (data.reason_detail) log(`  ${data.reason_detail}`);
+  if (data.ship_date) log(`  ${DIM}Ship date:${RESET} ${data.ship_date}  ${DIM}window_days:${RESET} ${data.window_days}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
+  else if (data.window_source) log(`  ${DIM}window_source:${RESET} ${data.window_source}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
+  if (data.goal_event) log(`  ${DIM}Goal:${RESET} ${data.goal_event}  ${DIM}Denominator:${RESET} ${data.denominator_event}  ${DIM}count_mode:${RESET} ${data.count_mode}`);
+  log('');
+  logCompareWindow('Baseline', data.windows?.baseline);
+  logCompareWindow('Compare', data.windows?.compare);
+  log('');
+  log(`  ${BOLD}Lift:${RESET} ${data.lift == null ? `${DIM}undefined${RESET}` : formatFraction(data.lift, { signed: true })}`);
+  if (data.interval) {
+    log(`  ${BOLD}90% interval:${RESET} ${formatFraction(Number(data.interval.low), { signed: true })} to ${formatFraction(Number(data.interval.high), { signed: true })}  ${DIM}${data.interval.method || ''}${RESET}`);
+    log(`  ${DIM}excludes_zero:${RESET} ${data.interval.excludes_zero}`);
+  } else {
+    log(`  ${BOLD}90% interval:${RESET} ${DIM}not computed${RESET}`);
+  }
+  if (data.rule?.defaults_note) {
+    log('');
+    log(`  ${DIM}${data.rule.defaults_note}${RESET}`);
+  }
+  const guardrails = data.guardrails;
+  if (guardrails) {
+    log('');
+    heading('Guardrails:');
+    log(`  ${BOLD}Confounded:${RESET} ${guardrails.confounded ? `${YELLOW}yes${RESET}` : `${GREEN}no${RESET}`}`);
+    if (guardrails.incomplete_current_day) {
+      log(`  ${YELLOW}Incomplete current day.${RESET} A 7-day read should run on ship day + 8.`);
+    }
+    if (guardrails.traffic_mix) {
+      const shifted = guardrails.traffic_mix.shifted ? `${YELLOW}shifted${RESET}` : 'no shift';
+      log(`  ${BOLD}Traffic mix:${RESET} ${shifted}`);
+      if (guardrails.traffic_mix.note) log(`    ${DIM}${guardrails.traffic_mix.note}${RESET}`);
+      logTrafficShifts(guardrails.traffic_mix);
+    } else if (guardrails.traffic_mix_note) {
+      log(`  ${BOLD}Traffic mix:${RESET} ${guardrails.traffic_mix_note}`);
+    }
+    if (guardrails.caveat) log(`  ${DIM}${guardrails.caveat}${RESET}`);
+    log('');
+    logAnnotationEntries('Annotations in either window:', guardrails.annotations);
+  }
+}
+
+function parseCompareFilters(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  let filters;
+  try {
+    filters = JSON.parse(raw);
+  } catch {
+    error('--filter must be a JSON array. Example: --filter \'[{"field":"country","op":"eq","value":"US"}]\'');
+  }
+  if (!Array.isArray(filters)) error('--filter must be a JSON array. Example: --filter \'[{"field":"country","op":"eq","value":"US"}]\'');
+  if (filters.some((filter) => filter && filter.field === 'event')) {
+    error('filters cannot set event; pass --goal and --denominator');
+  }
+  return filters;
+}
+
+function buildCompareRule(opts) {
+  const rule = {};
+  if (opts.keepThreshold != null) rule.keep_threshold = opts.keepThreshold;
+  if (opts.revertThreshold != null) rule.revert_threshold = opts.revertThreshold;
+  if (opts.minDenominator != null) rule.min_denominator = opts.minDenominator;
+  if (opts.minGoalEvents != null) rule.min_goal_events = opts.minGoalEvents;
+  return Object.keys(rule).length > 0 ? rule : undefined;
+}
+
+const cmdCompare = withApi(async (api, project, opts = {}) => {
+  if (!project || String(project).startsWith('--')) error(compareUsageText());
+  if (!opts.goal || String(opts.goal).startsWith('--')) error(compareUsageText());
+
+  const windowDays = parseWindowDays(opts.days);
+  const shipDate = parseCompareDate('--ship-date', opts.shipDate);
+  const baselineFrom = parseCompareDate('--baseline-from', opts.baselineFrom);
+  const baselineTo = parseCompareDate('--baseline-to', opts.baselineTo);
+  const compareFrom = parseCompareDate('--compare-from', opts.compareFrom);
+  const compareTo = parseCompareDate('--compare-to', opts.compareTo);
+  const hasBaseline = baselineFrom != null || baselineTo != null;
+  const hasCompareWindow = compareFrom != null || compareTo != null;
+  const hasExplicit = hasBaseline || hasCompareWindow;
+
+  if (shipDate && hasExplicit) error('Use either --ship-date or baseline and compare windows, not both.');
+  if (!shipDate && !hasExplicit) error(compareUsageText());
+  if (hasExplicit && (!baselineFrom || !baselineTo || !compareFrom || !compareTo)) {
+    error('Baseline and compare windows are both required. Pass --baseline-from, --baseline-to, --compare-from, and --compare-to.');
+  }
+  if (hasExplicit && windowDays != null) error('--days applies to --ship-date. Omit it when passing baseline and compare dates.');
+  if (windowDays != null && !shipDate) error('--days applies to --ship-date.');
+
+  const data = await api.compare(project, {
+    goal_event: opts.goal,
+    denominator_event: opts.denominator || undefined,
+    filters: parseCompareFilters(opts.filter),
+    ship_date: shipDate,
+    window_days: windowDays,
+    baseline: hasExplicit ? { date_from: baselineFrom, date_to: baselineTo } : undefined,
+    compare: hasExplicit ? { date_from: compareFrom, date_to: compareTo } : undefined,
+    rule: buildCompareRule({
+      keepThreshold: parseRelativeThreshold('--keep-threshold', opts.keepThreshold),
+      revertThreshold: parseRelativeThreshold('--revert-threshold', opts.revertThreshold),
+      minDenominator: parseCountMinimum('--min-denominator', opts.minDenominator),
+      minGoalEvents: parseCountMinimum('--min-goal-events', opts.minGoalEvents),
+    }),
+  });
+
+  if (opts.jsonOutput) {
+    printJson(data);
+    return;
+  }
+  logCompareResult(project, data);
+});
+
+function logStoredAnnotation(data, sent) {
+  const annotation = data.annotation || sent;
+  log(`  ${annotation.occurred_at || sent.occurred_at}: ${annotation.title || sent.title}`);
+  if (annotation.note) log(`    ${DIM}${annotation.note}${RESET}`);
+  if (data.annotation_count != null) log(`  ${DIM}annotation_count:${RESET} ${data.annotation_count}`);
+}
+
+const cmdAnnotate = withApi(async (api, project, opts = {}) => {
+  if (!project || String(project).startsWith('--')) error(annotateUsageText());
+  const title = typeof opts.title === 'string' ? opts.title.trim() : '';
+  if (!title || title.startsWith('--')) error(annotateUsageText());
+  const note = typeof opts.note === 'string' ? opts.note.trim() : '';
+  const occurredAt = parseOccurredAt(opts.at);
+  const sent = {
+    occurred_at: occurredAt,
+    title,
+    ...(note ? { note } : {}),
+  };
+  const data = await api.appendProjectAnnotation(project, sent);
+  if (opts.jsonOutput) {
+    printJson(data);
+    return;
+  }
+  if (data.appended === false) {
+    warn(`Annotation already stored for ${data.project || project} (appended: false)`);
+  } else {
+    success(`Annotation stored for ${data.project || project}`);
+  }
+  logStoredAnnotation(data, sent);
+});
+
 const cmdPortfolioContext = withApi(async (subcommandApi, subcommand, opts = {}) => {
   if (!subcommand || !['get', 'set'].includes(subcommand)) {
     error('Usage: npx @agent-analytics/cli portfolio-context <get|set> [--json \'{...}\']');
@@ -2400,6 +2667,8 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}journey${RESET} <name>         Chronological journey by --user-id or --email
   ${CYAN}sessions${RESET} <name>        Individual session records
   ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, country)
+  ${CYAN}compare${RESET} <name>         Free before/after read. A 7-day read should run on ship day + 8
+  ${CYAN}annotate${RESET} <name>        Append one annotation (duplicate returns appended: false)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
   ${CYAN}context get${RESET} <name>     Read stored goals, activation events, and event glossary
   ${CYAN}context set${RESET} <name>     Set compact project context with --json
@@ -2442,7 +2711,7 @@ ${BOLD}ACCOUNT${RESET}
   ${CYAN}delete${RESET} <project>       Delete a project by name or id
 
 ${BOLD}KEY OPTIONS${RESET}
-  --days <N>         Lookback window in days (default: 7)
+  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90
   --limit <N>        Max results (default: 100)
   --domain <url>     Primary surface URL/origin (required for create)
   --source-scan <id> Link project creation to a prior website analysis
@@ -2458,7 +2727,20 @@ ${BOLD}KEY OPTIONS${RESET}
   --filter <json>    Filters for query (e.g. '[{"field":"country","op":"eq","value":"US"}]')
   --interval <N>     Live view refresh in seconds (default: 5)
   --window <N>       Live view time window in seconds (default: 60)
-  --goal <event>     Goal event for paths and experiments
+  --goal <event>     Goal event for paths, experiments, and compare
+  --ship-date <date> Compare ship date (YYYY-MM-DD). Ship day is excluded from both windows
+  --denominator <event>  Compare denominator event (default page_view)
+  --keep-threshold <fraction>  rule.keep_threshold. 0.15 means +15% relative lift
+  --revert-threshold <fraction>  rule.revert_threshold. -0.10 means -10%
+  --min-denominator <N>  rule.min_denominator, users per window
+  --min-goal-events <N>  rule.min_goal_events across both windows
+  --baseline-from <date>  Explicit baseline date_from (with --baseline-to, --compare-from, --compare-to)
+  --baseline-to <date>    Explicit baseline date_to
+  --compare-from <date>   Explicit compare date_from
+  --compare-to <date>     Explicit compare date_to
+  --title <text>     Annotation title for annotate (max 120 characters)
+  --note <text>      Optional annotation note (max 500 characters)
+  --at <datetime>    Annotation occurred_at (ISO-8601). Defaults to now
   --max-steps <N>    Max path steps before truncation (1-5)
   --entry-limit <N>  Max entry pages to include (1-20)
   --path-limit <N>   Max children kept at each path branch (1-10)
@@ -2543,6 +2825,7 @@ function isDemoMutation(commandName, commandArgs) {
   if (commandName === 'context') {
     return commandArgs[1] === 'set';
   }
+  if (commandName === 'annotate') return true;
   if (commandName === 'portfolios') {
     return ['create', 'update', 'delete'].includes(commandArgs[1]);
   }
@@ -2700,6 +2983,40 @@ try {
       await cmdSessions(args[1], {
         since: getArg('--since'),
         limit: getArg('--limit') ? parseInt(getArg('--limit'), 10) : undefined,
+      });
+      break;
+    case 'compare':
+      if (hasHelpFlag(args)) {
+        printCompareUsage();
+        break;
+      }
+      await cmdCompare(args[1] && !args[1].startsWith('--') ? args[1] : null, {
+        shipDate: getArg('--ship-date'),
+        days: getArg('--days'),
+        baselineFrom: getArg('--baseline-from'),
+        baselineTo: getArg('--baseline-to'),
+        compareFrom: getArg('--compare-from'),
+        compareTo: getArg('--compare-to'),
+        denominator: getArg('--denominator'),
+        goal: getArg('--goal'),
+        filter: getArg('--filter'),
+        keepThreshold: getArg('--keep-threshold'),
+        revertThreshold: getArg('--revert-threshold'),
+        minDenominator: getArg('--min-denominator'),
+        minGoalEvents: getArg('--min-goal-events'),
+        jsonOutput: args.includes('--json'),
+      });
+      break;
+    case 'annotate':
+      if (hasHelpFlag(args)) {
+        printAnnotateUsage();
+        break;
+      }
+      await cmdAnnotate(args[1] && !args[1].startsWith('--') ? args[1] : null, {
+        title: getArg('--title'),
+        note: getArg('--note'),
+        at: getArg('--at'),
+        jsonOutput: args.includes('--json'),
       });
       break;
     case 'query':

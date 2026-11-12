@@ -356,6 +356,68 @@ describe('AgentAnalyticsAPI', () => {
         email: 'alice@example.com',
       }));
     });
+
+    it('compare → POST /compare sends ship_date fields and omits unset optionals', async () => {
+      await api.compare('my-site', { goal_event: 'signup', ship_date: '2026-04-08' });
+      assert.equal(lastUrl, 'https://api.test/compare');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        goal_event: 'signup',
+        ship_date: '2026-04-08',
+      }));
+    });
+
+    it('compare → POST /compare nests explicit windows and a partial rule', async () => {
+      await api.compare('my-site', {
+        goal_event: 'signup',
+        denominator_event: 'page_view',
+        filters: [{ field: 'country', op: 'eq', value: 'US' }],
+        window_days: 14,
+        baseline: { date_from: '2026-04-01', date_to: '2026-04-07' },
+        compare: { date_from: '2026-04-09', date_to: '2026-04-15' },
+        rule: { keep_threshold: 0.15 },
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        goal_event: 'signup',
+        denominator_event: 'page_view',
+        filters: [{ field: 'country', op: 'eq', value: 'US' }],
+        window_days: 14,
+        baseline: { date_from: '2026-04-01', date_to: '2026-04-07' },
+        compare: { date_from: '2026-04-09', date_to: '2026-04-15' },
+        rule: { keep_threshold: 0.15 },
+      }));
+    });
+
+    it('appendProjectAnnotation → POST /project-context/annotations omits an empty note', async () => {
+      await api.appendProjectAnnotation('my-site', {
+        occurred_at: '2026-04-25T13:00:00.000Z',
+        title: 'Changed pricing page offer',
+        note: '',
+      });
+      assert.equal(lastUrl, 'https://api.test/project-context/annotations');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        occurred_at: '2026-04-25T13:00:00.000Z',
+        title: 'Changed pricing page offer',
+      }));
+    });
+
+    it('appendProjectAnnotation includes a note when one is set', async () => {
+      await api.appendProjectAnnotation('my-site', {
+        occurred_at: '2026-04-25T13:00:00.000Z',
+        title: 'Changed pricing page offer',
+        note: 'Moved annual plan discount above the fold.',
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        occurred_at: '2026-04-25T13:00:00.000Z',
+        title: 'Changed pricing page offer',
+        note: 'Moved annual plan discount above the fold.',
+      }));
+    });
   });
 
 });
