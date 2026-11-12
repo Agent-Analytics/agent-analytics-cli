@@ -15,6 +15,7 @@
  *   npx @agent-analytics/cli bot-traffic <name>   — Automated traffic filtered from tracking
  *   npx @agent-analytics/cli stats <name>         — Get stats for a project
  *   npx @agent-analytics/cli events <name>        — Get recent events
+ *   npx @agent-analytics/cli errors <name>        — Grouped $error events
  *   npx @agent-analytics/cli journey <name>       — Show one user's chronological journey
  *   npx @agent-analytics/cli query <name>         — Flexible analytics query
  *   npx @agent-analytics/cli compare <name>       — Free before/after read: keep, revert, or extend
@@ -1510,34 +1511,85 @@ const cmdSessions = withApi(async (api, project, opts = {}) => {
   log('');
 });
 
+const AGGREGATE_METRICS = new Set(['sum', 'avg', 'p50', 'p75', 'p95']);
+
+function isEmptyAggregationRow(row, metrics) {
+  const aggregates = (metrics || []).filter((metric) => AGGREGATE_METRICS.has(metric));
+  if (aggregates.length === 0) return false;
+  return aggregates.every((metric) => row?.[metric] == null || row[metric] === '');
+}
+
+function queryCell(row, key, emptyAggregation) {
+  const value = row?.[key];
+  if (emptyAggregation && (key === 'n' || key === 'skipped') && (value == null || value === '')) return 0;
+  return value ?? '';
+}
+
+const PROPERTY_KEY_PATTERN = /^[a-zA-Z0-9_]{1,128}$/;
+
+function invalidPropertyKeyMessage(flag) {
+  return `${flag} must be the event property key itself, such as lcp or revenue. Use letters, numbers, and underscores, at most 128 characters. Do not prefix it with properties.`;
+}
+
+function parsePropertyKey(flag, raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  if (!PROPERTY_KEY_PATTERN.test(value)) error(invalidPropertyKeyMessage(flag));
+  return value;
+}
+
+function parseQueryMetrics(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const metrics = String(raw).split(',').map((part) => {
+    const token = part.trim();
+    if (!token) return '';
+    const lower = token.toLowerCase();
+    return AGGREGATE_METRICS.has(lower) ? lower : token;
+  }).filter(Boolean);
+  return metrics.length > 0 ? metrics : undefined;
+}
+
 const cmdQuery = withApi(async (api, project, opts = {}) => {
   if (!project) error(`Usage: npx @agent-analytics/cli query <name> [options]
 
-  --metrics   event_count,unique_users,session_count,bounce_rate,avg_duration
+  --metrics   event_count,unique_users,session_count,bounce_rate,avg_duration,sum,avg,p50,p75,p95
+  --property  Numeric event property key. Required with sum, avg, p50, p75, or p95
   --group-by  event,date,user_id,session_id,country
   --filter    JSON array of filters (operators: eq, neq, gt, lt, gte, lte, contains)
   --from      Start date (ISO, e.g. 2026-01-01)
   --to        End date (ISO)
   --days      Shorthand for --from (e.g. --days 30)
   --count-mode raw or session_then_user (default: raw event rows)
-  --order-by  event_count, unique_users, session_count, date, event
+  --order-by  event_count, unique_users, session_count, date, event, sum, avg, p50, p75, p95
   --order     asc or desc
   --limit     Max rows (default 100, max 1000)
   --email     Filter by server-side scoped HMAC email lookup
 
 Property filters must use the canonical properties.<key> form.
 Example: properties.referrer, properties.utm_source, properties.first_utm_source
+--property is the key alone (cwv_lcp, revenue), using letters, numbers, and underscores, at most 128 characters.
+sum, avg, p50, p75, and p95 require --property. Only JSON numbers are aggregated. Rows include n and skipped whenever an aggregation is requested.
+An empty aggregation row prints n 0 and skipped 0.
+Percentiles are nearest-rank. percentile_method is nearest_rank when a percentile is requested, and null for sum or avg only.
+The stock tracker sends $web_vitals only with data-track-vitals. Some sites attach cwv_* to page_view.
 Email lookup sends the email to Agent Analytics over HTTPS and matches with a project-scoped HMAC index. Raw email is not stored in event rows or profile traits.
 Invalid filter fields now fail loudly instead of being ignored.
 
 ${BOLD}Examples:${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode session_then_user${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"$web_vitals"}]'${RESET}
+  If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view.
+  ${CYAN}npx @agent-analytics/cli query my-site --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'${RESET}`);
 
-  const metrics = opts.metrics ? opts.metrics.split(',').map(m => m.trim()) : undefined;
+  const metrics = parseQueryMetrics(opts.metrics);
+  const property = parsePropertyKey('--property', opts.property);
+  if (metrics?.some((metric) => AGGREGATE_METRICS.has(metric)) && !property) {
+    error('--property <key> is required when --metrics includes sum, avg, p50, p75, or p95.');
+  }
   const group_by = opts.group_by ? opts.group_by.split(',').map(g => g.trim()) : undefined;
 
   let filters;
@@ -1553,6 +1605,7 @@ ${BOLD}Examples:${RESET}
     metrics,
     group_by,
     filters,
+    property,
     date_from: opts.date_from || undefined,
     date_to: opts.date_to || undefined,
     count_mode: opts.count_mode || undefined,
@@ -1562,11 +1615,15 @@ ${BOLD}Examples:${RESET}
     ...identityOptions(opts),
   });
 
-  heading(`Query: ${project}`);
+  heading(`Query: ${project}${property ? ` — ${property}` : ''}`);
   log('');
 
   if (data.period) {
     log(`  ${DIM}Period: ${data.period.from} → ${data.period.to}${RESET}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'percentile_method')) {
+    const method = data.percentile_method == null ? 'null' : data.percentile_method;
+    log(`  ${DIM}percentile_method:${RESET} ${method}`);
   }
 
   if (!data.rows || data.rows.length === 0) {
@@ -1574,10 +1631,16 @@ ${BOLD}Examples:${RESET}
     return;
   }
 
-  const keys = Object.keys(data.rows[0]);
+  const aggregateRequested = (metrics || []).some((metric) => AGGREGATE_METRICS.has(metric));
+  const keys = [...new Set(data.rows.flatMap((row) => Object.keys(row || {})))];
+  if (aggregateRequested) {
+    if (!keys.includes('n')) keys.push('n');
+    if (!keys.includes('skipped')) keys.push('skipped');
+  }
   log(`  ${BOLD}${keys.join('\t')}${RESET}`);
   for (const row of data.rows) {
-    log(`  ${keys.map(k => row[k]).join('\t')}`);
+    const emptyAggregation = isEmptyAggregationRow(row, metrics);
+    log(`  ${keys.map((key) => queryCell(row, key, emptyAggregation)).join('\t')}`);
   }
   log(`\n${DIM}${data.count} rows${RESET}`);
   log('');
@@ -1726,8 +1789,9 @@ const cmdContext = withApi(async (api, subcommand, project, opts = {}) => {
 function compareUsageText() {
   return `Usage: npx @agent-analytics/cli compare <project> --goal <event> [--ship-date <YYYY-MM-DD>] [--days <N>] [--denominator <event>] [--exclude-denominator <field>=<value>] [--keep-threshold <fraction>] [--revert-threshold <fraction>] [--min-denominator <N>] [--min-goal-events <N>] [--filter <json>] [--json]
        npx @agent-analytics/cli compare <project> --goal <event> --baseline-from <YYYY-MM-DD> --baseline-to <YYYY-MM-DD> --compare-from <YYYY-MM-DD> --compare-to <YYYY-MM-DD>
+       npx @agent-analytics/cli compare <project> --goal <event> --ship-date <YYYY-MM-DD> --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower
 
-Compare is a free read. A successful call counts as one metered read. It is not a Pro-only query.
+Compare is a free read. A successful call counts as one metered read. It is not a Pro-only query. --metric stays on that same free read.
 The goal is counted as unique converters (count_mode unique_users). A user who fires the goal 3 times counts once. rate is goal_converters / denominator_unique_users.
 A 7-day read should run on ship day + 8. If either window includes today UTC, the verdict is extend with reason incomplete_current_day.
 Ship day is excluded from both windows. --days is window_days: an integer multiple of 7, from 1 to 90. Omitted with --ship-date, it defaults to 7.
@@ -1736,11 +1800,22 @@ Ship day is excluded from both windows. --days is window_days: an integer multip
 Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less.
 Verdicts: extend below_min_sample; extend zero_denominator; extend zero_baseline (lift is null); revert revert_threshold_met only when lift is at or below the revert threshold and the 90% interval is entirely below zero; extend inconclusive; keep keep_threshold_met when lift is at or above the keep threshold and interval.low is above 0; extend interval_includes_zero; extend no_evidence_of_gain.
 Explicit windows are baseline and compare objects with date_from and date_to. Do not combine them with --ship-date or --days.
+--metric reads a numeric property: sum(<key>), avg(<key>), p50(<key>), p75(<key>), or p95(<key>). Example: --metric 'p75(cwv_lcp)'. The key uses letters, numbers, and underscores, at most 128 characters.
+--metric-event is the event whose property is measured. It defaults to the goal event and is omitted from the request unless you set it. Use it when the measured event is not the goal, for example goal signup and metric event $web_vitals.
+--better is higher or lower. Omitted, it defaults to higher. Pass --better lower for cwv_lcp and the other vitals. The direction is not inferred from the property name.
+sum(<key>) compares the sum per unique denominator user (per_user: true). avg and percentiles compare the aggregate itself (per_user: false). Percentiles are nearest-rank.
+lift is (compare value - baseline value) / baseline value, negated when better is lower, so the existing thresholds keep their meaning. raw_lift is that ratio before negation.
+With --metric, each window still includes the conversion rate and user counts, plus value, n, and skipped. v1 returns interval: null and interval_method: "none".
+min_goal_events counts numeric values (n) on metric_event across both windows. min_denominator is still unique denominator users per window. below_min_sample, zero_denominator, and zero_baseline stay in the same order.
+When lift meets the keep or revert threshold, the verdict is extend with reason no_interval_for_metric, and lift is still reported. Lift between the thresholds is extend / no_evidence_of_gain.
+Omit --metric to keep the unique-converter response unchanged, including the 90% interval.
 --json prints the API response, including verdict, reason, reason_detail, lift, the 90% interval, and guardrails.
 
 Examples:
   npx @agent-analytics/cli compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
   npx @agent-analytics/cli compare my-site --ship-date 2026-11-04 --days 7 --goal template_opened --exclude-denominator "properties.title=Page not found | grokbotpages.com"
+  npx @agent-analytics/cli compare my-site --ship-date 2026-11-05 --days 7 --goal signup --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower
+  If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view. The stock tracker sends $web_vitals only with data-track-vitals. Some sites attach cwv_* to page_view.
   npx @agent-analytics/cli compare my-site --goal signup --baseline-from 2026-04-01 --baseline-to 2026-04-07 --compare-from 2026-04-09 --compare-to 2026-04-15 --json`;
 }
 
@@ -1832,11 +1907,38 @@ function logAnnotationEntries(title, annotations) {
 
 function logCompareWindow(label, window) {
   if (!window) return;
-  const rate = typeof window.rate === 'number' ? formatFraction(window.rate) : window.rate;
-  const outside = window.goal_users_outside_denominator == null ? '' : `, ${window.goal_users_outside_denominator} outside the denominator`;
-  log(`  ${BOLD}${label}:${RESET} ${window.date_from} → ${window.date_to}  ${DIM}${window.day_count} days${RESET}`);
-  log(`    ${rate}  ${window.goal_converters} converters / ${window.denominator_unique_users} denominator users`);
-  log(`    ${DIM}${window.goal_unique_users} goal users${outside}, ${window.count_mode}${RESET}`);
+  const days = window.day_count == null ? '' : `  ${DIM}${window.day_count} days${RESET}`;
+  log(`  ${BOLD}${label}:${RESET} ${window.date_from} → ${window.date_to}${days}`);
+  if (window.rate != null || window.goal_converters != null || window.denominator_unique_users != null) {
+    const rate = typeof window.rate === 'number' ? formatFraction(window.rate) : window.rate;
+    const outside = window.goal_users_outside_denominator == null ? '' : `, ${window.goal_users_outside_denominator} outside the denominator`;
+    log(`    ${rate}  ${window.goal_converters} converters / ${window.denominator_unique_users} denominator users`);
+    if (window.goal_unique_users != null || window.count_mode != null || window.goal_users_outside_denominator != null) {
+      const mode = window.count_mode == null ? '' : `, ${window.count_mode}`;
+      log(`    ${DIM}${window.goal_unique_users} goal users${outside}${mode}${RESET}`);
+    }
+  }
+  if (window.value != null || window.n != null || window.skipped != null) {
+    const value = window.value == null ? 'n/a' : window.value;
+    const n = window.n == null ? 'n/a' : window.n;
+    const skipped = window.skipped == null ? 'n/a' : window.skipped;
+    log(`    ${BOLD}value:${RESET} ${value}  ${DIM}n=${n}  skipped=${skipped}${RESET}`);
+  }
+}
+
+function logCompareMetric(data) {
+  if (data.metric == null) return;
+  const info = typeof data.metric === 'object'
+    ? data.metric
+    : { metric: String(data.metric), better: data.better, per_user: data.per_user };
+  const name = info.metric || '';
+  const eventName = info.metric_event ? `  ${DIM}metric_event:${RESET} ${info.metric_event}` : '';
+  const better = info.better ? `  ${DIM}better:${RESET} ${info.better}` : '';
+  const perUser = info.per_user == null ? '' : `  ${DIM}per_user:${RESET} ${info.per_user}`;
+  const method = Object.prototype.hasOwnProperty.call(info, 'percentile_method')
+    ? `  ${DIM}percentile_method:${RESET} ${info.percentile_method == null ? 'null' : info.percentile_method}`
+    : '';
+  log(`  ${DIM}Metric:${RESET} ${name}${eventName}${better}${perUser}${method}`);
 }
 
 function logTrafficShifts(mix) {
@@ -1862,7 +1964,14 @@ function logCompareResult(project, data) {
   }
   if (data.ship_date) log(`  ${DIM}Ship date:${RESET} ${data.ship_date}  ${DIM}window_days:${RESET} ${data.window_days}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
   else if (data.window_source) log(`  ${DIM}window_source:${RESET} ${data.window_source}  ${DIM}weekday_aligned:${RESET} ${data.weekday_aligned}`);
-  if (data.goal_event) log(`  ${DIM}Goal:${RESET} ${data.goal_event}  ${DIM}Denominator:${RESET} ${data.denominator_event}  ${DIM}count_mode:${RESET} ${data.count_mode}`);
+  logCompareMetric(data);
+  if (data.goal_event || data.denominator_event || data.count_mode) {
+    const parts = [];
+    if (data.goal_event) parts.push(`${DIM}Goal:${RESET} ${data.goal_event}`);
+    if (data.denominator_event) parts.push(`${DIM}Denominator:${RESET} ${data.denominator_event}`);
+    if (data.count_mode) parts.push(`${DIM}count_mode:${RESET} ${data.count_mode}`);
+    log(`  ${parts.join('  ')}`);
+  }
   if (Array.isArray(data.denominator_filters) && data.denominator_filters.length > 0) {
     for (const filter of data.denominator_filters) {
       log(`  ${DIM}Exclude denominator:${RESET} ${filter.field} ${filter.op} ${filter.value}`);
@@ -1873,13 +1982,17 @@ function logCompareResult(project, data) {
   logCompareWindow('Compare', data.windows?.compare);
   log('');
   log(`  ${BOLD}Lift:${RESET} ${data.lift == null ? 'n/a' : formatFraction(data.lift, { signed: true })}`);
+  if (data.metric != null || Object.prototype.hasOwnProperty.call(data, 'raw_lift')) {
+    log(`  ${BOLD}Raw lift:${RESET} ${data.raw_lift == null ? 'n/a' : formatFraction(data.raw_lift, { signed: true })}`);
+  }
   if (data.interval) {
     log(`  ${BOLD}90% interval:${RESET} ${formatFraction(Number(data.interval.low), { signed: true })} to ${formatFraction(Number(data.interval.high), { signed: true })}  ${DIM}${data.interval.method || ''}${RESET}`);
     if (data.interval.estimate) log(`  ${DIM}estimate:${RESET} ${data.interval.estimate}`);
     log(`  ${DIM}excludes_zero:${RESET} ${data.interval.excludes_zero}`);
     if (data.interval.note) log(`  ${DIM}${data.interval.note}${RESET}`);
   } else {
-    log(`  ${BOLD}90% interval:${RESET} ${DIM}not computed${RESET}`);
+    const method = data.interval_method ? `  ${DIM}${data.interval_method}${RESET}` : '';
+    log(`  ${BOLD}90% interval:${RESET} ${DIM}not computed${RESET}${method}`);
   }
   if (data.rule?.defaults_note) {
     log('');
@@ -1941,6 +2054,36 @@ function parseCompareFilters(raw) {
   return filters;
 }
 
+function parseCompareMetric(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  const match = value.match(/^(sum|avg|p50|p75|p95)\(([a-zA-Z0-9_]{1,128})\)$/i);
+  if (!match) {
+    error("--metric must be sum(key), avg(key), p50(key), p75(key), or p95(key). Example: --metric 'p75(cwv_lcp)'. The key uses letters, numbers, and underscores, at most 128 characters.");
+  }
+  return `${match[1].toLowerCase()}(${match[2]})`;
+}
+
+function parseMetricEvent(raw, metric) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  if (!metric) error('--metric-event applies only with --metric. It defaults to the goal event.');
+  const value = String(raw).trim();
+  if (value.startsWith('--') || value.length > 128) {
+    error('--metric-event must be an event name, such as $web_vitals. It defaults to the goal event.');
+  }
+  return value;
+}
+
+function parseBetter(raw, metric) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  if (!metric) error("--better applies only with --metric. Example: --metric 'p75(cwv_lcp)' --better lower");
+  const value = String(raw).trim().toLowerCase();
+  if (value !== 'higher' && value !== 'lower') {
+    error('--better must be higher or lower. The default is higher. Use --better lower for vitals such as cwv_lcp, cwv_inp, and cwv_cls.');
+  }
+  return value;
+}
+
 function buildCompareRule(opts) {
   const rule = {};
   if (opts.keepThreshold != null) rule.keep_threshold = opts.keepThreshold;
@@ -1972,6 +2115,9 @@ const cmdCompare = withApi(async (api, project, opts = {}) => {
   if (hasExplicit && windowDays != null) error('--days applies to --ship-date. Omit it when passing baseline and compare dates.');
   if (windowDays != null && !shipDate) error('--days applies to --ship-date.');
 
+  const metric = parseCompareMetric(opts.metric);
+  const better = parseBetter(opts.better, metric);
+  const metricEvent = parseMetricEvent(opts.metricEvent, metric);
   const data = await api.compare(project, {
     goal_event: opts.goal,
     denominator_event: opts.denominator || undefined,
@@ -1987,6 +2133,9 @@ const cmdCompare = withApi(async (api, project, opts = {}) => {
       minDenominator: parseCountMinimum('--min-denominator', opts.minDenominator),
       minGoalEvents: parseCountMinimum('--min-goal-events', opts.minGoalEvents),
     }),
+    metric,
+    metric_event: metricEvent,
+    better,
   });
 
   if (opts.jsonOutput) {
@@ -2025,6 +2174,159 @@ const cmdAnnotate = withApi(async (api, project, opts = {}) => {
     success(`Annotation stored for ${data.project || project}`);
   }
   logStoredAnnotation(data, sent);
+});
+
+function errorsUsageText() {
+  return `Usage: npx @agent-analytics/cli errors <project> [--since 7d|YYYY-MM-DD] [--until YYYY-MM-DD] [--new-since <YYYY-MM-DD|annotation>] [--limit 20] [--json]
+
+Pro read on GET /errors. A successful call counts as one metered read. A free account gets HTTP 403 PRO_REQUIRED and the read is not metered.
+Groups $error events. The tracker sends message, source, line, and col. It does not send a stack. Grouping uses message, source filename, and line.
+--since defaults to 7d. --until is a YYYY-MM-DD date; omitted, the API uses today UTC. --limit defaults to 20 and must be an integer from 1 to 100.
+--new-since is a YYYY-MM-DD date or an annotation title. Zero annotation matches is HTTP 400. More than one match is HTTP 400 with matches of occurred_at and title.
+Each group includes fingerprint, message, source, line, count, users, sessions, first_seen, last_seen, and top_paths (up to 3).
+When --new-since is set, new_since is true when first_seen is on or after that date. first_seen uses every stored $error for that fingerprint, not only the window.
+Every response includes approximate. When approximate is true, caps is an array of the caps that were hit: distinct_triples and window_rows. The output lists caps.
+--json prints the API response.
+
+Example:
+  npx @agent-analytics/cli errors my-site --since 7d --new-since 2026-11-12`;
+}
+
+function printErrorsUsage() {
+  log(errorsUsageText());
+}
+
+function isIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function parseLookback(flag, raw, fallback) {
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const value = String(raw).trim();
+  const days = value.match(/^(\d+)d$/);
+  if (days) {
+    if (Number(days[1]) < 1) error(`${flag} must be a positive day window like 7d, or a YYYY-MM-DD date.`);
+    return value;
+  }
+  if (isIsoDate(value)) return value;
+  error(`${flag} must be a day window like 7d, or a YYYY-MM-DD date.`);
+}
+
+function parseUntilDate(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  if (!isIsoDate(value)) error('--until must be a YYYY-MM-DD date.');
+  return value;
+}
+
+function parseNewSince(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  if (value.startsWith('--') || value.length > 500) {
+    error('--new-since requires a YYYY-MM-DD date or an annotation id or title, at most 500 characters.');
+  }
+  return value;
+}
+
+function parseErrorsLimit(raw) {
+  if (raw == null || String(raw).trim() === '') return 20;
+  if (!/^\d+$/.test(String(raw).trim())) error('--limit must be an integer from 1 to 100.');
+  const limit = Number(raw);
+  if (limit < 1 || limit > 100) error('--limit must be an integer from 1 to 100.');
+  return limit;
+}
+
+function formatErrorPath(entry) {
+  if (entry == null) return '';
+  if (typeof entry === 'string') return entry;
+  if (typeof entry === 'object') {
+    const path = entry.path || entry.value || '';
+    return entry.count == null ? String(path) : `${path} (${entry.count})`;
+  }
+  return String(entry);
+}
+
+function errorGroups(data) {
+  return Array.isArray(data?.groups) ? data.groups : [];
+}
+
+function logApproximate(data) {
+  if (typeof data.approximate !== 'boolean') return;
+  const color = data.approximate ? YELLOW : DIM;
+  log(`  ${color}approximate:${RESET} ${data.approximate}`);
+  if (!data.approximate || !Array.isArray(data.caps) || data.caps.length === 0) return;
+  log(`  ${DIM}caps:${RESET} ${data.caps.join(', ')}`);
+}
+
+function logErrorsResult(project, data) {
+  const groups = errorGroups(data);
+  heading(`Errors: ${data.project || project}`);
+  log('');
+  const until = data.until ? ` → ${data.until}` : '';
+  const fresh = data.new_since ? `  ${DIM}new since:${RESET} ${data.new_since}` : '';
+  log(`  ${DIM}Since:${RESET} ${data.since || ''}${until}${fresh}`);
+  if (data.new_since_annotation) {
+    const annotation = data.new_since_annotation;
+    const when = annotation.occurred_at ? `${annotation.occurred_at} ` : '';
+    log(`  ${DIM}Annotation:${RESET} ${when}${annotation.title || ''}`);
+  }
+  if (data.limit != null) log(`  ${DIM}Limit:${RESET} ${data.limit}`);
+  logApproximate(data);
+  if (data.truncated === true) log(`  ${YELLOW}truncated:${RESET} true`);
+  log('');
+  if (groups.length === 0) {
+    log('  No errors found.');
+    log('');
+    return;
+  }
+  for (const group of groups) {
+    const marker = group.new_since === true ? `  ${YELLOW}new${RESET}` : group.new_since === false ? `  ${DIM}seen before${RESET}` : '';
+    log(`  ${BOLD}${group.message || '(no message)'}${RESET}${marker}`);
+    log(`    ${group.count ?? 0} events  ${group.users ?? 0} users  ${group.sessions ?? 0} sessions`);
+    const source = group.source ? `${DIM}source:${RESET} ${group.source}` : '';
+    const line = group.line == null ? '' : `${source ? '  ' : ''}${DIM}line:${RESET} ${group.line}`;
+    if (source || line) log(`    ${source}${line}`);
+    if (group.fingerprint) log(`    ${DIM}fingerprint:${RESET} ${group.fingerprint}`);
+    if (group.first_seen || group.last_seen) log(`    ${DIM}${group.first_seen || ''} → ${group.last_seen || ''}${RESET}`);
+    const paths = Array.isArray(group.top_paths) ? group.top_paths.slice(0, 3).map(formatErrorPath).filter(Boolean) : [];
+    if (paths.length > 0) log(`    ${DIM}paths:${RESET} ${paths.join(', ')}`);
+  }
+  log('');
+  log(`${DIM}${groups.length} groups${RESET}`);
+  log('');
+}
+
+function logAmbiguousAnnotations(err) {
+  const matches = err?.body?.matches;
+  if (!Array.isArray(matches) || matches.length === 0) return;
+  log('Matching annotations:');
+  for (const match of matches) {
+    const when = match?.occurred_at ? `${match.occurred_at}: ` : '';
+    log(`  - ${when}${match?.title || ''}`);
+  }
+}
+
+const cmdErrors = withApi(async (api, project, opts = {}) => {
+  if (!project || String(project).startsWith('--')) error(errorsUsageText());
+  let data;
+  try {
+    data = await api.getErrors(project, {
+      since: parseLookback('--since', opts.since, '7d'),
+      until: parseUntilDate(opts.until),
+      new_since: parseNewSince(opts.newSince),
+      limit: parseErrorsLimit(opts.limit),
+    });
+  } catch (err) {
+    logAmbiguousAnnotations(err);
+    throw err;
+  }
+  if (opts.jsonOutput) {
+    printJson(data);
+    return;
+  }
+  logErrorsResult(project, data);
 });
 
 const cmdPortfolioContext = withApi(async (subcommandApi, subcommand, opts = {}) => {
@@ -2704,9 +3006,10 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}retention${RESET} <name>         Cohort retention: % of users who return
   ${CYAN}sessions-dist${RESET} <name>   Session duration distribution
   ${CYAN}events${RESET} <name>          Raw event log
+  ${CYAN}errors${RESET} <name>          Grouped $error events (Pro). --since 7d, optional --until, --new-since, --limit
   ${CYAN}journey${RESET} <name>         Chronological journey by --user-id or --email
   ${CYAN}sessions${RESET} <name>        Individual session records
-  ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, country)
+  ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, numeric property aggs)
   ${CYAN}compare${RESET} <name>         Free before/after read of unique converters. A 7-day read should run on ship day + 8
   ${CYAN}annotate${RESET} <name>        Append one annotation (duplicate returns appended: false)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
@@ -2752,13 +3055,18 @@ ${BOLD}ACCOUNT${RESET}
 
 ${BOLD}KEY OPTIONS${RESET}
   --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90
-  --limit <N>        Max results (default: 100)
+  --limit <N>        Max results (default: 100). For errors, default 20 and max 100
   --domain <url>     Primary surface URL/origin (required for create)
   --source-scan <id> Link project creation to a prior website analysis
   --full             Create a new signed-in full website analysis
   --period <P>       Comparison period: 1d, 7d, 14d, 30d, 90d
   --since <VALUE>    Lookback start for commands that support explicit ranges
-  --property <key>   Property to break down (path, referrer, utm_source, country)
+  --property <key>   Breakdown property, or the numeric query property for sum, avg, p50, p75, p95
+  --metric <fn(key)> Compare metric: sum(revenue), p75(cwv_lcp). Free read, same as compare
+  --metric-event <event>  Event measured by --metric. Defaults to the goal event
+  --better <dir>     higher or lower for --metric. Default higher. Use lower for cwv_lcp and other vitals
+  --until <date>     Optional errors window end: YYYY-MM-DD
+  --new-since <value>  errors: YYYY-MM-DD or an annotation title. Marks groups first seen on or after it
   --event <name>     Filter by event name
   --user-id <id>     Filter events or journeys to one known user id
   --email <email>    Filter events, journeys, or query by server-side scoped HMAC email lookup
@@ -3060,6 +3368,22 @@ try {
         revertThreshold: getArg('--revert-threshold'),
         minDenominator: getArg('--min-denominator'),
         minGoalEvents: getArg('--min-goal-events'),
+        metric: getArg('--metric'),
+        metricEvent: getArg('--metric-event'),
+        better: getArg('--better'),
+        jsonOutput: args.includes('--json'),
+      });
+      break;
+    case 'errors':
+      if (hasHelpFlag(args)) {
+        printErrorsUsage();
+        break;
+      }
+      await cmdErrors(args[1] && !args[1].startsWith('--') ? args[1] : null, {
+        since: getArg('--since'),
+        until: getArg('--until'),
+        newSince: getArg('--new-since'),
+        limit: getArg('--limit'),
         jsonOutput: args.includes('--json'),
       });
       break;
@@ -3078,6 +3402,7 @@ try {
     case 'query':
       await cmdQuery(getArg('--project') || args[1], {
         metrics: getArg('--metrics'),
+        property: getArg('--property'),
         group_by: getArg('--group-by'),
         filter: getArg('--filter'),
         date_from: getArg('--from') || (getArg('--days') ? `${getArg('--days')}d` : undefined),
