@@ -432,20 +432,22 @@ describe('AgentAnalyticsAPI', () => {
       }));
     });
 
-    it('compare → POST /compare sends metric and better only when set', async () => {
+    it('compare → POST /compare sends metric, metric_event, and better only when set', async () => {
       await api.compare('my-site', {
-        goal_event: '$web_vitals',
-        ship_date: '2026-11-04',
-        metric: 'p75(lcp)',
+        goal_event: 'signup',
+        ship_date: '2026-11-05',
+        metric: 'p75(cwv_lcp)',
+        metric_event: '$web_vitals',
         better: 'lower',
       });
       assert.equal(lastUrl, 'https://api.test/compare');
       assert.equal(lastMethod, 'POST');
       assert.equal(lastOpts.body, JSON.stringify({
         project: 'my-site',
-        goal_event: '$web_vitals',
-        ship_date: '2026-11-04',
-        metric: 'p75(lcp)',
+        goal_event: 'signup',
+        ship_date: '2026-11-05',
+        metric: 'p75(cwv_lcp)',
+        metric_event: '$web_vitals',
         better: 'lower',
       }));
 
