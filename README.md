@@ -9,10 +9,10 @@ Analytics your AI agent can actually use — track, analyze, experiment, optimiz
 Try the seeded public demo without signing in:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 demo
-npx --yes @agent-analytics/cli@0.5.40 --demo projects
-npx --yes @agent-analytics/cli@0.5.40 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
-npx --yes @agent-analytics/cli@0.5.40 --demo experiments list agentanalytics-demo
+npx --yes @agent-analytics/cli@0.5.41 demo
+npx --yes @agent-analytics/cli@0.5.41 --demo projects
+npx --yes @agent-analytics/cli@0.5.41 --demo funnel agentanalytics-demo --steps "page_view,signup_started,signup"
+npx --yes @agent-analytics/cli@0.5.41 --demo experiments list agentanalytics-demo
 ```
 
 Demo mode fetches a short-lived read-only agent session from the hosted API. It does not write local CLI config and blocks mutating commands before making API requests.
@@ -21,19 +21,19 @@ Get the fastest path to useful analytics for a project you own:
 
 ```bash
 # 1. Start agent login or signup in the browser
-npx --yes @agent-analytics/cli@0.5.40 login
+npx --yes @agent-analytics/cli@0.5.41 login
 
 # 2. Create a project; --domain is the primary surface URL/origin for setup
-npx --yes @agent-analytics/cli@0.5.40 create my-site --domain https://mysite.com
+npx --yes @agent-analytics/cli@0.5.41 create my-site --domain https://mysite.com
 
 # 3. Watch it live
-npx --yes @agent-analytics/cli@0.5.40 live
+npx --yes @agent-analytics/cli@0.5.41 live
 
 # Optional detached login for remote or issue-based agent work
-npx --yes @agent-analytics/cli@0.5.40 login --detached
+npx --yes @agent-analytics/cli@0.5.41 login --detached
 
 # Optional: clear local auth and revoke the stored agent session when possible
-npx --yes @agent-analytics/cli@0.5.40 logout
+npx --yes @agent-analytics/cli@0.5.41 logout
 ```
 
 ## Commands
@@ -69,9 +69,10 @@ retention <name>                 Cohort retention: % of users who return
 sessions-dist <name>             Session duration distribution
 events <name>                    Raw event log, including each event's country
 errors <name> --since 7d         Grouped $error events (Pro). Optional --until, --new-since, --limit
+vitals <name>                    Pro Core Web Vitals on page_view: p75, rating, good/NI/poor share, CWV pass. --days, --from, --to, --by device|path, --limit, --json
 sessions <name>                  Individual session records
 query <name>                     Flexible analytics query (metrics, group_by, filters, numeric property aggs)
-compare <name>                   Free before/after read of unique converters, or --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower. A 7-day read should run on ship day + 8
+compare <name>                   Free before/after read of unique converters, or --metric 'p75(cwv_lcp)' --metric-event page_view --better lower. A 7-day read should run on ship day + 8
 annotate <name> --title <text>   Append one project annotation without replacing context
 properties <name>                Discover event names & property keys
 properties-received <name>       Property keys grouped by received event name
@@ -128,7 +129,7 @@ For sites with CSP, allow the Agent Analytics API in `script-src` and `connect-s
 Check local storage state without printing secrets:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 auth status
+npx --yes @agent-analytics/cli@0.5.41 auth status
 ```
 
 Credential storage is automatic. Only use `AGENT_ANALYTICS_CREDENTIAL_STORE` for troubleshooting or managed runtimes:
@@ -140,7 +141,7 @@ Credential storage is automatic. Only use `AGENT_ANALYTICS_CREDENTIAL_STORE` for
 When a free account hits a Pro-only analytics task, run an explicit upgrade handoff:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 upgrade-link --detached
+npx --yes @agent-analytics/cli@0.5.41 upgrade-link --detached
 ```
 
 The CLI prints an `app.agentanalytics.sh` link. The human confirms the logged-in dashboard account, pays in Lemon Squeezy, and returns to the agent after Pro activates. Use `upgrade-link --wait` when the local shell should keep polling for activation.
@@ -160,10 +161,12 @@ MCP clients use the read-only `account_usage` tool with `account:read`. Paid too
 Project management commands accept exact project names or project IDs. The `--domain` value on `create` remains the required primary surface URL/origin for setup; it is not the project identity. For local browser QA, treat localhost and preview deployments as setup/testing surfaces and update allowed origins through the CLI while keeping the production origin:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 update stylio --origins 'https://stylio.app,http://lvh.me:3101'
+npx --yes @agent-analytics/cli@0.5.41 update stylio --origins 'https://stylio.app,http://lvh.me:3101'
 ```
 
 For tracker setup, start from the product action you want your agent to optimize. Do not add custom duplicates for automatic tracker signals such as `page_view`, path, referrer, UTMs, device/browser fields, country, session IDs, session count, days since first visit, or first-touch attribution. Prefer `data-aa-event`, `data-aa-impression`, `window.aa.track(...)`, server-side durable outcome tracking, or script opt-ins only when they unlock a concrete decision.
+
+The tracking snippet printed by `create` includes `data-track-vitals="true"` unless that snippet already sets `data-track-vitals`. New installs then collect Core Web Vitals on `page_view`. A snippet that already sets `data-track-vitals="false"` stays off. Replay is a separate `replay.js` tag and does not use this flag.
 
 Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce when it has only non-interactive events:
 `page_view`, `$impression`, `$scroll_depth`, `$error`, `$time_on_page`, `$performance`, `$web_vitals`.
@@ -171,17 +174,18 @@ Bounce metrics (`insights`, `pages`, `sessions`) treat a session as a bounce whe
 `query` keeps `/events` raw and lossless, but `/query` uses activation-safe dedupe (`session_then_user`) as the default for `event_count`: session-backed rows count by session, no-session rows fall back to `user_id` only when that user has no session-backed row in the same filtered/grouped result set, and fully anonymous rows fall back to event `id`. For recent signup or ingestion debugging, check `events <project> --event <actual_event_name>` first, then use `query` after verifying the raw event names the project emits. `--count-mode` only affects `event_count`. Use `--count-mode raw` when you need the old ingested-row count for debugging or audit work:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 query my-site --metrics event_count --count-mode raw
+npx --yes @agent-analytics/cli@0.5.41 query my-site --metrics event_count --count-mode raw
 ```
 
-`sum`, `avg`, `p50`, `p75`, and `p95` are numeric property metrics on the same Pro `POST /query` read. They require `--property <key>`. The key is the event property itself (`cwv_lcp`, `revenue`): letters, numbers, and underscores, at most 128 characters, with no `properties.` prefix. Only JSON numbers are aggregated. Each row includes the requested metric plus `n` and `skipped`. An empty aggregation row prints `n` 0 and `skipped` 0. Percentiles are nearest-rank: `percentile_method` is `nearest_rank` when a percentile is requested, and `null` for sum or avg only. The stock tracker sends `$web_vitals` only with `data-track-vitals`. Some sites attach `cwv_*` to `page_view`.
+`sum`, `avg`, `p50`, `p75`, and `p95` are numeric property metrics on the same Pro `POST /query` read. They require `--property <key>`. The key is the event property itself (`cwv_lcp`, `revenue`): letters, numbers, and underscores, at most 128 characters, with no `properties.` prefix. Only JSON numbers are aggregated. Each row includes the requested metric plus `n` and `skipped`. An empty aggregation row prints `n` 0 and `skipped` 0. Percentiles are nearest-rank: `percentile_method` is `nearest_rank` when a percentile is requested, and `null` for sum or avg only. Hosted stores `cwv_lcp`, `cwv_inp`, `cwv_cls`, `cwv_fcp`, and `cwv_ttfb` on `page_view`. Self-hosted core stores cwv_* on the `$web_vitals` event. The tracker sends vitals only when the install snippet sets `data-track-vitals="true"`. For rating, good/NI/poor share, and CWV pass, use `vitals`.
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"$web_vitals"}]'
-npx --yes @agent-analytics/cli@0.5.40 query shop --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'
+npx --yes @agent-analytics/cli@0.5.41 query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"page_view"}]'
+npx --yes @agent-analytics/cli@0.5.41 vitals my-site --days 7
+npx --yes @agent-analytics/cli@0.5.41 query shop --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'
 ```
 
-If the `$web_vitals` query returns `n` 0, check which event carries `cwv_lcp` (properties) and use that, for example `page_view`.
+Hosted vitals queries use `page_view`. If `n` is 0, the project is not sending `cwv_*` yet.
 
 `funnel` is for ordered conversion, `query` is for aggregate slicing/grouping, and `paths` is for bounded session-local journey exploration. For precise funnels, prefer structured JSON steps with per-step filters:
 
@@ -199,7 +203,7 @@ cat > funnel.json <<'JSON'
 }
 JSON
 
-npx --yes @agent-analytics/cli@0.5.40 funnel shop --steps-json ./funnel.json --json
+npx --yes @agent-analytics/cli@0.5.41 funnel shop --steps-json ./funnel.json --json
 ```
 
 Funnel filters use canonical `properties.<key>` fields and support `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains`, `prefix`, and `in`. The JSON output includes `steps_source`, `identity_basis`, `raw_activity`, `joinable_entities`, `strict_survivors`, `conversion_rates`, `warnings`, and `caveats` so your agent can separate “events exist” from “entities survived the strict ordered funnel.” `--steps a,b,c` remains supported for quick legacy checks. If no step source is passed, or if you pass `--from-context`, the API falls back to bare `project_context.activation_events`; treat that as a convenience starting point, not a precision source.
@@ -209,7 +213,7 @@ Funnel filters use canonical `properties.<key>` fields and support `eq`, `neq`, 
 Property filters must use canonical `properties.*` fields. Built-in filter fields are only `event`, `user_id`, `date`, `country`, `session_id`, and `timestamp`. Example:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'
+npx --yes @agent-analytics/cli@0.5.41 query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'
 ```
 
 Invalid filter fields now fail loudly and return property discovery guidance instead of being silently ignored.
@@ -223,9 +227,9 @@ Use annotations for major product changes that could explain later graph movemen
 Before setting or refreshing the glossary, inspect the project's current event names:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 properties my-site
-npx --yes @agent-analytics/cli@0.5.40 properties-received my-site
-npx --yes @agent-analytics/cli@0.5.40 context set my-site --json '{
+npx --yes @agent-analytics/cli@0.5.41 properties my-site
+npx --yes @agent-analytics/cli@0.5.41 properties-received my-site
+npx --yes @agent-analytics/cli@0.5.41 context set my-site --json '{
   "goals": ["Increase activated Agent Analytics accounts"],
   "activation_events": ["signup_completed", "project_created", "first_event_received"],
   "glossary": [
@@ -248,7 +252,7 @@ npx --yes @agent-analytics/cli@0.5.40 context set my-site --json '{
 `annotate` appends one annotation on `POST /project-context/annotations`. It does not replace goals, glossary, activation events, or earlier annotations. The same `occurred_at` and title returns HTTP 200 with `appended: false` and the stored annotation. A project can hold 100 annotations; the next append returns HTTP 409. `context set` still replaces the whole document.
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 annotate my-site --title "Changed pricing page offer" --note "Moved annual plan discount above the fold." --at 2026-04-25T13:00:00.000Z
+npx --yes @agent-analytics/cli@0.5.41 annotate my-site --title "Changed pricing page offer" --note "Moved annual plan discount above the fold." --at 2026-04-25T13:00:00.000Z
 ```
 
 `compare` is a free read on `POST /compare`. A successful call counts as one metered read. The goal is counted as unique converters (`count_mode` `unique_users`): a user who fires the goal 3 times counts once. `rate` is `goal_converters / denominator_unique_users`. Pass `--ship-date` and optional `--days` (`window_days`, a multiple of 7 from 1 to 90, default 7), or pass both windows with `--baseline-from`, `--baseline-to`, `--compare-from`, and `--compare-to`. Ship day is excluded from both windows. If either window includes today UTC, the verdict is `extend` with reason `incomplete_current_day`. A 7-day read should run on ship day + 8. `--denominator` defaults to `page_view`. Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less. `keep` requires lift at or above the keep threshold and a 90% interval entirely above zero. `revert` requires lift at or below the revert threshold and a 90% interval entirely below zero. Other results are `extend`, including `below_min_sample`, `zero_denominator`, `zero_baseline` (lift is null), `inconclusive`, `interval_includes_zero`, and `no_evidence_of_gain`. `--json` prints the API body, including `verdict`, `reason`, `reason_detail`, `lift`, the 90% interval, and `guardrails`.
@@ -258,19 +262,29 @@ npx --yes @agent-analytics/cli@0.5.40 annotate my-site --title "Changed pricing 
 Repeat `--exclude-denominator <field>=<value>` to exclude 404 or bot page views from the denominator. Each use is split on the first `=` and sent as `denominator_filters` `{field, op: "neq", value}`. Existing `--filter` values are unchanged. Omit the flag to keep today's denominator.
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
-npx --yes @agent-analytics/cli@0.5.40 compare my-site --ship-date 2026-11-04 --days 7 --goal template_opened --exclude-denominator "properties.title=Page not found | grokbotpages.com"
-npx --yes @agent-analytics/cli@0.5.40 compare my-site --ship-date 2026-11-05 --days 7 --goal signup --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower
-npx --yes @agent-analytics/cli@0.5.40 compare shop --ship-date 2026-11-04 --days 7 --goal purchase --metric 'sum(revenue)'
+npx --yes @agent-analytics/cli@0.5.41 compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
+npx --yes @agent-analytics/cli@0.5.41 compare my-site --ship-date 2026-11-04 --days 7 --goal template_opened --exclude-denominator "properties.title=Page not found | grokbotpages.com"
+npx --yes @agent-analytics/cli@0.5.41 compare my-site --ship-date 2026-11-05 --days 7 --goal signup --metric 'p75(cwv_lcp)' --metric-event page_view --better lower
+npx --yes @agent-analytics/cli@0.5.41 compare shop --ship-date 2026-11-04 --days 7 --goal purchase --metric 'sum(revenue)'
 ```
 
-If the `$web_vitals` metric returns `n` 0, check which event carries `cwv_lcp` (properties) and use that as `--metric-event`, for example `page_view`. The stock tracker sends `$web_vitals` only with `data-track-vitals`. Some sites attach `cwv_*` to `page_view`.
+On hosted, `--metric-event` for vitals is `page_view`. Self-hosted core stores cwv_* on the `$web_vitals` event. The tracker sends vitals only when the install snippet sets `data-track-vitals="true"`.
+
+`vitals` is a Pro read on `POST /vitals`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. The event is fixed to `page_view`. `--days` is a positive integer lookback. `--from` and `--to` are `YYYY-MM-DD` dates sent as `date_from` and `date_to`. Omit a flag to leave that field unset. `--by` is `device` or `path`. Omitted, the response is one overall row. `--limit` defaults to 10 on the server and must be an integer from 1 to 20. It applies to `path` groups (top paths by sample size, sorted by worst LCP p75). `device` groups are mobile, tablet, and desktop.
+
+The headline is p75, nearest-rank. Each metric row prints p75 with its unit, rating (`good`, `needs-improvement`, or `poor`), the good / NI / poor share (fractions from 0 to 1), `n`, and `skipped`. `skipped` counts page views in the group that did not include that vital. CLS is omitted by the tracker where `layout-shift` is unsupported, which is outside Chromium, so those views are skipped rather than stored as 0. Ratings use the web.dev and PSI cutoffs: LCP 2500/4000 ms, INP 200/500 ms, CLS 0.1/0.25, FCP 1800/3000 ms, TTFB 800/1800 ms. A value at or below `good_max` is good. A value above `poor_min` is poor. Anything between is needs-improvement. CWV pass is true when LCP, INP, and CLS p75 are all good. If INP `n` is 0, pass uses LCP and CLS only. If LCP or CLS `n` is 0, CWV pass is null. FCP and TTFB do not affect CWV pass. Poor targets are the top selectors among poor loads (at most 5). FCP and TTFB have none. `--json` prints the API body. `approximate` is true when the 200,000 event cap is hit.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.41 vitals my-site --days 7
+npx --yes @agent-analytics/cli@0.5.41 vitals my-site --from 2026-11-01 --to 2026-11-12 --by path --limit 10 --json
+npx --yes @agent-analytics/cli@0.5.41 vitals my-site --by device
+```
 
 `errors` is a Pro read on `GET /errors`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. It groups `$error` events. The tracker sends `message`, `source`, `line`, and `col` and does not send a stack. Grouping uses the normalized message, the source filename, and `line`. `--since` defaults to `7d` and accepts `7d` or `YYYY-MM-DD`. `--until` is an optional `YYYY-MM-DD` end; omitted, the API uses today UTC. `--limit` defaults to 20 and the maximum is 100. `--new-since` is a `YYYY-MM-DD` date or an annotation title. Zero annotation matches is HTTP 400. More than one match is HTTP 400 with `matches` of `occurred_at` and `title`, which the CLI prints. Each group includes `fingerprint`, `message`, `source`, `line`, `count`, `users`, `sessions`, `first_seen`, `last_seen`, and `top_paths` (up to 3). When `--new-since` is set, `new_since` is true when `first_seen` is on or after that date. `first_seen` uses every stored `$error` for that fingerprint, not only the window. Every response includes boolean `approximate`. When `approximate` is true, `caps` is an array of the caps that were hit: `distinct_triples` and `window_rows`. The human output lists `caps`. `--json` prints the API body.
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 errors my-site --since 7d --new-since 2026-11-12
-npx --yes @agent-analytics/cli@0.5.40 errors my-site --since 7d --until 2026-11-12 --new-since "Changed pricing page offer" --limit 20 --json
+npx --yes @agent-analytics/cli@0.5.41 errors my-site --since 7d --new-since 2026-11-12
+npx --yes @agent-analytics/cli@0.5.41 errors my-site --since 7d --until 2026-11-12 --new-since "Changed pricing page offer" --limit 20 --json
 ```
 
 ## Feedback
@@ -278,7 +292,7 @@ npx --yes @agent-analytics/cli@0.5.40 errors my-site --since 7d --until 2026-11-
 Use the CLI feedback command when Agent Analytics was confusing, a task took too long, or the agent had to do manual analysis that the product should have handled:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 feedback \
+npx --yes @agent-analytics/cli@0.5.41 feedback \
   --message "The agent had to calculate the funnel drop-off manually" \
   --project my-site \
   --command "agent-analytics funnel my-site --steps page_view,signup,purchase" \
@@ -295,24 +309,24 @@ Claude Code, OpenClaw, Cursor, Codex — any AI agent that can run `npx`. Or add
 claude mcp add agent-analytics --transport http https://mcp.agentanalytics.sh/mcp
 ```
 
-For managed, issue-based, or remote runtimes that cannot receive a localhost callback or keep a long-running process alive, use `npx --yes @agent-analytics/cli@0.5.40 login --detached`. It prints the approval URL and exits. After browser approval, resume with the printed `login --auth-request <id> --exchange-code <code>` command.
+For managed, issue-based, or remote runtimes that cannot receive a localhost callback or keep a long-running process alive, use `npx --yes @agent-analytics/cli@0.5.41 login --detached`. It prints the approval URL and exits. After browser approval, resume with the printed `login --auth-request <id> --exchange-code <code>` command.
 
 For managed runtimes where the default home config path may not persist, point auth storage at a persistent runtime/workspace directory:
 
 ```bash
 export AGENT_ANALYTICS_CONFIG_DIR="$PWD/.openclaw/agent-analytics"
-npx --yes @agent-analytics/cli@0.5.40 login --detached
-npx --yes @agent-analytics/cli@0.5.40 auth status
+npx --yes @agent-analytics/cli@0.5.41 login --detached
+npx --yes @agent-analytics/cli@0.5.41 auth status
 ```
 
 For one-off commands, use `--config-dir "$PWD/.openclaw/agent-analytics"` before or after the command. The CLI stores the same `config.json` file in that directory and does not migrate credentials from the default path.
 
-For a local shell where it is useful to keep waiting, use `npx --yes @agent-analytics/cli@0.5.40 login --detached --wait`.
+For a local shell where it is useful to keep waiting, use `npx --yes @agent-analytics/cli@0.5.41 login --detached --wait`.
 
 If your saved session predates CLI `0.5.9`, run a fresh login before calling `projects`. Older saved agent-session tokens were minted without `projects:read`, so they will keep failing until you re-authenticate. Verify with:
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.40 projects
+npx --yes @agent-analytics/cli@0.5.41 projects
 ```
 
 ## Agent Skill

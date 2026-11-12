@@ -71,6 +71,24 @@ function stripAnsi(text) {
   return text.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
+const SELF_HOSTED_VITALS_SENTENCE = 'Self-hosted core stores cwv_* on the $web_vitals event.';
+
+function assertNoHostedWebVitals(text) {
+  const stripped = text
+    .replaceAll('`', '')
+    .replaceAll(SELF_HOSTED_VITALS_SENTENCE, '')
+    .replaceAll('$performance, $web_vitals', '$performance');
+  const at = stripped.indexOf('$web_vitals');
+  assert.equal(
+    at,
+    -1,
+    at === -1 ? '' : stripped.slice(Math.max(0, at - 90), at + 90),
+  );
+  assert.ok(!stripped.includes("value\":\"$web_vitals\""));
+  assert.ok(!stripped.includes("metric-event '$web_vitals'"));
+  assert.ok(!stripped.includes('Some sites attach cwv_* to page_view'));
+}
+
 
 function readRequestJson(req) {
   return new Promise((resolve) => {
@@ -2385,10 +2403,12 @@ describe('CLI', () => {
       assert.ok(output.includes('--count-mode raw or session_then_user (default: raw event rows)'));
       assert.ok(output.includes('--count-mode session_then_user'));
       assert.ok(output.includes('--property  Numeric event property key'));
-      assert.ok(output.includes('--metrics p75 --property cwv_lcp --filter \'[{"field":"event","op":"eq","value":"$web_vitals"}]\''));
-      assert.ok(output.includes('If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view.'));
-      assert.ok(output.includes('data-track-vitals'));
-      assert.ok(output.includes('Some sites attach cwv_* to page_view.'));
+      assert.ok(output.includes('--metrics p75 --property cwv_lcp --filter \'[{"field":"event","op":"eq","value":"page_view"}]\''));
+      assert.ok(output.includes('Hosted stores cwv_lcp, cwv_inp, cwv_cls, cwv_fcp, and cwv_ttfb on page_view.'));
+      assert.ok(output.includes(SELF_HOSTED_VITALS_SENTENCE));
+      assert.ok(output.includes('data-track-vitals="true"'));
+      assert.ok(output.includes('vitals my-site --days 7'));
+      assertNoHostedWebVitals(output);
       assert.ok(!output.includes('not a field on page_view'));
       assert.ok(!output.includes('not on page_view'));
       assert.ok(output.includes('Rows include n and skipped'));
@@ -3735,9 +3755,11 @@ describe('CLI', () => {
       assert.equal(help.code, 0);
       assert.ok(plain.includes('free read'));
       assert.ok(plain.includes('ship day + 8'));
-      assert.ok(plain.includes("--metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower"));
-      assert.ok(plain.includes('If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view.'));
-      assert.ok(plain.includes('data-track-vitals'));
+      assert.ok(plain.includes("--metric 'p75(cwv_lcp)' --metric-event page_view --better lower"));
+      assert.ok(plain.includes('Hosted stores cwv_* on page_view.'));
+      assert.ok(plain.includes(SELF_HOSTED_VITALS_SENTENCE));
+      assert.ok(plain.includes('data-track-vitals="true"'));
+      assertNoHostedWebVitals(plain);
       assert.ok(!plain.includes('not a field on page_view'));
       assert.ok(!plain.includes('not on page_view'));
       assert.ok(plain.includes('interval_method: "none"'));
@@ -4674,6 +4696,411 @@ describe('CLI', () => {
         assert.ok(stripAnsi(since.stdout).includes('--since must be a day window like 7d, or a YYYY-MM-DD date.'));
         assert.ok(stripAnsi(until.stdout).includes('--until must be a YYYY-MM-DD date.'));
         assert.ok(stripAnsi(limit.stdout).includes('--limit must be an integer from 1 to 100.'));
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
+  describe('vitals', () => {
+    function vitalMetric(overrides = {}) {
+      return {
+        p75: null,
+        rating: null,
+        n: 0,
+        skipped: 0,
+        share: { good: null, needs_improvement: null, poor: null },
+        top_poor_targets: [],
+        ...overrides,
+      };
+    }
+
+    const deviceResponse = {
+      project: 'my-site',
+      date_from: '2026-11-05',
+      date_to: '2026-11-12',
+      event: 'page_view',
+      group_by: 'device',
+      percentile: 'p75',
+      percentile_method: 'nearest_rank',
+      approximate: true,
+      caps: ['events'],
+      thresholds: {
+        lcp: { unit: 'ms', good_max: 2500, poor_min: 4000 },
+        inp: { unit: 'ms', good_max: 200, poor_min: 500 },
+        cls: { unit: 'unitless', good_max: 0.1, poor_min: 0.25 },
+        fcp: { unit: 'ms', good_max: 1800, poor_min: 3000 },
+        ttfb: { unit: 'ms', good_max: 800, poor_min: 1800 },
+      },
+      rows: [
+        {
+          group: 'mobile',
+          cwv_pass: false,
+          metrics: {
+            lcp: vitalMetric({
+              p75: 4500,
+              rating: 'poor',
+              n: 40,
+              skipped: 2,
+              share: { good: 0.1, needs_improvement: 0.2, poor: 0.7 },
+              top_poor_targets: [{ target: 'img.hero', count: 9 }, { target: '#banner', count: 2 }],
+            }),
+            inp: vitalMetric({
+              p75: 240,
+              rating: 'needs-improvement',
+              n: 30,
+              skipped: 12,
+              share: { good: 0.5, needs_improvement: 0.4, poor: 0.1 },
+              top_poor_targets: [{ target: 'button.buy', count: 4 }],
+            }),
+            cls: vitalMetric({
+              p75: 0.28,
+              rating: 'poor',
+              n: 36,
+              skipped: 6,
+              share: { good: 0.25, needs_improvement: 0.25, poor: 0.5 },
+              top_poor_targets: [{ target: '.shift', count: 1 }],
+            }),
+            fcp: vitalMetric({
+              p75: 1600,
+              rating: 'good',
+              n: 40,
+              skipped: 2,
+              share: { good: 0.8, needs_improvement: 0.2, poor: 0 },
+            }),
+            ttfb: vitalMetric({
+              p75: 900,
+              rating: 'needs-improvement',
+              n: 40,
+              skipped: 2,
+              share: { good: 0.6, needs_improvement: 0.3, poor: 0.1 },
+            }),
+          },
+        },
+        {
+          group: 'tablet',
+          cwv_pass: null,
+          metrics: {
+            lcp: vitalMetric({ n: 0, skipped: 5 }),
+            inp: vitalMetric({ n: 0, skipped: 5 }),
+            cls: vitalMetric({
+              p75: 0,
+              rating: 'good',
+              n: 1,
+              skipped: 4,
+              share: { good: 1, needs_improvement: 0, poor: 0 },
+            }),
+            fcp: vitalMetric({ n: 0, skipped: 5 }),
+            ttfb: vitalMetric({ n: 0, skipped: 5 }),
+          },
+        },
+      ],
+    };
+
+    const overallResponse = {
+      project: 'my-site',
+      date_from: '2026-11-01',
+      date_to: '2026-11-12',
+      event: 'page_view',
+      group_by: null,
+      percentile: 'p75',
+      percentile_method: 'nearest_rank',
+      approximate: false,
+      thresholds: deviceResponse.thresholds,
+      rows: [{
+        group: null,
+        cwv_pass: true,
+        metrics: {
+          lcp: vitalMetric({
+            p75: 2100,
+            rating: 'good',
+            n: 120,
+            skipped: 4,
+            share: { good: 0.72, needs_improvement: 0.18, poor: 0.1 },
+          }),
+          inp: vitalMetric({ n: 0, skipped: 124 }),
+          cls: vitalMetric({
+            p75: 0.082,
+            rating: 'good',
+            n: 80,
+            skipped: 44,
+            share: { good: 0.9, needs_improvement: 0.05, poor: 0.05 },
+          }),
+          fcp: vitalMetric({
+            p75: 1500,
+            rating: 'good',
+            n: 120,
+            skipped: 4,
+            share: { good: 0.8, needs_improvement: 0.15, poor: 0.05 },
+          }),
+          ttfb: vitalMetric({
+            p75: 420,
+            rating: 'good',
+            n: 120,
+            skipped: 4,
+            share: { good: 0.91, needs_improvement: 0.07, poor: 0.02 },
+          }),
+        },
+      }],
+    };
+
+    it('prints vitals usage without auth and does not point hosted reads at $web_vitals', async () => {
+      const help = await run(['vitals', '--help']);
+      const plain = stripAnsi(help.stdout);
+      assert.equal(help.code, 0);
+      assert.ok(plain.includes('POST /vitals'));
+      assert.ok(plain.includes('one metered read'));
+      assert.ok(plain.includes('PRO_REQUIRED'));
+      assert.ok(plain.includes('page_view'));
+      assert.ok(plain.includes('cwv_lcp'));
+      assert.ok(plain.includes('--by is device or path'));
+      assert.ok(plain.includes('integer from 1 to 20'));
+      assert.ok(plain.includes('p75 is the headline'));
+      assert.ok(plain.includes('2500/4000'));
+      assert.ok(plain.includes('CWV pass is true when LCP, INP, and CLS p75 are all good'));
+      assert.ok(plain.includes('--json prints the API response'));
+      assertNoHostedWebVitals(plain);
+
+      const main = await run(['--help']);
+      const mainPlain = stripAnsi(main.stdout);
+      assert.ok(mainPlain.includes('vitals'));
+      assert.ok(mainPlain.includes('Core Web Vitals p75 on page_view'));
+      assert.ok(mainPlain.includes('--by <group>'));
+      assert.ok(mainPlain.includes('For vitals, default 10 and max 20'));
+      assertNoHostedWebVitals(mainPlain);
+
+      const query = await run(['query']);
+      assertNoHostedWebVitals(stripAnsi(query.stdout));
+      const compare = await run(['compare', '--help']);
+      assertNoHostedWebVitals(stripAnsi(compare.stdout));
+
+      const readme = readFileSync(join(__dirname, '..', 'README.md'), 'utf8');
+      const changelog = readFileSync(join(__dirname, '..', 'CHANGELOG.md'), 'utf8');
+      assert.ok(readme.includes('data-track-vitals="true"'));
+      assert.ok(readme.includes('--metric-event page_view'));
+      assert.ok(readme.includes('value":"page_view"'));
+      assertNoHostedWebVitals(readme);
+      assertNoHostedWebVitals(changelog);
+    });
+
+    it('posts the vitals body and omits unset fields', async () => {
+      const bodies = [];
+      const server = await startServer(async (req, res) => {
+        bodies.push({ method: req.method, url: req.url, body: await readRequestJson(req) });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          project: 'my-site',
+          date_from: '2026-11-01',
+          date_to: '2026-11-12',
+          event: 'page_view',
+          group_by: null,
+          percentile: 'p75',
+          percentile_method: 'nearest_rank',
+          approximate: false,
+          rows: [],
+        }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const full = await run([
+          'vitals', 'my-site',
+          '--days', '7',
+          '--from', '2026-11-01',
+          '--to', '2026-11-12',
+          '--by', 'PATH',
+          '--limit', '20',
+        ], { env });
+        const bare = await run(['vitals', 'my-site'], { env });
+        const plain = stripAnsi(full.stdout);
+
+        assert.equal(full.code, 0);
+        assert.equal(bare.code, 0);
+        assert.equal(bodies[0].method, 'POST');
+        assert.equal(bodies[0].url, '/vitals');
+        assert.deepEqual(bodies[0].body, {
+          project: 'my-site',
+          days: 7,
+          date_from: '2026-11-01',
+          date_to: '2026-11-12',
+          group_by: 'path',
+          limit: 20,
+        });
+        assert.deepEqual(bodies[1].body, { project: 'my-site' });
+        assert.ok(plain.includes('No web vitals in this window.'));
+        assert.ok(plain.includes('approximate: false'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints per-group p75, rating, shares, CWV pass, poor targets, and nulls', async () => {
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body.group_by === 'device' ? deviceResponse : overallResponse));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const grouped = await run(['vitals', 'my-site', '--by', 'device', '--days', '7'], { env });
+        const overall = await run(['vitals', 'my-site', '--from', '2026-11-01', '--to', '2026-11-12'], { env });
+        const json = await run(['vitals', 'my-site', '--by', 'device', '--json'], { env });
+        const plain = stripAnsi(grouped.stdout);
+        const overallPlain = stripAnsi(overall.stdout);
+
+        assert.equal(grouped.code, 0);
+        assert.equal(overall.code, 0);
+        assert.equal(json.code, 0);
+        assert.ok(plain.includes('Web Vitals: my-site'));
+        assert.ok(plain.includes('2026-11-05 → 2026-11-12'));
+        assert.ok(plain.includes('event: page_view'));
+        assert.ok(plain.includes('group_by: device'));
+        assert.ok(plain.includes('percentile: p75 (nearest_rank)'));
+        assert.ok(plain.includes('approximate: true'));
+        assert.ok(plain.includes('caps: events'));
+        assert.ok(plain.includes('mobile'));
+        assert.ok(plain.includes('CWV pass: false'));
+        assert.ok(plain.includes('4500 ms'));
+        assert.ok(plain.includes('poor'));
+        assert.ok(plain.includes('needs-improvement'));
+        assert.ok(plain.includes('0.100'));
+        assert.ok(plain.includes('0.200'));
+        assert.ok(plain.includes('0.700'));
+        assert.ok(plain.includes('0.28 unitless'));
+        assert.ok(plain.includes('img.hero (9)'));
+        assert.ok(plain.includes('#banner (2)'));
+        assert.ok(plain.includes('button.buy (4)'));
+        assert.ok(plain.includes('tablet'));
+        assert.ok(plain.includes('CWV pass: null'));
+        assert.ok(plain.includes('null'));
+        assert.ok(plain.includes('0 unitless'));
+        assert.ok(plain.includes('1.000'));
+        assert.ok(plain.includes('0.000'));
+        assert.ok(overallPlain.includes('group_by: null'));
+        assert.ok(overallPlain.includes('Overall'));
+        assert.ok(overallPlain.includes('CWV pass: true'));
+        assert.ok(overallPlain.includes('2100 ms'));
+        assert.ok(overallPlain.includes('0.082 unitless'));
+        assert.ok(overallPlain.includes('0.720'));
+        assert.ok(!overallPlain.includes('Poor targets'));
+        assert.deepEqual(JSON.parse(json.stdout), deviceResponse);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects a bad --by, --limit, --days, or date before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const by = await run(['vitals', 'my-site', '--by', 'country'], { env });
+        const limit = await run(['vitals', 'my-site', '--limit', '21'], { env });
+        const zero = await run(['vitals', 'my-site', '--limit', '0'], { env });
+        const days = await run(['vitals', 'my-site', '--days', '7d'], { env });
+        const from = await run(['vitals', 'my-site', '--from', '2026-02-31'], { env });
+        const to = await run(['vitals', 'my-site', '--to', '11/12/2026'], { env });
+
+        assert.equal(calls, 0);
+        assert.notEqual(by.code, 0);
+        assert.notEqual(limit.code, 0);
+        assert.notEqual(zero.code, 0);
+        assert.notEqual(days.code, 0);
+        assert.notEqual(from.code, 0);
+        assert.notEqual(to.code, 0);
+        assert.ok(stripAnsi(by.stdout).includes('--by must be device or path.'));
+        assert.ok(stripAnsi(limit.stdout).includes('--limit must be an integer from 1 to 20.'));
+        assert.ok(stripAnsi(zero.stdout).includes('--limit must be an integer from 1 to 20.'));
+        assert.ok(stripAnsi(days.stdout).includes('--days must be a positive integer.'));
+        assert.ok(stripAnsi(from.stdout).includes('--from must be a YYYY-MM-DD date.'));
+        assert.ok(stripAnsi(to.stdout).includes('--to must be a YYYY-MM-DD date.'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints the upgrade handoff for 403 PRO_REQUIRED', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'PRO_REQUIRED',
+          message: 'This endpoint is available on paid plans.',
+        }));
+      });
+
+      try {
+        const result = await run(['vitals', 'my-site', '--days', '7'], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.notEqual(result.code, 0);
+        assert.equal(calls, 1);
+        assert.ok(plain.includes('This endpoint is available on paid plans.'));
+        assert.ok(plain.includes('PRO_REQUIRED') || plain.includes('upgrade-link --detached'));
+        assert.ok(plain.includes('upgrade-link --detached'));
+        assert.ok(plain.includes('upgrade-link --wait'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints install snippets with data-track-vitals="true" unless the flag is already set', async () => {
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        const snippets = {
+          missing: '<script src="https://api.agentanalytics.sh/n" data-token="aat_x" async></script>',
+          enabled: '<script src="https://api.agentanalytics.sh/n" data-token="aat_x" data-track-vitals="true"></script>',
+          disabled: '<script src="https://api.agentanalytics.sh/n" data-token="aat_x" data-track-vitals="false"></script>',
+          replay: '<script src="https://api.agentanalytics.sh/replay.js" data-token="aat_x"></script>',
+        };
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          id: 'proj-created',
+          name: body.name,
+          project_token: 'aat_x',
+          allowed_origins: 'https://example.com',
+          snippet: snippets[body.name],
+          api_example: 'curl /stats',
+        }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const missing = stripAnsi((await run(['create', 'missing', '--domain', 'https://example.com'], { env })).stdout);
+        const enabled = stripAnsi((await run(['create', 'enabled', '--domain', 'https://example.com'], { env })).stdout);
+        const disabled = stripAnsi((await run(['create', 'disabled', '--domain', 'https://example.com'], { env })).stdout);
+        const replay = stripAnsi((await run(['create', 'replay', '--domain', 'https://example.com'], { env })).stdout);
+
+        assert.ok(missing.includes('data-track-vitals="true"'));
+        assert.ok(missing.includes('data-token="aat_x"'));
+        assert.equal(enabled.match(/data-track-vitals="true"/g).length, 1);
+        assert.ok(disabled.includes('data-track-vitals="false"'));
+        assert.ok(!disabled.includes('data-track-vitals="true"'));
+        assert.ok(!replay.includes('data-track-vitals'));
       } finally {
         await server.close();
       }

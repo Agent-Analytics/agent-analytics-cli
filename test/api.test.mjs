@@ -464,6 +464,29 @@ describe('AgentAnalyticsAPI', () => {
       }));
     });
 
+    it('getVitals → POST /vitals omits unset fields', async () => {
+      await api.getVitals('my-site', {});
+      assert.equal(lastUrl, 'https://api.test/vitals');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({ project: 'my-site' }));
+
+      await api.getVitals('my-site', {
+        days: 7,
+        date_from: '2026-11-01',
+        date_to: '2026-11-12',
+        group_by: 'path',
+        limit: 5,
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        days: 7,
+        date_from: '2026-11-01',
+        date_to: '2026-11-12',
+        group_by: 'path',
+        limit: 5,
+      }));
+    });
+
     it('getErrors → GET /errors omits unset until and new_since', async () => {
       await api.getErrors('my-site', { since: '7d', limit: 20 });
       assert.equal(lastMethod, 'GET');
