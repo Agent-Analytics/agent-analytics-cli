@@ -2163,7 +2163,7 @@ Groups $error events. The tracker sends message, source, line, and col. It does 
 --new-since is a YYYY-MM-DD date or an annotation title. Zero annotation matches is HTTP 400. More than one match is HTTP 400 with matches of occurred_at and title.
 Each group includes fingerprint, message, source, line, count, users, sessions, first_seen, last_seen, and top_paths (up to 3).
 When --new-since is set, new_since is true when first_seen is on or after that date. first_seen uses every stored $error for that fingerprint, not only the window.
-A scan cap returns HTTP 200 with approximate: true and which cap was hit. The output notes approximate when that flag is set.
+Every response includes approximate. When approximate is true, caps is an array of the caps that were hit: distinct_triples and window_rows. The output lists caps.
 --json prints the API response.
 
 Example:
@@ -2230,11 +2230,12 @@ function errorGroups(data) {
   return Array.isArray(data?.groups) ? data.groups : [];
 }
 
-function approximateCapText(data) {
-  const named = data.cap ?? data.caps ?? data.approximate_cap ?? data.scan_cap ?? data.capped_by;
-  if (named == null || named === '') return '';
-  const text = Array.isArray(named) ? named.join(', ') : String(named);
-  return text ? ` (${text})` : '';
+function logApproximate(data) {
+  if (typeof data.approximate !== 'boolean') return;
+  const color = data.approximate ? YELLOW : DIM;
+  log(`  ${color}approximate:${RESET} ${data.approximate}`);
+  if (!data.approximate || !Array.isArray(data.caps) || data.caps.length === 0) return;
+  log(`  ${DIM}caps:${RESET} ${data.caps.join(', ')}`);
 }
 
 function logErrorsResult(project, data) {
@@ -2250,9 +2251,7 @@ function logErrorsResult(project, data) {
     log(`  ${DIM}Annotation:${RESET} ${when}${annotation.title || ''}`);
   }
   if (data.limit != null) log(`  ${DIM}Limit:${RESET} ${data.limit}`);
-  if (data.approximate === true) {
-    log(`  ${YELLOW}approximate:${RESET} true${approximateCapText(data)}`);
-  }
+  logApproximate(data);
   if (data.truncated === true) log(`  ${YELLOW}truncated:${RESET} true`);
   log('');
   if (groups.length === 0) {

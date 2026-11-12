@@ -4393,6 +4393,7 @@ describe('CLI', () => {
       until: '2026-11-12',
       limit: 20,
       truncated: false,
+      approximate: false,
       new_since: '2026-11-05',
       new_since_annotation: {
         occurred_at: '2026-11-05T12:00:00.000Z',
@@ -4423,7 +4424,10 @@ describe('CLI', () => {
       assert.ok(plain.includes('message, source, line, and col'));
       assert.ok(plain.includes('does not send a stack'));
       assert.ok(plain.includes('fingerprint, message, source, line, count, users, sessions, first_seen, last_seen, and top_paths'));
-      assert.ok(plain.includes('approximate: true'));
+      assert.ok(plain.includes('approximate'));
+      assert.ok(plain.includes('caps'));
+      assert.ok(plain.includes('distinct_triples'));
+      assert.ok(plain.includes('window_rows'));
       assert.ok(plain.includes('PRO_REQUIRED'));
 
       const main = await run(['--help']);
@@ -4477,7 +4481,8 @@ describe('CLI', () => {
         assert.ok(plain.includes('/pricing, /'));
         assert.ok(plain.includes('Ship errors'));
         assert.ok(plain.includes('1 groups'));
-        assert.ok(!plain.includes('approximate'));
+        assert.ok(plain.includes('approximate: false'));
+        assert.ok(!plain.includes('caps:'));
         assert.equal(json.code, 0);
         assert.deepEqual(JSON.parse(json.stdout), errorsResponse);
       } finally {
@@ -4490,7 +4495,7 @@ describe('CLI', () => {
       const server = await startServer((req, res) => {
         url = req.url;
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ project: 'my-site', since: '7d', limit: 20, count: 0, groups: [] }));
+        res.end(JSON.stringify({ project: 'my-site', since: '7d', limit: 20, approximate: false, groups: [] }));
       });
 
       try {
@@ -4505,20 +4510,20 @@ describe('CLI', () => {
         assert.equal(result.code, 0);
         assert.equal(url, '/errors?project=my-site&since=7d&limit=20');
         assert.ok(plain.includes('No errors found.'));
-        assert.ok(!plain.includes('approximate'));
+        assert.ok(plain.includes('approximate: false'));
+        assert.ok(!plain.includes('caps:'));
       } finally {
         await server.close();
       }
     });
 
-    it('prints an approximate note when a scan cap is hit and still returns the groups', async () => {
+    it('lists caps when approximate is true', async () => {
       const server = await startServer((_req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           ...errorsResponse,
           approximate: true,
-          cap: 'scan',
-          groups: errorsResponse.groups,
+          caps: ['distinct_triples', 'window_rows'],
         }));
       });
 
@@ -4532,7 +4537,9 @@ describe('CLI', () => {
         const plain = stripAnsi(result.stdout);
 
         assert.equal(result.code, 0);
-        assert.ok(plain.includes('approximate: true (scan)'));
+        assert.ok(plain.includes('approximate: true'));
+        assert.ok(plain.includes('caps: distinct_triples, window_rows'));
+        assert.ok(!plain.includes('cap: scan'));
         assert.ok(plain.includes('Cannot read properties of undefined'));
         assert.ok(plain.includes('line: 10'));
       } finally {
