@@ -16,6 +16,7 @@
  *   npx @agent-analytics/cli stats <name>         — Get stats for a project
  *   npx @agent-analytics/cli events <name>        — Get recent events
  *   npx @agent-analytics/cli errors <name>        — Grouped $error events
+ *   npx @agent-analytics/cli vitals <name>        — Core Web Vitals p75 on hosted page_view
  *   npx @agent-analytics/cli journey <name>       — Show one user's chronological journey
  *   npx @agent-analytics/cli query <name>         — Flexible analytics query
  *   npx @agent-analytics/cli compare <name>       — Free before/after read: keep, revert, or extend
@@ -780,6 +781,15 @@ async function cmdScan({ url, resumeId, resumeToken, full = false, project, json
   }
 }
 
+function withDefaultVitalsFlag(snippet) {
+  if (typeof snippet !== 'string' || snippet === '') return snippet;
+  return snippet.replace(/<script\b([^>]*)>/gi, (full, attrs) => {
+    if (/data-track-vitals\s*=/i.test(attrs)) return full;
+    if (/\breplay\.js\b/i.test(attrs)) return full;
+    return `<script${attrs} data-track-vitals="true">`;
+  });
+}
+
 const cmdCreate = withApi(async (api, name, domain, opts = {}) => {
   if (!name) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com');
   if (!domain) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com\n\nThe --domain value is the primary surface URL/origin used to restrict tracking for this project.');
@@ -812,7 +822,7 @@ const cmdCreate = withApi(async (api, name, domain, opts = {}) => {
     : `Project created with primary surface ${BOLD}${domain}${RESET}!\n`);
 
   heading('1. Add this snippet to your site:');
-  log(`${CYAN}${data.snippet}${RESET}\n`);
+  log(`${CYAN}${withDefaultVitalsFlag(data.snippet)}${RESET}\n`);
   if (data.snippet_note) log(`  ${DIM}${data.snippet_note}${RESET}\n`);
 
   heading('2. Your agent queries stats with:');
@@ -1571,15 +1581,17 @@ Example: properties.referrer, properties.utm_source, properties.first_utm_source
 sum, avg, p50, p75, and p95 require --property. Only JSON numbers are aggregated. Rows include n and skipped whenever an aggregation is requested.
 An empty aggregation row prints n 0 and skipped 0.
 Percentiles are nearest-rank. percentile_method is nearest_rank when a percentile is requested, and null for sum or avg only.
-The stock tracker sends $web_vitals only with data-track-vitals. Some sites attach cwv_* to page_view.
+Hosted stores cwv_lcp, cwv_inp, cwv_cls, cwv_fcp, and cwv_ttfb on page_view. Filter event to page_view. For rating, shares, and CWV pass, use vitals.
+Self-hosted core stores cwv_* on the $web_vitals event.
+The tracker sends vitals only when the install snippet sets data-track-vitals="true".
 Email lookup sends the email to Agent Analytics over HTTPS and matches with a project-scoped HMAC index. Raw email is not stored in event rows or profile traits.
 Invalid filter fields now fail loudly instead of being ignored.
 
 ${BOLD}Examples:${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode session_then_user${RESET}
-  ${CYAN}npx @agent-analytics/cli query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"$web_vitals"}]'${RESET}
-  If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view.
+  ${CYAN}npx @agent-analytics/cli query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"page_view"}]'${RESET}
+  ${CYAN}npx @agent-analytics/cli vitals my-site --days 7${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}
@@ -1789,7 +1801,7 @@ const cmdContext = withApi(async (api, subcommand, project, opts = {}) => {
 function compareUsageText() {
   return `Usage: npx @agent-analytics/cli compare <project> --goal <event> [--ship-date <YYYY-MM-DD>] [--days <N>] [--denominator <event>] [--exclude-denominator <field>=<value>] [--keep-threshold <fraction>] [--revert-threshold <fraction>] [--min-denominator <N>] [--min-goal-events <N>] [--filter <json>] [--json]
        npx @agent-analytics/cli compare <project> --goal <event> --baseline-from <YYYY-MM-DD> --baseline-to <YYYY-MM-DD> --compare-from <YYYY-MM-DD> --compare-to <YYYY-MM-DD>
-       npx @agent-analytics/cli compare <project> --goal <event> --ship-date <YYYY-MM-DD> --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower
+       npx @agent-analytics/cli compare <project> --goal <event> --ship-date <YYYY-MM-DD> --metric 'p75(cwv_lcp)' --metric-event page_view --better lower
 
 Compare is a free read. A successful call counts as one metered read. It is not a Pro-only query. --metric stays on that same free read.
 The goal is counted as unique converters (count_mode unique_users). A user who fires the goal 3 times counts once. rate is goal_converters / denominator_unique_users.
@@ -1801,7 +1813,7 @@ Thresholds are fractions (0.15 = +15%), and the absolute value must be 5 or less
 Verdicts: extend below_min_sample; extend zero_denominator; extend zero_baseline (lift is null); revert revert_threshold_met only when lift is at or below the revert threshold and the 90% interval is entirely below zero; extend inconclusive; keep keep_threshold_met when lift is at or above the keep threshold and interval.low is above 0; extend interval_includes_zero; extend no_evidence_of_gain.
 Explicit windows are baseline and compare objects with date_from and date_to. Do not combine them with --ship-date or --days.
 --metric reads a numeric property: sum(<key>), avg(<key>), p50(<key>), p75(<key>), or p95(<key>). Example: --metric 'p75(cwv_lcp)'. The key uses letters, numbers, and underscores, at most 128 characters.
---metric-event is the event whose property is measured. It defaults to the goal event and is omitted from the request unless you set it. Use it when the measured event is not the goal, for example goal signup and metric event $web_vitals.
+--metric-event is the event whose property is measured. It defaults to the goal event and is omitted from the request unless you set it. Use it when the measured event is not the goal, for example goal signup and metric event page_view.
 --better is higher or lower. Omitted, it defaults to higher. Pass --better lower for cwv_lcp and the other vitals. The direction is not inferred from the property name.
 sum(<key>) compares the sum per unique denominator user (per_user: true). avg and percentiles compare the aggregate itself (per_user: false). Percentiles are nearest-rank.
 lift is (compare value - baseline value) / baseline value, negated when better is lower, so the existing thresholds keep their meaning. raw_lift is that ratio before negation.
@@ -1814,8 +1826,9 @@ Omit --metric to keep the unique-converter response unchanged, including the 90%
 Examples:
   npx @agent-analytics/cli compare my-site --ship-date 2026-04-08 --days 7 --goal landing_signup_cta_clicked --denominator page_view --keep-threshold 0.15 --revert-threshold -0.10 --min-denominator 200 --min-goal-events 20
   npx @agent-analytics/cli compare my-site --ship-date 2026-11-04 --days 7 --goal template_opened --exclude-denominator "properties.title=Page not found | grokbotpages.com"
-  npx @agent-analytics/cli compare my-site --ship-date 2026-11-05 --days 7 --goal signup --metric 'p75(cwv_lcp)' --metric-event '$web_vitals' --better lower
-  If that returns n 0, check which event carries cwv_lcp (properties) and use that, for example page_view. The stock tracker sends $web_vitals only with data-track-vitals. Some sites attach cwv_* to page_view.
+  npx @agent-analytics/cli compare my-site --ship-date 2026-11-05 --days 7 --goal signup --metric 'p75(cwv_lcp)' --metric-event page_view --better lower
+  Hosted stores cwv_* on page_view. Pass --metric-event page_view for hosted vitals. Self-hosted core stores cwv_* on the $web_vitals event.
+  The tracker sends vitals only when the install snippet sets data-track-vitals="true". For a rated p75 with shares and CWV pass, use vitals.
   npx @agent-analytics/cli compare my-site --goal signup --baseline-from 2026-04-01 --baseline-to 2026-04-07 --compare-from 2026-04-09 --compare-to 2026-04-15 --json`;
 }
 
@@ -2069,7 +2082,7 @@ function parseMetricEvent(raw, metric) {
   if (!metric) error('--metric-event applies only with --metric. It defaults to the goal event.');
   const value = String(raw).trim();
   if (value.startsWith('--') || value.length > 128) {
-    error('--metric-event must be an event name, such as $web_vitals. It defaults to the goal event.');
+    error('--metric-event must be an event name, such as page_view. It defaults to the goal event.');
   }
   return value;
 }
@@ -2327,6 +2340,189 @@ const cmdErrors = withApi(async (api, project, opts = {}) => {
     return;
   }
   logErrorsResult(project, data);
+});
+
+const VITALS_METRICS = [
+  ['lcp', 'LCP'],
+  ['inp', 'INP'],
+  ['cls', 'CLS'],
+  ['fcp', 'FCP'],
+  ['ttfb', 'TTFB'],
+];
+
+function vitalsUsageText() {
+  return `Usage: npx @agent-analytics/cli vitals <project> [--days N] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--by device|path] [--limit N] [--json]
+
+Pro read on POST /vitals. A successful call counts as one metered read. A free account gets HTTP 403 PRO_REQUIRED and the read is not metered.
+The event is fixed to page_view. Hosted stores cwv_lcp, cwv_inp, cwv_cls, cwv_fcp, and cwv_ttfb on page_view.
+--days is a positive integer lookback. --from and --to are YYYY-MM-DD dates, sent as date_from and date_to. Omit a flag to leave that field unset.
+--by is device or path. Omitted, the response is one overall row (group null). device groups are mobile, tablet, and desktop. path returns the top limit paths by n, sorted by worst LCP p75.
+--limit defaults to 10 on the server and must be an integer from 1 to 20.
+p75 is the headline. percentile_method is nearest_rank. Rating uses the web.dev and PSI cutoffs returned in thresholds: LCP 2500/4000 ms, INP 200/500 ms, CLS 0.1/0.25 (unitless), FCP 1800/3000 ms, TTFB 800/1800 ms. A value at or below good_max is good. A value above poor_min is poor. Anything between is needs-improvement. The same rule is applied per load for the good, needs_improvement, and poor shares (fractions from 0 to 1).
+CWV pass is true when LCP, INP, and CLS p75 are all good. If INP n is 0, pass uses LCP and CLS only. If LCP or CLS n is 0, CWV pass is null. FCP and TTFB do not affect CWV pass.
+Each metric prints p75 with its unit, rating, good/NI/poor share, n, and skipped. skipped counts page views in the group without that vital. CLS is absent where layout-shift is unsupported, so those views are skipped instead of stored as 0.
+Poor targets lists up to 5 selectors among poor loads. FCP and TTFB have none.
+approximate is true when the 200,000 event cap is hit. caps names the cap when present.
+--json prints the API response.
+
+Examples:
+  npx @agent-analytics/cli vitals my-site --days 7
+  npx @agent-analytics/cli vitals my-site --from 2026-11-01 --to 2026-11-12 --by path --limit 10
+  npx @agent-analytics/cli vitals my-site --by device --json`;
+}
+
+function printVitalsUsage() {
+  log(vitalsUsageText());
+}
+
+function parseVitalsDays(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  if (!/^\d+$/.test(value) || Number(value) < 1) error('--days must be a positive integer.');
+  return Number(value);
+}
+
+function parseVitalsDate(flag, raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  if (!isIsoDate(value)) error(`${flag} must be a YYYY-MM-DD date.`);
+  return value;
+}
+
+function parseVitalsBy(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim().toLowerCase();
+  if (value !== 'device' && value !== 'path') error('--by must be device or path.');
+  return value;
+}
+
+function parseVitalsLimit(raw) {
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const value = String(raw).trim();
+  if (!/^\d+$/.test(value)) error('--limit must be an integer from 1 to 20.');
+  const limit = Number(value);
+  if (limit < 1 || limit > 20) error('--limit must be an integer from 1 to 20.');
+  return limit;
+}
+
+function padCell(value, width) {
+  const text = String(value);
+  if (text.length >= width) return `${text}  `;
+  return text + ' '.repeat(width - text.length);
+}
+
+function formatVitalsCount(value) {
+  if (value == null || value === '') return 'null';
+  return String(value);
+}
+
+function formatVitalsShare(value) {
+  if (value == null || value === '') return 'null';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'null';
+  return number.toFixed(3);
+}
+
+function formatVitalsP75(value, unit) {
+  if (value == null || value === '') return 'null';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'null';
+  if (!unit || unit === 'unitless') return unit === 'unitless' ? `${number} unitless` : String(number);
+  return `${number} ${unit}`;
+}
+
+function vitalsRatingColor(rating) {
+  if (rating === 'good') return GREEN;
+  if (rating === 'needs-improvement') return YELLOW;
+  if (rating === 'poor') return RED;
+  return DIM;
+}
+
+function vitalsUnits(thresholds = {}) {
+  const units = { lcp: 'ms', inp: 'ms', cls: 'unitless', fcp: 'ms', ttfb: 'ms' };
+  for (const [key] of VITALS_METRICS) {
+    const unit = thresholds?.[key]?.unit;
+    if (typeof unit === 'string' && unit.trim()) units[key] = unit.trim();
+  }
+  return units;
+}
+
+function vitalsGroupLabel(group) {
+  if (group == null || group === '') return 'Overall';
+  return String(group);
+}
+
+function formatVitalsTargets(targets) {
+  if (!Array.isArray(targets) || targets.length === 0) return '';
+  return targets.slice(0, 5).map((entry) => {
+    const target = entry?.target == null || entry.target === '' ? 'null' : String(entry.target);
+    const count = entry?.count == null ? 'null' : entry.count;
+    return `${target} (${count})`;
+  }).join(', ');
+}
+
+function logVitalsGroup(row, units) {
+  const pass = row?.cwv_pass === true ? 'true' : row?.cwv_pass === false ? 'false' : 'null';
+  const passColor = row?.cwv_pass === true ? GREEN : row?.cwv_pass === false ? RED : DIM;
+  log(`  ${BOLD}${vitalsGroupLabel(row?.group)}${RESET}`);
+  log(`  ${DIM}CWV pass:${RESET} ${passColor}${pass}${RESET}`);
+  log(`  ${BOLD}${padCell('Metric', 8)}${padCell('p75', 18)}${padCell('rating', 20)}${padCell('good', 8)}${padCell('NI', 8)}${padCell('poor', 8)}${padCell('n', 8)}skipped${RESET}`);
+  const targetLines = [];
+  for (const [key, label] of VITALS_METRICS) {
+    const metric = row?.metrics?.[key] || {};
+    const share = metric.share || {};
+    const rating = metric.rating == null || metric.rating === '' ? 'null' : String(metric.rating);
+    log(`  ${padCell(label, 8)}${padCell(formatVitalsP75(metric.p75, units[key]), 18)}${vitalsRatingColor(rating)}${padCell(rating, 20)}${RESET}${padCell(formatVitalsShare(share.good), 8)}${padCell(formatVitalsShare(share.needs_improvement), 8)}${padCell(formatVitalsShare(share.poor), 8)}${padCell(formatVitalsCount(metric.n), 8)}${formatVitalsCount(metric.skipped)}`);
+    const targets = formatVitalsTargets(metric.top_poor_targets);
+    if (targets) targetLines.push(`    ${label}  ${targets}`);
+  }
+  if (targetLines.length > 0) {
+    log(`  ${DIM}Poor targets${RESET}`);
+    for (const line of targetLines) log(line);
+  }
+  log('');
+}
+
+function logVitalsResult(project, data) {
+  heading(`Web Vitals: ${data.project || project}`);
+  log('');
+  const from = data.date_from || '';
+  const to = data.date_to || '';
+  if (from || to) log(`  ${DIM}${from} → ${to}${RESET}`);
+  if (data.event) log(`  ${DIM}event:${RESET} ${data.event}`);
+  if (Object.prototype.hasOwnProperty.call(data, 'group_by')) {
+    log(`  ${DIM}group_by:${RESET} ${data.group_by == null ? 'null' : data.group_by}`);
+  }
+  if (data.percentile || data.percentile_method) {
+    const method = data.percentile_method ? ` (${data.percentile_method})` : '';
+    log(`  ${DIM}percentile:${RESET} ${data.percentile || 'p75'}${method}`);
+  }
+  logApproximate(data);
+  log('');
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  if (rows.length === 0) {
+    log('  No web vitals in this window.');
+    log('');
+    return;
+  }
+  const units = vitalsUnits(data.thresholds);
+  for (const row of rows) logVitalsGroup(row, units);
+}
+
+const cmdVitals = withApi(async (api, project, opts = {}) => {
+  if (!project || String(project).startsWith('--')) error(vitalsUsageText());
+  const data = await api.getVitals(project, {
+    days: parseVitalsDays(opts.days),
+    date_from: parseVitalsDate('--from', opts.from),
+    date_to: parseVitalsDate('--to', opts.to),
+    group_by: parseVitalsBy(opts.by),
+    limit: parseVitalsLimit(opts.limit),
+  });
+  if (opts.jsonOutput) {
+    printJson(data);
+    return;
+  }
+  logVitalsResult(project, data);
 });
 
 const cmdPortfolioContext = withApi(async (subcommandApi, subcommand, opts = {}) => {
@@ -3007,6 +3203,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}sessions-dist${RESET} <name>   Session duration distribution
   ${CYAN}events${RESET} <name>          Raw event log
   ${CYAN}errors${RESET} <name>          Grouped $error events (Pro). --since 7d, optional --until, --new-since, --limit
+  ${CYAN}vitals${RESET} <name>          Core Web Vitals p75 on page_view (Pro). --days, --from, --to, --by, --limit
   ${CYAN}journey${RESET} <name>         Chronological journey by --user-id or --email
   ${CYAN}sessions${RESET} <name>        Individual session records
   ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, numeric property aggs)
@@ -3054,8 +3251,11 @@ ${BOLD}ACCOUNT${RESET}
   ${CYAN}delete${RESET} <project>       Delete a project by name or id
 
 ${BOLD}KEY OPTIONS${RESET}
-  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90
-  --limit <N>        Max results (default: 100). For errors, default 20 and max 100
+  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90. For vitals, a positive integer
+  --from <date>      Start date (YYYY-MM-DD) for query and vitals
+  --to <date>        End date (YYYY-MM-DD) for query and vitals
+  --by <group>       Vitals breakdown: device or path
+  --limit <N>        Max results (default: 100). For errors, default 20 and max 100. For vitals, default 10 and max 20
   --domain <url>     Primary surface URL/origin (required for create)
   --source-scan <id> Link project creation to a prior website analysis
   --full             Create a new signed-in full website analysis
@@ -3383,6 +3583,20 @@ try {
         since: getArg('--since'),
         until: getArg('--until'),
         newSince: getArg('--new-since'),
+        limit: getArg('--limit'),
+        jsonOutput: args.includes('--json'),
+      });
+      break;
+    case 'vitals':
+      if (hasHelpFlag(args)) {
+        printVitalsUsage();
+        break;
+      }
+      await cmdVitals(args[1] && !args[1].startsWith('--') ? args[1] : null, {
+        days: getArg('--days'),
+        from: getArg('--from'),
+        to: getArg('--to'),
+        by: getArg('--by'),
         limit: getArg('--limit'),
         jsonOutput: args.includes('--json'),
       });
