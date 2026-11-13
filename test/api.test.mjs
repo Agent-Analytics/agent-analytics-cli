@@ -379,6 +379,16 @@ describe('AgentAnalyticsAPI', () => {
       }));
     });
 
+    it('sql → POST /sql sends project and sql only', async () => {
+      await api.sql('my-site', 'SELECT event FROM events');
+      assert.equal(lastUrl, 'https://api.test/sql');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        sql: 'SELECT event FROM events',
+      }));
+    });
+
     it('compare → POST /compare sends ship_date fields and omits unset optionals', async () => {
       await api.compare('my-site', { goal_event: 'signup', ship_date: '2026-04-08' });
       assert.equal(lastUrl, 'https://api.test/compare');

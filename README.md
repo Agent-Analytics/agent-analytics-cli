@@ -71,7 +71,8 @@ events <name>                    Raw event log, including each event's country
 errors <name> --since 7d         Grouped $error events (Pro). Optional --until, --new-since, --limit
 vitals <name>                    Pro Core Web Vitals on page_view: p75, rating, good/NI/poor share, CWV pass. --days, --from, --to, --by device|path, --limit, --json
 sessions <name>                  Individual session records
-query <name>                     Flexible analytics query (metrics, group_by, filters, numeric property aggs)
+query <name>                     Flexible analytics query (metrics, group_by, filters, numeric property aggs). group_by allows one properties.<key>
+sql <name>                       Pro read-only SQL on events and sessions. --sql '<statement>' or -f file.sql, and --json
 compare <name>                   Free before/after read of unique converters, or --metric 'p75(cwv_lcp)' --metric-event page_view --better lower. A 7-day read should run on ship day + 8
 annotate <name> --title <text>   Append one project annotation without replacing context
 properties <name>                Discover event names & property keys
@@ -183,6 +184,23 @@ npx --yes @agent-analytics/cli@0.5.41 query my-site --metrics event_count --coun
 npx --yes @agent-analytics/cli@0.5.41 query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"page_view"}]'
 npx --yes @agent-analytics/cli@0.5.41 vitals my-site --days 7
 npx --yes @agent-analytics/cli@0.5.41 query shop --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'
+```
+
+`query --group-by` accepts `event`, `date`, `user_id`, `session_id`, `country`, and at most one `properties.<key>`. The key uses the same rules as a `properties.<key>` filter: letters, numbers, underscores, dots, and hyphens, 1 to 128 characters. Rows include that value under the column name `properties.<key>`. A missing property groups as null. Two `properties.*` entries are HTTP 400 `INVALID_GROUP_BY`. The route stays Pro. Prefer `query` for grouping by a property. Use `sql` only when `query` cannot express the question.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.41 query my-site --group-by date,properties.path --metrics event_count,unique_users
+npx --yes @agent-analytics/cli@0.5.41 query my-site --group-by properties.plan --metrics event_count --filter '[{"field":"event","op":"eq","value":"signup"}]'
+```
+
+`sql` is a Pro read on `POST /sql`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. Pass one `SELECT` with `--sql`, or read it from a file with `-f` or `--file`. Pass the statement as the flag value. Do not concatenate untrusted shell input into the command. The statement must not start with `WITH`, and it must be at most 20 KB. The API allows only `events` and `sessions`.
+
+`events` columns: `id`, `event`, `properties`, `user_id`, `session_id`, `timestamp`, `date`, `country`. `sessions` columns: `session_id`, `user_id`, `project_id`, `start_time`, `end_time`, `duration`, `entry_page`, `exit_page`, `event_count`, `is_bounce`, `date`. `resolved_user_id` is not exposed. `properties` is a JSON string. The server returns at most 1,000 rows. `truncated` is true when more rows existed. `statistics` includes `elapsed_ms`, `rows_read`, and `expensive` (`expensive` is true when `rows_read` is over 1,000,000). Errors: `PRO_REQUIRED` (403), `INVALID_SQL` (400), `SQL_TIMEOUT` (504), `SQL_BUDGET` (429), `SQL_UNAVAILABLE` (503). Without `--json`, the CLI prints a table and shows SQL NULL as `null`. `--json` prints the API body.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+npx --yes @agent-analytics/cli@0.5.41 sql my-site -f query.sql
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date' --json
 ```
 
 Hosted vitals queries use `page_view`. If `n` is 0, the project is not sending `cwv_*` yet.
