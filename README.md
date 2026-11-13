@@ -324,9 +324,9 @@ The API requires an idempotency key, unique per account. When `--idempotency-key
 
 A finished job returns HTTP 200. A job that is still running returns HTTP 202. `status` is `pending`, `running`, `completed`, or `failed`. Poll with `erasures get <id>`. `erasures <project>` lists the 100 newest receipts. Receipts contain no raw subject, no deleted payloads, and no raw email. `--json` prints those receipt fields. A generated idempotency key is included as `idempotency_key`.
 
-Agent sessions need the `erasures:write` scope. That scope is not in the default agent session, and this CLI does not request it at login. `analytics:read` and `projects:write` are not enough. An account API key or a dashboard session can erase. Demo mode is read-only.
+Agent sessions need the `erasures:write` scope. That scope is not in the default agent session, and this CLI does not request it at login. `analytics:read` and `projects:write` are not enough. A session without that scope gets HTTP 403 `FORBIDDEN` and the message `agent session missing required scope: erasures:write`. An account API key or a dashboard session can erase. Demo mode is read-only.
 
-Erasure accepts are limited to 20 per account per hour on every plan, including free. That limit is separate from the per-minute request limit and is not metered as a read.
+Erasure accepts are limited to 20 per account per hour on every plan, including free. That limit is HTTP 429 `RATE_LIMITED` with `reason` `erasure_rate_limit`. It is separate from the per-minute request limit and is not metered as a read.
 
 A database restore can bring erased rows back for up to 30 days. Ask support to re-apply erasures after any restore. New events for an erased id are dropped for 7 days, then accepted again. Erasure is not a permanent suppress list. Stored hashes are still identifiers.
 

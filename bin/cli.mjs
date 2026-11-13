@@ -3444,8 +3444,8 @@ const ERASURE_VALUE_FLAGS = new Set([
   '--include-replays',
 ]);
 const ERASURE_BOOL_FLAGS = new Set(['--confirm-large', '--portfolio', '--json']);
-const ERASURE_OPEN_STATUSES = new Set(['pending', 'running', 'processing']);
-const ERASURE_STATUSES = new Set(['pending', 'running', 'processing', 'completed', 'failed']);
+const ERASURE_OPEN_STATUSES = new Set(['pending', 'running']);
+const ERASURE_STATUSES = new Set(['pending', 'running', 'completed', 'failed']);
 const ERASURE_SUBJECT_TYPES = new Set(['user_id', 'session_id', 'email']);
 
 function eraseUsageText() {
@@ -3461,11 +3461,11 @@ Pass exactly one subject. --confirm must be the word erase. The command refuses 
 --confirm-large is required when the subject matches more than 100,000 events.
 --idempotency-key is unique per account. When omitted, the CLI generates a UUID, prints idempotency_key, and sends it. The same key and the same body returns the original job. A failed job continues. The same key with a different body is HTTP 409 IDEMPOTENCY_CONFLICT.
 The CLI does not print the subject. status is pending, running, completed, or failed. HTTP 200 means the job finished. HTTP 202 means it is still running. Poll with erasures get <id>.
-Agent sessions need erasures:write. That scope is not in the default agent session, and login does not request it. analytics:read and projects:write are not enough.
+Agent sessions need erasures:write. That scope is not in the default agent session, and login does not request it. analytics:read and projects:write are not enough. A session without that scope gets HTTP 403 FORBIDDEN and the message "agent session missing required scope: erasures:write".
 Demo mode is read-only.
 --json prints the receipt fields. A generated idempotency key is added as idempotency_key.
 
-API errors: INVALID_ERASURE (400), CONFIRM_LARGE_REQUIRED (400), FORBIDDEN_SCOPE (403), DEMO_READ_ONLY (403), PROJECT_NOT_FOUND (404), IDEMPOTENCY_CONFLICT (409), RATE_LIMITED (429, reason erasure_rate_limit).
+API errors: INVALID_ERASURE (400), CONFIRM_LARGE_REQUIRED (400), FORBIDDEN (403, agent session missing required scope: erasures:write), DEMO_READ_ONLY (403), PROJECT_NOT_FOUND (404), IDEMPOTENCY_CONFLICT (409), RATE_LIMITED (429, reason erasure_rate_limit). The hourly cap is that 429. It is not metered as a read.
 
 Examples:
   npx @agent-analytics/cli erase my-site --user-id user_123 --confirm erase
@@ -3782,9 +3782,15 @@ function erasureErrorCode(err) {
   return err?.code || err?.body?.code || err?.body?.error || null;
 }
 
+function isMissingErasureScope(err) {
+  if (erasureErrorCode(err) !== 'FORBIDDEN') return false;
+  const message = String(err?.message || err?.body?.message || '');
+  return message.includes('agent session missing required scope: erasures:write');
+}
+
 function logErasureFailureHint(err) {
   const code = erasureErrorCode(err);
-  if (code === 'FORBIDDEN_SCOPE') {
+  if (isMissingErasureScope(err)) {
     log('');
     log('This agent session does not include erasures:write. That scope is not in the default agent session, and login does not request it. analytics:read and projects:write are not enough.');
     return;

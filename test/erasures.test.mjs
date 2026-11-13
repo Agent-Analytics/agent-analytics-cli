@@ -107,7 +107,9 @@ describe('erasures', () => {
       assert.ok(plain.includes('erasures:write'));
       assert.ok(plain.includes('INVALID_ERASURE'));
       assert.ok(plain.includes('CONFIRM_LARGE_REQUIRED'));
-      assert.ok(plain.includes('FORBIDDEN_SCOPE'));
+      assert.ok(plain.includes('FORBIDDEN (403, agent session missing required scope: erasures:write)'));
+      assert.equal(plain.includes('FORBIDDEN_SCOPE'), false);
+      assert.equal(plain.includes('processing'), false);
       assert.ok(plain.includes('DEMO_READ_ONLY'));
       assert.ok(plain.includes('PROJECT_NOT_FOUND'));
       assert.ok(plain.includes('IDEMPOTENCY_CONFLICT'));
@@ -475,6 +477,37 @@ describe('erasures', () => {
       }
     });
 
+    it('drops a processing status instead of polling it', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(receipt({ status: 'processing', completed_at: null })));
+      });
+
+      try {
+        const env = authEnv(server.baseUrl);
+        const human = await run([
+          'erase', 'my-site', '--user-id', USER_ID, '--confirm', 'erase',
+        ], { env });
+        const json = await run([
+          'erase', 'my-site', '--user-id', USER_ID, '--confirm', 'erase', '--json',
+        ], { env });
+        const plain = stripAnsi(human.stdout);
+        const parsed = JSON.parse(json.stdout);
+
+        assert.equal(human.code, 0);
+        assert.equal(json.code, 0);
+        assert.equal(plain.includes('processing'), false);
+        assert.equal(plain.includes('Poll:'), false);
+        assert.equal(plain.includes('Status:'), false);
+        assert.equal(parsed.status, undefined);
+        assert.equal(json.stdout.includes('processing'), false);
+        assertNoSubject(human);
+        assertNoSubject(json);
+      } finally {
+        await server.close();
+      }
+    });
+
     it('prints API errors without an upgrade handoff or the subject', async () => {
       const cases = [
         {
@@ -485,9 +518,12 @@ describe('erasures', () => {
         },
         {
           status: 403,
-          body: { code: 'FORBIDDEN_SCOPE', message: 'missing scope' },
-          includes: ['missing scope', 'erasures:write', 'analytics:read and projects:write are not enough'],
-          excludes: ['upgrade-link'],
+          body: { error: 'FORBIDDEN', message: 'agent session missing required scope: erasures:write' },
+          includes: [
+            'agent session missing required scope: erasures:write',
+            'analytics:read and projects:write are not enough',
+          ],
+          excludes: ['upgrade-link', 'FORBIDDEN_SCOPE'],
         },
         {
           status: 403,
@@ -510,11 +546,11 @@ describe('erasures', () => {
         {
           status: 429,
           body: {
-            code: 'RATE_LIMITED',
+            error: 'RATE_LIMITED',
             reason: 'erasure_rate_limit',
-            message: `Upgrade your plan for ${USER_ID}`,
+            message: 'Upgrade your plan. Too many erasure requests.',
           },
-          includes: ['HTTP 429 RATE_LIMITED', '20 per account per hour', 'not metered as a read'],
+          includes: ['Upgrade your plan. Too many erasure requests.', '20 per account per hour', 'not metered as a read'],
           excludes: ['upgrade-link'],
         },
         {
