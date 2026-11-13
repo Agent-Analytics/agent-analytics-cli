@@ -2625,20 +2625,32 @@ describe('CLI', () => {
       const { code, stdout } = await run(['sql', '--help']);
       const plain = stripAnsi(stdout);
       assert.equal(code, 0);
-      assert.ok(plain.includes("sql <project> (--sql <statement> | -f <file.sql>) [--json]"));
+      assert.ok(plain.includes("sql <project> (--sql <statement> | -f <file.sql>) [--days N] [--from YYYY-MM-DD --to YYYY-MM-DD] [--json]"));
       assert.ok(plain.includes("sql my-site --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'"));
+      assert.ok(plain.includes('sql my-site --days 30 --sql'));
+      assert.ok(plain.includes('sql my-site --from 2026-11-01 --to 2026-11-12 --sql'));
       assert.ok(plain.includes('sql my-site -f query.sql'));
       assert.ok(plain.includes('--json prints the API response'));
       assert.ok(plain.includes('Use query or breakdown first.'));
+      assert.ok(plain.includes('--days defaults to 7 and must be an integer from 1 to 90.'));
+      assert.ok(plain.includes('The span is at most 90 days.'));
+      assert.ok(plain.includes('The CLI prints the returned window.'));
+      assert.ok(plain.includes('at most 2 times in total'));
+      assert.ok(plain.includes('One /sql query runs at a time per account.'));
+      assert.ok(plain.includes('SQL_BUSY'));
+      assert.ok(plain.includes('Retry-After'));
       assert.ok(plain.includes('events columns: id, event, properties, user_id, session_id, timestamp, date, country.'));
       assert.ok(plain.includes('sessions columns: session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date.'));
       assert.ok(plain.includes('resolved_user_id is not exposed.'));
       assert.ok(plain.includes('PRO_REQUIRED (403)'));
       assert.ok(plain.includes('INVALID_SQL (400)'));
+      assert.ok(plain.includes('INVALID_WINDOW (400)'));
       assert.ok(plain.includes('SQL_TIMEOUT (504)'));
       assert.ok(plain.includes('SQL_BUDGET (429)'));
+      assert.ok(plain.includes('SQL_COOLDOWN (429)'));
       assert.ok(plain.includes('SQL_UNAVAILABLE (503)'));
       assert.ok(plain.includes('at most 1,000 rows'));
+      assert.ok(plain.includes('Timeout is 10 seconds'));
     });
 
     it('lists sql on the main help screen', async () => {
@@ -2664,6 +2676,7 @@ describe('CLI', () => {
           ],
           count: 2,
           truncated: true,
+          window: { date_from: '2026-11-06', date_to: '2026-11-12' },
           statistics: { elapsed_ms: 12, rows_read: 40, expensive: false },
         }));
       });
@@ -2687,8 +2700,12 @@ describe('CLI', () => {
         assert.equal(result.code, 0);
         assert.equal(requestBody.project, 'my-site');
         assert.equal(requestBody.sql, 'SELECT json_extract(properties, \'$.path\') AS "properties.path", COUNT(*) AS event_count FROM events GROUP BY 1');
-        assert.equal(Object.keys(requestBody).sort().join(','), 'project,sql');
+        assert.equal(requestBody.days, 7);
+        assert.equal(requestBody.date_from, undefined);
+        assert.equal(requestBody.date_to, undefined);
+        assert.equal(Object.keys(requestBody).sort().join(','), 'days,project,sql');
         assert.ok(plain.includes('SQL: my-site'));
+        assert.ok(plain.includes('window: 2026-11-06 to 2026-11-12'));
         assert.ok(plain.includes('elapsed_ms: 12'));
         assert.ok(plain.includes('rows_read: 40'));
         assert.ok(plain.includes('expensive: false'));
@@ -2856,6 +2873,152 @@ describe('CLI', () => {
         assert.ok(stripAnsi(invalid.stdout).includes('Only a single SELECT is allowed.'));
         assert.ok(stripAnsi(upgrade.stdout).includes('This endpoint is available on paid plans.'));
         assert.ok(stripAnsi(upgrade.stdout).includes('upgrade-link --detached'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('sends --days or --from/--to and prints the returned window', async () => {
+      const bodies = [];
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        bodies.push(body);
+        const window = body.days != null
+          ? { date_from: '2026-10-15', date_to: '2026-11-13' }
+          : { date_from: body.date_from, date_to: body.date_to };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          columns: ['event'],
+          rows: [['signup']],
+          count: 1,
+          truncated: false,
+          window,
+          statistics: { elapsed_ms: 4, rows_read: 8, expensive: false },
+        }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const byDays = await run([
+          'sql', 'my-site',
+          '--days', '30',
+          '--sql', 'SELECT event FROM events',
+        ], { env });
+        const byDates = await run([
+          'sql', 'my-site',
+          '--from', '2026-01-01',
+          '--to', '2026-04-01',
+          '--sql', 'SELECT event FROM events',
+          '--json',
+        ], { env });
+        const parsed = JSON.parse(byDates.stdout);
+
+        assert.equal(byDays.code, 0);
+        assert.equal(byDates.code, 0);
+        assert.deepEqual(bodies[0], {
+          project: 'my-site',
+          sql: 'SELECT event FROM events',
+          days: 30,
+        });
+        assert.deepEqual(bodies[1], {
+          project: 'my-site',
+          sql: 'SELECT event FROM events',
+          date_from: '2026-01-01',
+          date_to: '2026-04-01',
+        });
+        assert.ok(stripAnsi(byDays.stdout).includes('window: 2026-10-15 to 2026-11-13'));
+        assert.deepEqual(parsed.window, { date_from: '2026-01-01', date_to: '2026-04-01' });
+        assert.ok(!byDates.stdout.includes('window: 2026-01-01 to 2026-04-01'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects a bad SQL window before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const tooMany = await run(['sql', 'my-site', '--days', '91', '--sql', 'SELECT 1'], { env });
+        const zero = await run(['sql', 'my-site', '--days', '0', '--sql', 'SELECT 1'], { env });
+        const word = await run(['sql', 'my-site', '--days', '7d', '--sql', 'SELECT 1'], { env });
+        const half = await run(['sql', 'my-site', '--from', '2026-11-01', '--sql', 'SELECT 1'], { env });
+        const both = await run([
+          'sql', 'my-site',
+          '--days', '7',
+          '--from', '2026-11-01',
+          '--to', '2026-11-12',
+          '--sql', 'SELECT 1',
+        ], { env });
+        const wide = await run([
+          'sql', 'my-site',
+          '--from', '2026-01-01',
+          '--to', '2026-04-02',
+          '--sql', 'SELECT 1',
+        ], { env });
+        const backwards = await run([
+          'sql', 'my-site',
+          '--from', '2026-11-12',
+          '--to', '2026-11-01',
+          '--sql', 'SELECT 1',
+        ], { env });
+
+        assert.equal(calls, 0);
+        for (const result of [tooMany, zero, word, half, both, wide, backwards]) {
+          assert.notEqual(result.code, 0);
+        }
+        assert.ok(stripAnsi(tooMany.stdout).includes('--days must be an integer from 1 to 90.'));
+        assert.ok(stripAnsi(zero.stdout).includes('--days must be an integer from 1 to 90.'));
+        assert.ok(stripAnsi(word.stdout).includes('--days must be an integer from 1 to 90.'));
+        assert.ok(stripAnsi(half.stdout).includes('--from and --to must be passed together.'));
+        assert.ok(stripAnsi(both.stdout).includes('Pass --days or both --from and --to, not both.'));
+        assert.ok(stripAnsi(wide.stdout).includes('The SQL window span must be at most 90 days.'));
+        assert.ok(stripAnsi(backwards.stdout).includes('--to must be on or after --from.'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints Retry-After seconds for SQL_BUSY and SQL_COOLDOWN', async () => {
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        const cooldown = String(body.sql).includes('cooldown');
+        res.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Retry-After': cooldown ? '60' : '15',
+        });
+        res.end(JSON.stringify(cooldown
+          ? { code: 'SQL_COOLDOWN', message: 'SQL is cooling down after a large read.' }
+          : { code: 'SQL_BUSY', message: 'A SQL query is already running.' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const busy = await run(['sql', 'my-site', '--sql', 'SELECT event FROM events'], { env });
+        const cooldown = await run(['sql', 'my-site', '--sql', 'SELECT cooldown FROM events'], { env });
+        const busyPlain = stripAnsi(busy.stdout);
+        const cooldownPlain = stripAnsi(cooldown.stdout);
+
+        assert.notEqual(busy.code, 0);
+        assert.notEqual(cooldown.code, 0);
+        assert.ok(busyPlain.includes('Retry after 15 seconds.'));
+        assert.ok(busyPlain.includes('A SQL query is already running.'));
+        assert.ok(cooldownPlain.includes('Retry after 60 seconds.'));
+        assert.ok(cooldownPlain.includes('SQL is cooling down after a large read.'));
       } finally {
         await server.close();
       }

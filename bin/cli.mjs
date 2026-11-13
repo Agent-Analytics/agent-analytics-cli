@@ -1672,21 +1672,27 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
 });
 
 function sqlUsageText() {
-  return `Usage: npx @agent-analytics/cli sql <project> (--sql <statement> | -f <file.sql>) [--json]
+  return `Usage: npx @agent-analytics/cli sql <project> (--sql <statement> | -f <file.sql>) [--days N] [--from YYYY-MM-DD --to YYYY-MM-DD] [--json]
 
 Pro read on POST /sql. A successful call counts as one metered read. A free account gets HTTP 403 PRO_REQUIRED and the call is not metered.
 Use query or breakdown first. sql is the escape hatch when query cannot express the question.
 Pass one SELECT with --sql, or read it from a file with -f or --file. The examples pass the statement as a flag value. Do not concatenate untrusted shell input into the command.
 The statement must be one SELECT, at most 20 KB, and must not start with WITH. The API rejects multiple statements, write or DDL keywords outside string literals, schema-qualified names, sqlite_master, sqlite_schema, sqlite_temp_master, and any table other than events and sessions.
+A statement may reference events and sessions at most 2 times in total. A recursive CTE is rejected. A third reference is HTTP 400 INVALID_SQL.
+One /sql query runs at a time per account. A second call returns HTTP 429 SQL_BUSY with Retry-After, and the CLI prints those seconds.
+--days defaults to 7 and must be an integer from 1 to 90. It is sent as days. --from and --to match query: YYYY-MM-DD dates, sent as date_from and date_to. The span is at most 90 days. Pass --days or both --from and --to, not both forms. The server always applies this window to events by timestamp and sessions by start time. The CLI prints the returned window.
 events columns: id, event, properties, user_id, session_id, timestamp, date, country.
 sessions columns: session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date.
 resolved_user_id is not exposed. properties is a JSON string.
 The server returns at most 1,000 rows. truncated is true when more rows existed. statistics includes elapsed_ms, rows_read, and expensive. expensive is true when rows_read is over 1,000,000.
-Errors: PRO_REQUIRED (403), INVALID_SQL (400), SQL_TIMEOUT (504), SQL_BUDGET (429), SQL_UNAVAILABLE (503).
+Timeout is 10 seconds (HTTP 504 SQL_TIMEOUT). The query can still finish inside D1 after that timeout. The account rate limit is 10 calls per minute (HTTP 429 RATE_LIMITED, reason sql_rate_limit). A query that reads more than 5,000,000 rows starts a 60 second SQL_COOLDOWN (HTTP 429, Retry-After). The monthly budget stays 100,000,000 rows read (HTTP 429 SQL_BUDGET).
+Errors: PRO_REQUIRED (403), INVALID_SQL (400), INVALID_WINDOW (400), SQL_TIMEOUT (504), SQL_BUDGET (429), SQL_BUSY (429), SQL_COOLDOWN (429), RATE_LIMITED (429), SQL_UNAVAILABLE (503).
 --json prints the API response. Without --json, the CLI prints a table. SQL NULL prints as null.
 
 Examples:
   npx @agent-analytics/cli sql my-site --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+  npx @agent-analytics/cli sql my-site --days 30 --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+  npx @agent-analytics/cli sql my-site --from 2026-11-01 --to 2026-11-12 --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date'
   npx @agent-analytics/cli sql my-site -f query.sql
   npx @agent-analytics/cli sql my-site --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date' --json`;
 }
@@ -1695,7 +1701,7 @@ function printSqlUsage() {
   log(sqlUsageText());
 }
 
-const SQL_VALUE_FLAGS = new Set(['--sql', '--json', '--help', '-h', '-f', '--file', '--project']);
+const SQL_VALUE_FLAGS = new Set(['--sql', '--json', '--help', '-h', '-f', '--file', '--project', '--days', '--from', '--to']);
 
 function sqlFlagValue(flag) {
   const idx = args.indexOf(flag);
@@ -1777,8 +1783,79 @@ function logSqlTable(columns, rows) {
   });
 }
 
+function logSqlWindow(data) {
+  const bounds = data.window;
+  if (!bounds || typeof bounds !== 'object') return;
+  const from = bounds.date_from == null ? '' : String(bounds.date_from);
+  const to = bounds.date_to == null ? '' : String(bounds.date_to);
+  if (!from && !to) return;
+  log(`  ${DIM}window:${RESET} ${from} to ${to}`);
+}
+
+function parseSqlDays(raw) {
+  const value = String(raw).trim();
+  if (!/^\d+$/.test(value)) error('--days must be an integer from 1 to 90.');
+  const days = Number(value);
+  if (days < 1 || days > 90) error('--days must be an integer from 1 to 90.');
+  return days;
+}
+
+function parseSqlDate(flag, raw) {
+  const value = String(raw).trim();
+  if (!isIsoDate(value)) error(`${flag} must be a YYYY-MM-DD date.`);
+  return value;
+}
+
+function sqlDateSpanDays(dateFrom, dateTo) {
+  const from = Date.parse(`${dateFrom}T00:00:00.000Z`);
+  const to = Date.parse(`${dateTo}T00:00:00.000Z`);
+  return Math.round((to - from) / 86400000);
+}
+
+function parseSqlWindow(opts) {
+  const hasDays = opts.days != null && String(opts.days).trim() !== '';
+  const hasFrom = opts.date_from != null && String(opts.date_from).trim() !== '';
+  const hasTo = opts.date_to != null && String(opts.date_to).trim() !== '';
+  if ((opts.daysPresent && !hasDays) || (opts.fromPresent && !hasFrom) || (opts.toPresent && !hasTo)) {
+    const flag = opts.daysPresent && !hasDays ? '--days' : opts.fromPresent && !hasFrom ? '--from' : '--to';
+    error(`${flag} requires a value.`);
+  }
+  if (hasDays && (hasFrom || hasTo)) error('Pass --days or both --from and --to, not both.');
+  if (hasFrom !== hasTo) error('--from and --to must be passed together.');
+  if (hasFrom) {
+    const date_from = parseSqlDate('--from', opts.date_from);
+    const date_to = parseSqlDate('--to', opts.date_to);
+    const span = sqlDateSpanDays(date_from, date_to);
+    if (span < 0) error('--to must be on or after --from.');
+    if (span > 90) error('The SQL window span must be at most 90 days.');
+    return { date_from, date_to };
+  }
+  return { days: hasDays ? parseSqlDays(opts.days) : 7 };
+}
+
+function sqlRetryCode(err) {
+  return err?.code || err?.body?.code || err?.body?.error;
+}
+
+function sqlRetrySeconds(err) {
+  const raw = err?.retryAfter ?? err?.body?.retry_after;
+  if (raw == null || String(raw).trim() === '') return null;
+  const value = String(raw).trim();
+  if (!/^\d+$/.test(value)) return null;
+  return value;
+}
+
+function logSqlRetry(err) {
+  const code = sqlRetryCode(err);
+  if (code !== 'SQL_BUSY' && code !== 'SQL_COOLDOWN') return;
+  const seconds = sqlRetrySeconds(err);
+  if (seconds == null) return;
+  log(`Retry after ${seconds} seconds.`);
+}
+
 function logSqlStatistics(data) {
   const stats = data.statistics && typeof data.statistics === 'object' ? data.statistics : null;
+  logSqlWindow(data);
   if (stats) {
     if (stats.elapsed_ms != null) log(`  ${DIM}elapsed_ms:${RESET} ${stats.elapsed_ms}`);
     if (stats.rows_read != null) log(`  ${DIM}rows_read:${RESET} ${stats.rows_read}`);
@@ -1816,7 +1893,14 @@ function logSqlResult(project, data) {
 const cmdSql = withApi(async (api, project, opts = {}) => {
   if (!project) error(sqlUsageText());
   const statement = resolveSqlStatement(opts);
-  const data = await api.sql(project, statement);
+  const bounds = parseSqlWindow(opts);
+  let data;
+  try {
+    data = await api.sql(project, statement, bounds);
+  } catch (err) {
+    logSqlRetry(err);
+    throw err;
+  }
   if (opts.jsonOutput) {
     printJson(data);
     return;
@@ -3373,7 +3457,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}journey${RESET} <name>         Chronological journey by --user-id or --email
   ${CYAN}sessions${RESET} <name>        Individual session records
   ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, numeric property aggs). group_by allows one properties.<key>
-  ${CYAN}sql${RESET} <name>             Pro read-only SQL on events and sessions. --sql or -f, and --json
+  ${CYAN}sql${RESET} <name>             Pro read-only SQL on events and sessions. --sql or -f, --days or --from/--to, --json
   ${CYAN}compare${RESET} <name>         Free before/after read of unique converters. A 7-day read should run on ship day + 8
   ${CYAN}annotate${RESET} <name>        Append one annotation (duplicate returns appended: false)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
@@ -3418,9 +3502,9 @@ ${BOLD}ACCOUNT${RESET}
   ${CYAN}delete${RESET} <project>       Delete a project by name or id
 
 ${BOLD}KEY OPTIONS${RESET}
-  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90. For vitals, a positive integer
-  --from <date>      Start date (YYYY-MM-DD) for query and vitals
-  --to <date>        End date (YYYY-MM-DD) for query and vitals
+  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90. For vitals, a positive integer. For sql, an integer from 1 to 90
+  --from <date>      Start date (YYYY-MM-DD) for query, vitals, and sql
+  --to <date>        End date (YYYY-MM-DD) for query, vitals, and sql
   --by <group>       Vitals breakdown: device or path
   --limit <N>        Max results (default: 100). For errors, default 20 and max 100. For vitals, default 10 and max 20
   --domain <url>     Primary surface URL/origin (required for create)
@@ -3810,12 +3894,21 @@ try {
       const inlineSql = sqlFlagValue('--sql');
       const fileShort = sqlFlagValue('-f');
       const fileLong = sqlFlagValue('--file');
+      const daysFlag = sqlFlagValue('--days');
+      const fromFlag = sqlFlagValue('--from');
+      const toFlag = sqlFlagValue('--to');
       await cmdSql(args[1] && !args[1].startsWith('--') ? args[1] : getArg('--project'), {
         sql: inlineSql.value,
         file: fileShort.value || fileLong.value,
         hasSqlFlag: inlineSql.present,
         hasFileFlag: fileShort.present || fileLong.present,
         duplicateFile: fileShort.present && fileLong.present,
+        days: daysFlag.value,
+        daysPresent: daysFlag.present,
+        date_from: fromFlag.value,
+        fromPresent: fromFlag.present,
+        date_to: toFlag.value,
+        toPresent: toFlag.present,
         jsonOutput: args.includes('--json'),
       });
       break;

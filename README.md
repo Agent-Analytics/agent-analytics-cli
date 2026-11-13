@@ -72,7 +72,7 @@ errors <name> --since 7d         Grouped $error events (Pro). Optional --until, 
 vitals <name>                    Pro Core Web Vitals on page_view: p75, rating, good/NI/poor share, CWV pass. --days, --from, --to, --by device|path, --limit, --json
 sessions <name>                  Individual session records
 query <name>                     Flexible analytics query (metrics, group_by, filters, numeric property aggs). group_by allows one properties.<key>
-sql <name>                       Pro read-only SQL on events and sessions. --sql '<statement>' or -f file.sql, and --json
+sql <name>                       Pro read-only SQL on events and sessions. --sql '<statement>' or -f file.sql, --days (default 7, max 90) or --from/--to, and --json
 compare <name>                   Free before/after read of unique converters, or --metric 'p75(cwv_lcp)' --metric-event page_view --better lower. A 7-day read should run on ship day + 8
 annotate <name> --title <text>   Append one project annotation without replacing context
 properties <name>                Discover event names & property keys
@@ -193,12 +193,16 @@ npx --yes @agent-analytics/cli@0.5.41 query my-site --group-by date,properties.p
 npx --yes @agent-analytics/cli@0.5.41 query my-site --group-by properties.plan --metrics event_count --filter '[{"field":"event","op":"eq","value":"signup"}]'
 ```
 
-`sql` is a Pro read on `POST /sql`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. Pass one `SELECT` with `--sql`, or read it from a file with `-f` or `--file`. Pass the statement as the flag value. Do not concatenate untrusted shell input into the command. The statement must not start with `WITH`, and it must be at most 20 KB. The API allows only `events` and `sessions`.
+`sql` is a Pro read on `POST /sql`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. Pass one `SELECT` with `--sql`, or read it from a file with `-f` or `--file`. Pass the statement as the flag value. Do not concatenate untrusted shell input into the command. The statement must not start with `WITH`, and it must be at most 20 KB. The API allows only `events` and `sessions`. A statement may reference `events` and `sessions` at most 2 times in total, and it may not use a recursive CTE. One `/sql` query runs at a time per account. A second call returns HTTP 429 `SQL_BUSY` with `Retry-After`, and the CLI prints those seconds.
 
-`events` columns: `id`, `event`, `properties`, `user_id`, `session_id`, `timestamp`, `date`, `country`. `sessions` columns: `session_id`, `user_id`, `project_id`, `start_time`, `end_time`, `duration`, `entry_page`, `exit_page`, `event_count`, `is_bounce`, `date`. `resolved_user_id` is not exposed. `properties` is a JSON string. The server returns at most 1,000 rows. `truncated` is true when more rows existed. `statistics` includes `elapsed_ms`, `rows_read`, and `expensive` (`expensive` is true when `rows_read` is over 1,000,000). Errors: `PRO_REQUIRED` (403), `INVALID_SQL` (400), `SQL_TIMEOUT` (504), `SQL_BUDGET` (429), `SQL_UNAVAILABLE` (503). Without `--json`, the CLI prints a table and shows SQL NULL as `null`. `--json` prints the API body.
+`--days` defaults to 7 and must be an integer from 1 to 90. It is sent as `days`. `--from` and `--to` use the same names as `query`: `YYYY-MM-DD` dates, sent as `date_from` and `date_to`. The span is at most 90 days. Pass `--days` or both dates, not both forms. The server always applies this window to `events` by timestamp and `sessions` by start time. The human output prints the returned `window`.
+
+`events` columns: `id`, `event`, `properties`, `user_id`, `session_id`, `timestamp`, `date`, `country`. `sessions` columns: `session_id`, `user_id`, `project_id`, `start_time`, `end_time`, `duration`, `entry_page`, `exit_page`, `event_count`, `is_bounce`, `date`. `resolved_user_id` is not exposed. `properties` is a JSON string. The server returns at most 1,000 rows. `truncated` is true when more rows existed. `statistics` includes `elapsed_ms`, `rows_read`, and `expensive` (`expensive` is true when `rows_read` is over 1,000,000). Timeout is 10 seconds (HTTP 504 `SQL_TIMEOUT`). The query can still finish inside D1 after that timeout. The account rate limit is 10 calls per minute (HTTP 429 `RATE_LIMITED`, reason `sql_rate_limit`). A query that reads more than 5,000,000 rows starts a 60 second `SQL_COOLDOWN` (HTTP 429, `Retry-After`). The monthly budget stays 100,000,000 rows read (HTTP 429 `SQL_BUDGET`). Errors also include `INVALID_WINDOW` (400) and `SQL_UNAVAILABLE` (503). Without `--json`, the CLI prints a table and shows SQL NULL as `null`. `--json` prints the API body.
 
 ```bash
 npx --yes @agent-analytics/cli@0.5.41 sql my-site --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --days 30 --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --from 2026-11-01 --to 2026-11-12 --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date'
 npx --yes @agent-analytics/cli@0.5.41 sql my-site -f query.sql
 npx --yes @agent-analytics/cli@0.5.41 sql my-site --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date' --json
 ```

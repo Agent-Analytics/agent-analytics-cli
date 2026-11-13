@@ -4,6 +4,7 @@
 
 - Document `query --group-by` with at most one `properties.<key>`, including examples. Rows use that column name, and a missing property groups as null.
 - Add `sql <project> --sql '<statement>'` and `sql <project> -f file.sql` for the Pro `POST /sql` read. Human output is a table. `--json` prints the API response. Version is unchanged.
+- `sql` accepts `--days` (default 7, max 90) or `--from` and `--to`, prints the returned window, and prints Retry-After seconds for `SQL_BUSY` and `SQL_COOLDOWN`. Help states the window, the 2-reference join limit, and one query at a time.
 
 ## 0.5.41
 
