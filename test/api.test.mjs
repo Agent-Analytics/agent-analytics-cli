@@ -379,6 +379,54 @@ describe('AgentAnalyticsAPI', () => {
       }));
     });
 
+    it('sql → POST /sql sends project and sql, plus a window when set', async () => {
+      await api.sql('my-site', 'SELECT event FROM events');
+      assert.equal(lastUrl, 'https://api.test/sql');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        sql: 'SELECT event FROM events',
+      }));
+
+      await api.sql('my-site', 'SELECT event FROM events', { days: 7 });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        sql: 'SELECT event FROM events',
+        days: 7,
+      }));
+
+      await api.sql('my-site', 'SELECT event FROM events', {
+        date_from: '2026-11-01',
+        date_to: '2026-11-12',
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        sql: 'SELECT event FROM events',
+        date_from: '2026-11-01',
+        date_to: '2026-11-12',
+      }));
+    });
+
+    it('keeps Retry-After on a SQL_BUSY error', async () => {
+      const previousFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({
+        ok: false,
+        status: 429,
+        headers: { get: (name) => (String(name).toLowerCase() === 'retry-after' ? '15' : null) },
+        json: async () => ({ code: 'SQL_BUSY', message: 'A SQL query is already running.' }),
+      });
+      try {
+        const failure = await api.sql('my-site', 'SELECT event FROM events', { days: 7 }).then(
+          () => null,
+          (err) => err,
+        );
+        assert.equal(failure.code, 'SQL_BUSY');
+        assert.equal(failure.retryAfter, '15');
+      } finally {
+        globalThis.fetch = previousFetch;
+      }
+    });
+
     it('compare → POST /compare sends ship_date fields and omits unset optionals', async () => {
       await api.compare('my-site', { goal_event: 'signup', ship_date: '2026-04-08' });
       assert.equal(lastUrl, 'https://api.test/compare');

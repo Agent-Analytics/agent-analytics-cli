@@ -2415,6 +2415,90 @@ describe('CLI', () => {
       assert.ok(output.includes('An empty aggregation row prints n 0 and skipped 0.'));
       assert.ok(output.includes('nearest-rank'));
       assert.ok(!output.includes('mixed session/no-session duplicates collapse by user'));
+      assert.ok(output.includes('--group-by  event, date, user_id, session_id, country, and at most one properties.<key>'));
+      assert.ok(output.includes('The result column is exactly properties.<key>. A missing property groups as null.'));
+      assert.ok(output.includes('HTTP 400 INVALID_GROUP_BY'));
+      assert.ok(output.includes('--group-by date,properties.path --metrics event_count,unique_users'));
+      assert.ok(output.includes('--group-by properties.plan --metrics event_count'));
+      assert.ok(output.includes('Prefer query for grouping by a property.'));
+    });
+
+    it('shows property group-by help before auth', async () => {
+      const { code, stdout } = await run(['query', '--help']);
+      const output = stripAnsi(stdout);
+      assert.equal(code, 0);
+      assert.ok(output.includes('at most one properties.<key>'));
+      assert.ok(output.includes('--group-by date,properties.path --metrics event_count,unique_users'));
+    });
+
+    it('forwards one properties.<key> group-by and prints a null group', async () => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        requestBody = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          rows: [
+            { date: '2026-11-12', 'properties.path': '/pricing', event_count: 4 },
+            { date: '2026-11-12', 'properties.path': null, event_count: 1 },
+          ],
+          count: 2,
+        }));
+      });
+
+      try {
+        const result = await run([
+          'query', 'my-site',
+          '--group-by', 'date, properties.path',
+          '--metrics', 'event_count',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.deepEqual(requestBody.group_by, ['date', 'properties.path']);
+        assert.equal(requestBody.project, 'my-site');
+        assert.ok(plain.includes('properties.path'));
+        assert.ok(plain.includes('/pricing'));
+        assert.ok(plain.includes('2026-11-12\t/pricing\t4'));
+        assert.ok(plain.includes('2026-11-12\t\t1'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('forwards two properties group-by entries and prints the API INVALID_GROUP_BY message', async () => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        requestBody = await readRequestJson(req);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 'INVALID_GROUP_BY',
+          message: 'group_by accepts at most one properties.<key>',
+        }));
+      });
+
+      try {
+        const result = await run([
+          'query', 'my-site',
+          '--group-by', 'properties.path,properties.plan',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.notEqual(result.code, 0);
+        assert.deepEqual(requestBody.group_by, ['properties.path', 'properties.plan']);
+        assert.ok(plain.includes('group_by accepts at most one properties.<key>'));
+      } finally {
+        await server.close();
+      }
     });
 
     it('posts sum and p75 with --property and prints n and skipped', async () => {
@@ -2526,6 +2610,439 @@ describe('CLI', () => {
         assert.equal(calls, 0);
         assert.ok(stripAnsi(missing.stdout).includes('--property <key> is required when --metrics includes sum, avg, p50, p75, or p95.'));
         assert.ok(stripAnsi(invalid.stdout).includes('Do not prefix it with properties.'));
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
+  describe('sql', () => {
+    function columnIndex(line, label) {
+      return line.indexOf(label);
+    }
+
+    it('shows sql help before auth', async () => {
+      const { code, stdout } = await run(['sql', '--help']);
+      const plain = stripAnsi(stdout);
+      assert.equal(code, 0);
+      assert.ok(plain.includes("sql <project> (--sql <statement> | -f <file.sql>) [--days N] [--from YYYY-MM-DD --to YYYY-MM-DD] [--json]"));
+      assert.ok(plain.includes("sql my-site --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'"));
+      assert.ok(plain.includes('sql my-site --days 30 --sql'));
+      assert.ok(plain.includes('sql my-site --from 2026-11-01 --to 2026-11-12 --sql'));
+      assert.ok(plain.includes('sql my-site -f query.sql'));
+      assert.ok(plain.includes('--json prints the API response'));
+      assert.ok(plain.includes('Use query or breakdown first.'));
+      assert.ok(plain.includes('--days defaults to 7 and must be an integer from 1 to 90.'));
+      assert.ok(plain.includes('The span is at most 90 days.'));
+      assert.ok(plain.includes('The CLI prints the returned window.'));
+      assert.ok(plain.includes('Each of events and sessions may be referenced at most once in a statement.'));
+      assert.ok(plain.includes('One join of events to sessions is allowed.'));
+      assert.ok(plain.includes('A self-join is rejected.'));
+      assert.ok(plain.includes('A LIMIT clause must be a plain integer.'));
+      assert.ok(plain.includes('User SQL errors return HTTP 400 INVALID_SQL.'));
+      assert.ok(!plain.includes('at most 2 times'));
+      assert.ok(plain.includes('One /sql query runs at a time per account.'));
+      assert.ok(plain.includes('SQL_BUSY'));
+      assert.ok(plain.includes('SQL_UPSTREAM_RATE_LIMITED'));
+      assert.ok(plain.includes('Retry-After'));
+      assert.ok(plain.includes('events columns: id, event, properties, user_id, session_id, timestamp, date, country.'));
+      assert.ok(plain.includes('sessions columns: session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date.'));
+      assert.ok(plain.includes('resolved_user_id is not exposed.'));
+      assert.ok(plain.includes('PRO_REQUIRED (403)'));
+      assert.ok(plain.includes('INVALID_SQL (400)'));
+      assert.ok(plain.includes('INVALID_WINDOW (400)'));
+      assert.ok(plain.includes('SQL_TIMEOUT (504)'));
+      assert.ok(plain.includes('SQL_BUDGET (429)'));
+      assert.ok(plain.includes('SQL_COOLDOWN (429)'));
+      assert.ok(plain.includes('SQL_UNAVAILABLE (503)'));
+      assert.ok(plain.includes('at most 1,000 rows'));
+      assert.ok(plain.includes('Timeout is 10 seconds'));
+    });
+
+    it('lists sql on the main help screen', async () => {
+      const { code, stdout } = await run(['--help']);
+      const plain = stripAnsi(stdout);
+      assert.equal(code, 0);
+      assert.ok(plain.includes('sql <name>'));
+      assert.ok(plain.includes('--sql <statement>'));
+      assert.ok(plain.includes('-f, --file <path>'));
+      assert.ok(plain.includes('at most one properties.<key>'));
+    });
+
+    it('posts --sql and prints an aligned table with null, truncated, and statistics', async () => {
+      let requestBody;
+      const server = await startServer(async (req, res) => {
+        requestBody = await readRequestJson(req);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          columns: ['properties.path', 'event_count'],
+          rows: [
+            ['/pricing', 3],
+            [null, 1],
+          ],
+          count: 2,
+          truncated: true,
+          window: { date_from: '2026-11-06', date_to: '2026-11-12' },
+          statistics: { elapsed_ms: 12, rows_read: 40, expensive: false },
+        }));
+      });
+
+      try {
+        const result = await run([
+          'sql', 'my-site',
+          '--sql', 'SELECT json_extract(properties, \'$.path\') AS "properties.path", COUNT(*) AS event_count FROM events GROUP BY 1',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+        const lines = plain.split('\n');
+        const header = lines.find((line) => line.includes('properties.path') && line.includes('event_count'));
+        const pricing = lines.find((line) => line.includes('/pricing'));
+        const missing = lines.find((line) => line.trimStart().startsWith('null'));
+
+        assert.equal(result.code, 0);
+        assert.equal(requestBody.project, 'my-site');
+        assert.equal(requestBody.sql, 'SELECT json_extract(properties, \'$.path\') AS "properties.path", COUNT(*) AS event_count FROM events GROUP BY 1');
+        assert.equal(requestBody.days, 7);
+        assert.equal(requestBody.date_from, undefined);
+        assert.equal(requestBody.date_to, undefined);
+        assert.equal(Object.keys(requestBody).sort().join(','), 'days,project,sql');
+        assert.ok(plain.includes('SQL: my-site'));
+        assert.ok(plain.includes('window: 2026-11-06 to 2026-11-12'));
+        assert.ok(plain.includes('elapsed_ms: 12'));
+        assert.ok(plain.includes('rows_read: 40'));
+        assert.ok(plain.includes('expensive: false'));
+        assert.ok(plain.includes('truncated: true'));
+        assert.ok(plain.includes('Results are capped at 1,000 rows.'));
+        assert.ok(header);
+        assert.ok(pricing);
+        assert.ok(missing);
+        assert.equal(columnIndex(header, 'event_count'), columnIndex(pricing, '3'));
+        assert.equal(columnIndex(header, 'event_count'), columnIndex(missing, '1'));
+        assert.ok(plain.includes('2 rows'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints object rows in column order and warns when the read is expensive', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          columns: ['event_name', 'total'],
+          rows: [{ total: 2, event_name: 'signup', secret: 'do-not-print' }],
+          count: 1,
+          truncated: false,
+          statistics: { elapsed_ms: 80, rows_read: 1000001, expensive: true },
+        }));
+      });
+
+      try {
+        const result = await run([
+          'sql', 'my-site',
+          '--sql', 'SELECT event, COUNT(*) AS n FROM events GROUP BY event',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+        const lines = plain.split('\n');
+        const header = lines.find((line) => line.includes('event_name') && line.includes('total'));
+        const row = lines.find((line) => line.includes('signup'));
+
+        assert.equal(result.code, 0);
+        assert.ok(plain.includes('expensive: true'));
+        assert.ok(plain.includes('rows_read is over 1,000,000.'));
+        assert.ok(plain.includes('truncated: false'));
+        assert.ok(!plain.includes('do-not-print'));
+        assert.ok(header);
+        assert.ok(row);
+        assert.equal(columnIndex(header, 'total'), columnIndex(row, '2'));
+        assert.ok(columnIndex(header, 'event_name') < columnIndex(header, 'total'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('reads -f and --file without changing the statement, and --json prints the API body', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'aa-sql-'));
+      const filePath = join(dir, 'query.sql');
+      const statement = "SELECT event FROM events WHERE event = 'INSERT'\n";
+      writeFileSync(filePath, statement);
+      const payload = {
+        columns: ['event'],
+        rows: [['signup']],
+        count: 1,
+        truncated: false,
+        statistics: { elapsed_ms: 3, rows_read: 1, expensive: false },
+      };
+      const bodies = [];
+      const server = await startServer(async (req, res) => {
+        bodies.push(await readRequestJson(req));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(payload));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const fromShort = await run(['sql', 'my-site', '-f', filePath], { env });
+        const fromLong = await run(['sql', 'my-site', '--file', filePath, '--json'], { env });
+        const inlineJson = await run(['sql', 'my-site', '--json', '--sql', statement], { env });
+
+        assert.equal(fromShort.code, 0);
+        assert.equal(fromLong.code, 0);
+        assert.equal(inlineJson.code, 0);
+        assert.equal(bodies[0].sql, statement);
+        assert.equal(bodies[1].sql, statement);
+        assert.equal(bodies[2].sql, statement);
+        assert.equal(bodies[0].project, 'my-site');
+        assert.ok(stripAnsi(fromShort.stdout).includes('signup'));
+        assert.ok(!stripAnsi(fromShort.stdout).trim().startsWith('{'));
+        assert.equal(fromLong.stdout, `${JSON.stringify(payload, null, 2)}\n`);
+        assert.equal(inlineJson.stdout, `${JSON.stringify(payload, null, 2)}\n`);
+        assert.ok(!fromLong.stdout.includes('SQL: my-site'));
+      } finally {
+        await server.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('refuses a missing statement, both sources, a missing file, and positional SQL before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+      const missingPath = join(tmpdir(), 'aa-sql-missing-file.sql');
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const missing = await run(['sql', 'my-site'], { env });
+        const both = await run(['sql', 'my-site', '--sql', 'SELECT 1', '-f', 'query.sql'], { env });
+        const absent = await run(['sql', 'my-site', '-f', missingPath], { env });
+        const positional = await run(['sql', 'my-site', 'SELECT event FROM events'], { env });
+        const blank = await run(['sql', 'my-site', '--sql', '   '], { env });
+        const duplicateFile = await run(['sql', 'my-site', '-f', 'a.sql', '--file', 'b.sql'], { env });
+
+        assert.equal(calls, 0);
+        for (const result of [missing, both, absent, positional, blank, duplicateFile]) {
+          assert.notEqual(result.code, 0);
+        }
+        assert.ok(stripAnsi(missing.stdout).includes('--sql'));
+        assert.ok(stripAnsi(both.stdout).includes('not both'));
+        assert.ok(stripAnsi(absent.stdout).includes('Could not read SQL file'));
+        assert.ok(stripAnsi(positional.stdout).includes('--sql'));
+        assert.ok(stripAnsi(blank.stdout).includes('--sql requires a statement.'));
+        assert.ok(stripAnsi(duplicateFile.stdout).includes('Pass the SQL file once'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints INVALID_SQL and the Pro upgrade handoff from the API', async () => {
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        if (String(body.sql).includes('DROP') || String(body.sql).includes('LIMIT ?')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          const message = String(body.sql).includes('LIMIT ?')
+            ? 'LIMIT must be a plain integer.'
+            : 'Only a single SELECT is allowed.';
+          res.end(JSON.stringify({ code: 'INVALID_SQL', message }));
+          return;
+        }
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'PRO_REQUIRED',
+          message: 'This endpoint is available on paid plans.',
+        }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const invalid = await run(['sql', 'my-site', '--sql', 'DROP TABLE events'], { env });
+        const limit = await run(['sql', 'my-site', '--sql', 'SELECT event FROM events LIMIT ?'], { env });
+        const upgrade = await run(['sql', 'my-site', '--sql', 'SELECT event FROM events'], { env });
+
+        assert.notEqual(invalid.code, 0);
+        assert.notEqual(limit.code, 0);
+        assert.notEqual(upgrade.code, 0);
+        assert.ok(stripAnsi(invalid.stdout).includes('Only a single SELECT is allowed.'));
+        assert.ok(stripAnsi(limit.stdout).includes('LIMIT must be a plain integer.'));
+        assert.ok(stripAnsi(upgrade.stdout).includes('This endpoint is available on paid plans.'));
+        assert.ok(stripAnsi(upgrade.stdout).includes('upgrade-link --detached'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('sends --days or --from/--to and prints the returned window', async () => {
+      const bodies = [];
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        bodies.push(body);
+        const window = body.days != null
+          ? { date_from: '2026-10-15', date_to: '2026-11-13' }
+          : { date_from: body.date_from, date_to: body.date_to };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          columns: ['event'],
+          rows: [['signup']],
+          count: 1,
+          truncated: false,
+          window,
+          statistics: { elapsed_ms: 4, rows_read: 8, expensive: false },
+        }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const byDays = await run([
+          'sql', 'my-site',
+          '--days', '30',
+          '--sql', 'SELECT event FROM events',
+        ], { env });
+        const byDates = await run([
+          'sql', 'my-site',
+          '--from', '2026-01-01',
+          '--to', '2026-04-01',
+          '--sql', 'SELECT event FROM events',
+          '--json',
+        ], { env });
+        const parsed = JSON.parse(byDates.stdout);
+
+        assert.equal(byDays.code, 0);
+        assert.equal(byDates.code, 0);
+        assert.deepEqual(bodies[0], {
+          project: 'my-site',
+          sql: 'SELECT event FROM events',
+          days: 30,
+        });
+        assert.deepEqual(bodies[1], {
+          project: 'my-site',
+          sql: 'SELECT event FROM events',
+          date_from: '2026-01-01',
+          date_to: '2026-04-01',
+        });
+        assert.ok(stripAnsi(byDays.stdout).includes('window: 2026-10-15 to 2026-11-13'));
+        assert.deepEqual(parsed.window, { date_from: '2026-01-01', date_to: '2026-04-01' });
+        assert.ok(!byDates.stdout.includes('window: 2026-01-01 to 2026-04-01'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects a bad SQL window before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const tooMany = await run(['sql', 'my-site', '--days', '91', '--sql', 'SELECT 1'], { env });
+        const zero = await run(['sql', 'my-site', '--days', '0', '--sql', 'SELECT 1'], { env });
+        const word = await run(['sql', 'my-site', '--days', '7d', '--sql', 'SELECT 1'], { env });
+        const half = await run(['sql', 'my-site', '--from', '2026-11-01', '--sql', 'SELECT 1'], { env });
+        const both = await run([
+          'sql', 'my-site',
+          '--days', '7',
+          '--from', '2026-11-01',
+          '--to', '2026-11-12',
+          '--sql', 'SELECT 1',
+        ], { env });
+        const wide = await run([
+          'sql', 'my-site',
+          '--from', '2026-01-01',
+          '--to', '2026-04-02',
+          '--sql', 'SELECT 1',
+        ], { env });
+        const backwards = await run([
+          'sql', 'my-site',
+          '--from', '2026-11-12',
+          '--to', '2026-11-01',
+          '--sql', 'SELECT 1',
+        ], { env });
+
+        assert.equal(calls, 0);
+        for (const result of [tooMany, zero, word, half, both, wide, backwards]) {
+          assert.notEqual(result.code, 0);
+        }
+        assert.ok(stripAnsi(tooMany.stdout).includes('--days must be an integer from 1 to 90.'));
+        assert.ok(stripAnsi(zero.stdout).includes('--days must be an integer from 1 to 90.'));
+        assert.ok(stripAnsi(word.stdout).includes('--days must be an integer from 1 to 90.'));
+        assert.ok(stripAnsi(half.stdout).includes('--from and --to must be passed together.'));
+        assert.ok(stripAnsi(both.stdout).includes('Pass --days or both --from and --to, not both.'));
+        assert.ok(stripAnsi(wide.stdout).includes('The SQL window span must be at most 90 days.'));
+        assert.ok(stripAnsi(backwards.stdout).includes('--to must be on or after --from.'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints Retry-After seconds for SQL_BUSY, SQL_COOLDOWN, and SQL_UPSTREAM_RATE_LIMITED', async () => {
+      const server = await startServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        const sql = String(body.sql);
+        const cooldown = sql.includes('cooldown');
+        const upstream = sql.includes('upstream');
+        const code = cooldown ? 'SQL_COOLDOWN' : upstream ? 'SQL_UPSTREAM_RATE_LIMITED' : 'SQL_BUSY';
+        const retryAfter = cooldown ? '60' : upstream ? '8' : '15';
+        const message = cooldown
+          ? 'SQL is cooling down after a large read.'
+          : upstream
+            ? 'The upstream database rate limited this read.'
+            : 'A SQL query is already running.';
+        res.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Retry-After': retryAfter,
+        });
+        res.end(JSON.stringify({ code, message }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const busy = await run(['sql', 'my-site', '--sql', 'SELECT event FROM events'], { env });
+        const cooldown = await run(['sql', 'my-site', '--sql', 'SELECT cooldown FROM events'], { env });
+        const upstream = await run(['sql', 'my-site', '--sql', 'SELECT upstream FROM events'], { env });
+        const busyPlain = stripAnsi(busy.stdout);
+        const cooldownPlain = stripAnsi(cooldown.stdout);
+        const upstreamPlain = stripAnsi(upstream.stdout);
+
+        assert.notEqual(busy.code, 0);
+        assert.notEqual(cooldown.code, 0);
+        assert.notEqual(upstream.code, 0);
+        assert.ok(busyPlain.includes('Retry after 15 seconds.'));
+        assert.ok(busyPlain.includes('A SQL query is already running.'));
+        assert.ok(cooldownPlain.includes('Retry after 60 seconds.'));
+        assert.ok(cooldownPlain.includes('SQL is cooling down after a large read.'));
+        assert.ok(upstreamPlain.includes('Retry after 8 seconds.'));
+        assert.ok(upstreamPlain.includes('The upstream database rate limited this read.'));
       } finally {
         await server.close();
       }

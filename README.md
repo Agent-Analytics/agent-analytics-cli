@@ -71,7 +71,8 @@ events <name>                    Raw event log, including each event's country
 errors <name> --since 7d         Grouped $error events (Pro). Optional --until, --new-since, --limit
 vitals <name>                    Pro Core Web Vitals on page_view: p75, rating, good/NI/poor share, CWV pass. --days, --from, --to, --by device|path, --limit, --json
 sessions <name>                  Individual session records
-query <name>                     Flexible analytics query (metrics, group_by, filters, numeric property aggs)
+query <name>                     Flexible analytics query (metrics, group_by, filters, numeric property aggs). group_by allows one properties.<key>
+sql <name>                       Pro read-only SQL on events and sessions. --sql '<statement>' or -f file.sql, --days (default 7, max 90) or --from/--to, and --json
 compare <name>                   Free before/after read of unique converters, or --metric 'p75(cwv_lcp)' --metric-event page_view --better lower. A 7-day read should run on ship day + 8
 annotate <name> --title <text>   Append one project annotation without replacing context
 properties <name>                Discover event names & property keys
@@ -183,6 +184,27 @@ npx --yes @agent-analytics/cli@0.5.41 query my-site --metrics event_count --coun
 npx --yes @agent-analytics/cli@0.5.41 query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"page_view"}]'
 npx --yes @agent-analytics/cli@0.5.41 vitals my-site --days 7
 npx --yes @agent-analytics/cli@0.5.41 query shop --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'
+```
+
+`query --group-by` accepts `event`, `date`, `user_id`, `session_id`, `country`, and at most one `properties.<key>`. The key uses the same rules as a `properties.<key>` filter: letters, numbers, underscores, dots, and hyphens, 1 to 128 characters. Rows include that value under the column name `properties.<key>`. A missing property groups as null. Two `properties.*` entries are HTTP 400 `INVALID_GROUP_BY`. The route stays Pro. Prefer `query` for grouping by a property. Use `sql` only when `query` cannot express the question.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.41 query my-site --group-by date,properties.path --metrics event_count,unique_users
+npx --yes @agent-analytics/cli@0.5.41 query my-site --group-by properties.plan --metrics event_count --filter '[{"field":"event","op":"eq","value":"signup"}]'
+```
+
+`sql` is a Pro read on `POST /sql`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. Pass one `SELECT` with `--sql`, or read it from a file with `-f` or `--file`. Pass the statement as the flag value. Do not concatenate untrusted shell input into the command. The statement must not start with `WITH`, and it must be at most 20 KB. The API allows only `events` and `sessions`. Each of `events` and `sessions` may be referenced at most once in a statement. One join of `events` to `sessions` is allowed. A self-join is rejected. A recursive CTE is rejected. A `LIMIT` clause must be a plain integer. User SQL errors return HTTP 400 `INVALID_SQL`. One `/sql` query runs at a time per account. A second call returns HTTP 429 `SQL_BUSY` with `Retry-After`, and the CLI prints those seconds. HTTP 429 `SQL_UPSTREAM_RATE_LIMITED` also includes `Retry-After`, and the CLI prints those seconds the same way.
+
+`--days` defaults to 7 and must be an integer from 1 to 90. It is sent as `days`. `--from` and `--to` use the same names as `query`: `YYYY-MM-DD` dates, sent as `date_from` and `date_to`. The span is at most 90 days. Pass `--days` or both dates, not both forms. The server always applies this window to `events` by timestamp and `sessions` by start time. The human output prints the returned `window`.
+
+`events` columns: `id`, `event`, `properties`, `user_id`, `session_id`, `timestamp`, `date`, `country`. `sessions` columns: `session_id`, `user_id`, `project_id`, `start_time`, `end_time`, `duration`, `entry_page`, `exit_page`, `event_count`, `is_bounce`, `date`. `resolved_user_id` is not exposed. `properties` is a JSON string. The server returns at most 1,000 rows. `truncated` is true when more rows existed. `statistics` includes `elapsed_ms`, `rows_read`, and `expensive` (`expensive` is true when `rows_read` is over 1,000,000). Timeout is 10 seconds (HTTP 504 `SQL_TIMEOUT`). The query can still finish inside D1 after that timeout. The account rate limit is 10 calls per minute (HTTP 429 `RATE_LIMITED`, reason `sql_rate_limit`). A query that reads more than 5,000,000 rows starts a 60 second `SQL_COOLDOWN` (HTTP 429, `Retry-After`). The monthly budget stays 100,000,000 rows read (HTTP 429 `SQL_BUDGET`). Errors also include `INVALID_WINDOW` (400) and `SQL_UNAVAILABLE` (503). Without `--json`, the CLI prints a table and shows SQL NULL as `null`. `--json` prints the API body.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --days 30 --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --from 2026-11-01 --to 2026-11-12 --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date'
+npx --yes @agent-analytics/cli@0.5.41 sql my-site -f query.sql
+npx --yes @agent-analytics/cli@0.5.41 sql my-site --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date' --json
 ```
 
 Hosted vitals queries use `page_view`. If `n` is 0, the project is not sending `cwv_*` yet.

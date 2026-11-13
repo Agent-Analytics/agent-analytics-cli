@@ -19,6 +19,7 @@
  *   npx @agent-analytics/cli vitals <name>        — Core Web Vitals p75 on hosted page_view
  *   npx @agent-analytics/cli journey <name>       — Show one user's chronological journey
  *   npx @agent-analytics/cli query <name>         — Flexible analytics query
+ *   npx @agent-analytics/cli sql <name>           - Read-only SQL (Pro): --sql or -f
  *   npx @agent-analytics/cli compare <name>       — Free before/after read: keep, revert, or extend
  *   npx @agent-analytics/cli annotate <name>      — Append one project annotation
  *   npx @agent-analytics/cli properties <name>    — Discover event names & property keys
@@ -1559,12 +1560,12 @@ function parseQueryMetrics(raw) {
   return metrics.length > 0 ? metrics : undefined;
 }
 
-const cmdQuery = withApi(async (api, project, opts = {}) => {
-  if (!project) error(`Usage: npx @agent-analytics/cli query <name> [options]
+function queryUsageText() {
+  return `Usage: npx @agent-analytics/cli query <name> [options]
 
   --metrics   event_count,unique_users,session_count,bounce_rate,avg_duration,sum,avg,p50,p75,p95
   --property  Numeric event property key. Required with sum, avg, p50, p75, or p95
-  --group-by  event,date,user_id,session_id,country
+  --group-by  event, date, user_id, session_id, country, and at most one properties.<key>
   --filter    JSON array of filters (operators: eq, neq, gt, lt, gte, lte, contains)
   --from      Start date (ISO, e.g. 2026-01-01)
   --to        End date (ISO)
@@ -1577,6 +1578,8 @@ const cmdQuery = withApi(async (api, project, opts = {}) => {
 
 Property filters must use the canonical properties.<key> form.
 Example: properties.referrer, properties.utm_source, properties.first_utm_source
+--group-by accepts those fields and at most one properties.<key>. The key uses the same rules as a properties.<key> filter: letters, numbers, underscores, dots, and hyphens, 1 to 128 characters. The result column is exactly properties.<key>. A missing property groups as null. A second properties.* entry is HTTP 400 INVALID_GROUP_BY. The route stays Pro.
+Prefer query for grouping by a property. Use sql only when query cannot express the question.
 --property is the key alone (cwv_lcp, revenue), using letters, numbers, and underscores, at most 128 characters.
 sum, avg, p50, p75, and p95 require --property. Only JSON numbers are aggregated. Rows include n and skipped whenever an aggregation is requested.
 An empty aggregation row prints n 0 and skipped 0.
@@ -1589,13 +1592,23 @@ Invalid filter fields now fail loudly instead of being ignored.
 
 ${BOLD}Examples:${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --group-by country --metrics event_count,unique_users${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --group-by date,properties.path --metrics event_count,unique_users${RESET}
+  ${CYAN}npx @agent-analytics/cli query my-site --group-by properties.plan --metrics event_count --filter '[{"field":"event","op":"eq","value":"signup"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics event_count --count-mode session_then_user${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics p75 --property cwv_lcp --filter '[{"field":"event","op":"eq","value":"page_view"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli vitals my-site --days 7${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --metrics sum,avg --property revenue --filter '[{"field":"event","op":"eq","value":"purchase"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"country","op":"eq","value":"US"}]'${RESET}
   ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"event","op":"contains","value":"click"}]' --group-by event${RESET}
-  ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'${RESET}`);
+  ${CYAN}npx @agent-analytics/cli query my-site --filter '[{"field":"properties.referrer","op":"contains","value":"clawflows.com"}]'${RESET}`;
+}
+
+function printQueryUsage() {
+  log(queryUsageText());
+}
+
+const cmdQuery = withApi(async (api, project, opts = {}) => {
+  if (!project) error(queryUsageText());
 
   const metrics = parseQueryMetrics(opts.metrics);
   const property = parsePropertyKey('--property', opts.property);
@@ -1656,6 +1669,243 @@ ${BOLD}Examples:${RESET}
   }
   log(`\n${DIM}${data.count} rows${RESET}`);
   log('');
+});
+
+function sqlUsageText() {
+  return `Usage: npx @agent-analytics/cli sql <project> (--sql <statement> | -f <file.sql>) [--days N] [--from YYYY-MM-DD --to YYYY-MM-DD] [--json]
+
+Pro read on POST /sql. A successful call counts as one metered read. A free account gets HTTP 403 PRO_REQUIRED and the call is not metered.
+Use query or breakdown first. sql is the escape hatch when query cannot express the question.
+Pass one SELECT with --sql, or read it from a file with -f or --file. The examples pass the statement as a flag value. Do not concatenate untrusted shell input into the command.
+The statement must be one SELECT, at most 20 KB, and must not start with WITH. The API rejects multiple statements, write or DDL keywords outside string literals, schema-qualified names, sqlite_master, sqlite_schema, sqlite_temp_master, and any table other than events and sessions.
+Each of events and sessions may be referenced at most once in a statement. One join of events to sessions is allowed. A self-join is rejected. A recursive CTE is rejected. A LIMIT clause must be a plain integer. User SQL errors return HTTP 400 INVALID_SQL.
+One /sql query runs at a time per account. A second call returns HTTP 429 SQL_BUSY with Retry-After, and the CLI prints those seconds. HTTP 429 SQL_UPSTREAM_RATE_LIMITED also includes Retry-After, and the CLI prints those seconds the same way.
+--days defaults to 7 and must be an integer from 1 to 90. It is sent as days. --from and --to match query: YYYY-MM-DD dates, sent as date_from and date_to. The span is at most 90 days. Pass --days or both --from and --to, not both forms. The server always applies this window to events by timestamp and sessions by start time. The CLI prints the returned window.
+events columns: id, event, properties, user_id, session_id, timestamp, date, country.
+sessions columns: session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date.
+resolved_user_id is not exposed. properties is a JSON string.
+The server returns at most 1,000 rows. truncated is true when more rows existed. statistics includes elapsed_ms, rows_read, and expensive. expensive is true when rows_read is over 1,000,000.
+Timeout is 10 seconds (HTTP 504 SQL_TIMEOUT). The query can still finish inside D1 after that timeout. The account rate limit is 10 calls per minute (HTTP 429 RATE_LIMITED, reason sql_rate_limit). A query that reads more than 5,000,000 rows starts a 60 second SQL_COOLDOWN (HTTP 429, Retry-After). The monthly budget stays 100,000,000 rows read (HTTP 429 SQL_BUDGET).
+Errors: PRO_REQUIRED (403), INVALID_SQL (400), INVALID_WINDOW (400), SQL_TIMEOUT (504), SQL_BUDGET (429), SQL_BUSY (429), SQL_COOLDOWN (429), SQL_UPSTREAM_RATE_LIMITED (429), RATE_LIMITED (429), SQL_UNAVAILABLE (503).
+--json prints the API response. Without --json, the CLI prints a table. SQL NULL prints as null.
+
+Examples:
+  npx @agent-analytics/cli sql my-site --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+  npx @agent-analytics/cli sql my-site --days 30 --sql 'SELECT event, COUNT(*) AS n FROM events GROUP BY event'
+  npx @agent-analytics/cli sql my-site --from 2026-11-01 --to 2026-11-12 --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date'
+  npx @agent-analytics/cli sql my-site -f query.sql
+  npx @agent-analytics/cli sql my-site --sql 'SELECT date, COUNT(*) AS n FROM events GROUP BY date' --json`;
+}
+
+function printSqlUsage() {
+  log(sqlUsageText());
+}
+
+const SQL_VALUE_FLAGS = new Set(['--sql', '--json', '--help', '-h', '-f', '--file', '--project', '--days', '--from', '--to']);
+
+function sqlFlagValue(flag) {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return { present: false, value: null };
+  const value = args[idx + 1];
+  if (value == null || SQL_VALUE_FLAGS.has(value)) return { present: true, value: null };
+  return { present: true, value };
+}
+
+function readSqlFile(filePath) {
+  try {
+    return readFileSync(filePath, 'utf8');
+  } catch (err) {
+    error(`Could not read SQL file: ${err.message}`);
+  }
+}
+
+function resolveSqlStatement(opts) {
+  if (opts.duplicateFile) error('Pass the SQL file once with -f or --file.');
+  if (opts.hasSqlFlag && opts.sql == null) error('--sql requires a statement.');
+  if (opts.hasFileFlag && opts.file == null) error('-f requires a file path.');
+  const hasInline = opts.sql != null && String(opts.sql).trim() !== '';
+  const hasFile = opts.file != null && String(opts.file).trim() !== '';
+  if (hasInline && hasFile) error('Pass the statement with --sql or -f, not both.');
+  if (opts.hasSqlFlag && !hasInline && !hasFile) error('--sql requires a statement.');
+  if (!hasInline && !hasFile) error(sqlUsageText());
+  if (hasFile) {
+    const text = readSqlFile(opts.file);
+    if (String(text).trim() === '') error('SQL file is empty.');
+    return text;
+  }
+  return String(opts.sql);
+}
+
+function sqlCell(value) {
+  if (value == null) return 'null';
+  if (typeof value === 'string') return value.replace(/[\r\n]+/g, ' ');
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function sqlColumns(data) {
+  if (Array.isArray(data.columns) && data.columns.length > 0) {
+    return data.columns.map((column) => String(column));
+  }
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const keys = [];
+  for (const row of rows) {
+    if (row && typeof row === 'object' && !Array.isArray(row)) {
+      for (const key of Object.keys(row)) {
+        if (!keys.includes(key)) keys.push(key);
+      }
+    }
+  }
+  if (keys.length > 0) return keys;
+  const widest = rows.reduce((max, row) => (Array.isArray(row) ? Math.max(max, row.length) : max), 0);
+  return Array.from({ length: widest }, (_, index) => `column_${index + 1}`);
+}
+
+function sqlRowValues(row, columns) {
+  if (Array.isArray(row)) return columns.map((_, index) => row[index]);
+  if (row && typeof row === 'object') return columns.map((column) => row[column]);
+  return columns.map(() => null);
+}
+
+function padSqlCell(text, width) {
+  return text.length >= width ? text : text + ' '.repeat(width - text.length);
+}
+
+function logSqlTable(columns, rows) {
+  const matrix = [
+    columns,
+    ...rows.map((row) => sqlRowValues(row, columns).map(sqlCell)),
+  ];
+  const widths = columns.map((_, index) => matrix.reduce((max, line) => Math.max(max, line[index].length), 0));
+  matrix.forEach((line, lineIndex) => {
+    const rendered = line.map((cell, index) => padSqlCell(cell, widths[index])).join('  ');
+    log(lineIndex === 0 ? `  ${BOLD}${rendered}${RESET}` : `  ${rendered}`);
+  });
+}
+
+function logSqlWindow(data) {
+  const bounds = data.window;
+  if (!bounds || typeof bounds !== 'object') return;
+  const from = bounds.date_from == null ? '' : String(bounds.date_from);
+  const to = bounds.date_to == null ? '' : String(bounds.date_to);
+  if (!from && !to) return;
+  log(`  ${DIM}window:${RESET} ${from} to ${to}`);
+}
+
+function parseSqlDays(raw) {
+  const value = String(raw).trim();
+  if (!/^\d+$/.test(value)) error('--days must be an integer from 1 to 90.');
+  const days = Number(value);
+  if (days < 1 || days > 90) error('--days must be an integer from 1 to 90.');
+  return days;
+}
+
+function parseSqlDate(flag, raw) {
+  const value = String(raw).trim();
+  if (!isIsoDate(value)) error(`${flag} must be a YYYY-MM-DD date.`);
+  return value;
+}
+
+function sqlDateSpanDays(dateFrom, dateTo) {
+  const from = Date.parse(`${dateFrom}T00:00:00.000Z`);
+  const to = Date.parse(`${dateTo}T00:00:00.000Z`);
+  return Math.round((to - from) / 86400000);
+}
+
+function parseSqlWindow(opts) {
+  const hasDays = opts.days != null && String(opts.days).trim() !== '';
+  const hasFrom = opts.date_from != null && String(opts.date_from).trim() !== '';
+  const hasTo = opts.date_to != null && String(opts.date_to).trim() !== '';
+  if ((opts.daysPresent && !hasDays) || (opts.fromPresent && !hasFrom) || (opts.toPresent && !hasTo)) {
+    const flag = opts.daysPresent && !hasDays ? '--days' : opts.fromPresent && !hasFrom ? '--from' : '--to';
+    error(`${flag} requires a value.`);
+  }
+  if (hasDays && (hasFrom || hasTo)) error('Pass --days or both --from and --to, not both.');
+  if (hasFrom !== hasTo) error('--from and --to must be passed together.');
+  if (hasFrom) {
+    const date_from = parseSqlDate('--from', opts.date_from);
+    const date_to = parseSqlDate('--to', opts.date_to);
+    const span = sqlDateSpanDays(date_from, date_to);
+    if (span < 0) error('--to must be on or after --from.');
+    if (span > 90) error('The SQL window span must be at most 90 days.');
+    return { date_from, date_to };
+  }
+  return { days: hasDays ? parseSqlDays(opts.days) : 7 };
+}
+
+function sqlRetryCode(err) {
+  return err?.code || err?.body?.code || err?.body?.error;
+}
+
+function sqlRetrySeconds(err) {
+  const raw = err?.retryAfter ?? err?.body?.retry_after;
+  if (raw == null || String(raw).trim() === '') return null;
+  const value = String(raw).trim();
+  if (!/^\d+$/.test(value)) return null;
+  return value;
+}
+
+function logSqlRetry(err) {
+  const code = sqlRetryCode(err);
+  if (code !== 'SQL_BUSY' && code !== 'SQL_COOLDOWN' && code !== 'SQL_UPSTREAM_RATE_LIMITED') return;
+  const seconds = sqlRetrySeconds(err);
+  if (seconds == null) return;
+  log(`Retry after ${seconds} seconds.`);
+}
+
+function logSqlStatistics(data) {
+  const stats = data.statistics && typeof data.statistics === 'object' ? data.statistics : null;
+  logSqlWindow(data);
+  if (stats) {
+    if (stats.elapsed_ms != null) log(`  ${DIM}elapsed_ms:${RESET} ${stats.elapsed_ms}`);
+    if (stats.rows_read != null) log(`  ${DIM}rows_read:${RESET} ${stats.rows_read}`);
+    if (typeof stats.expensive === 'boolean') {
+      const color = stats.expensive ? YELLOW : DIM;
+      log(`  ${color}expensive:${RESET} ${stats.expensive}`);
+    }
+  }
+  if (typeof data.truncated === 'boolean') {
+    const color = data.truncated ? YELLOW : DIM;
+    log(`  ${color}truncated:${RESET} ${data.truncated}`);
+  }
+  if (stats?.expensive === true) log(`  ${YELLOW}rows_read is over 1,000,000.${RESET}`);
+  if (data.truncated === true) log(`  ${YELLOW}Results are capped at 1,000 rows.${RESET}`);
+}
+
+function logSqlResult(project, data) {
+  heading(`SQL: ${data.project || project}`);
+  log('');
+  logSqlStatistics(data);
+  log('');
+  const columns = sqlColumns(data);
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  if (columns.length === 0 || rows.length === 0) {
+    log('  No rows.');
+  } else {
+    logSqlTable(columns, rows);
+  }
+  const count = data.count != null ? data.count : rows.length;
+  log('');
+  log(`${DIM}${count} rows${RESET}`);
+  log('');
+}
+
+const cmdSql = withApi(async (api, project, opts = {}) => {
+  if (!project) error(sqlUsageText());
+  const statement = resolveSqlStatement(opts);
+  const bounds = parseSqlWindow(opts);
+  let data;
+  try {
+    data = await api.sql(project, statement, bounds);
+  } catch (err) {
+    logSqlRetry(err);
+    throw err;
+  }
+  if (opts.jsonOutput) {
+    printJson(data);
+    return;
+  }
+  logSqlResult(project, data);
 });
 
 const cmdProject = withApi(async (api, target) => {
@@ -3206,7 +3456,8 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}vitals${RESET} <name>          Core Web Vitals p75 on page_view (Pro). --days, --from, --to, --by, --limit
   ${CYAN}journey${RESET} <name>         Chronological journey by --user-id or --email
   ${CYAN}sessions${RESET} <name>        Individual session records
-  ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, numeric property aggs)
+  ${CYAN}query${RESET} <name>           Flexible analytics query (metrics, group_by, filters, numeric property aggs). group_by allows one properties.<key>
+  ${CYAN}sql${RESET} <name>             Pro read-only SQL on events and sessions. --sql or -f, --days or --from/--to, --json
   ${CYAN}compare${RESET} <name>         Free before/after read of unique converters. A 7-day read should run on ship day + 8
   ${CYAN}annotate${RESET} <name>        Append one annotation (duplicate returns appended: false)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
@@ -3251,9 +3502,9 @@ ${BOLD}ACCOUNT${RESET}
   ${CYAN}delete${RESET} <project>       Delete a project by name or id
 
 ${BOLD}KEY OPTIONS${RESET}
-  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90. For vitals, a positive integer
-  --from <date>      Start date (YYYY-MM-DD) for query and vitals
-  --to <date>        End date (YYYY-MM-DD) for query and vitals
+  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90. For vitals, a positive integer. For sql, an integer from 1 to 90
+  --from <date>      Start date (YYYY-MM-DD) for query, vitals, and sql
+  --to <date>        End date (YYYY-MM-DD) for query, vitals, and sql
   --by <group>       Vitals breakdown: device or path
   --limit <N>        Max results (default: 100). For errors, default 20 and max 100. For vitals, default 10 and max 20
   --domain <url>     Primary surface URL/origin (required for create)
@@ -3273,6 +3524,9 @@ ${BOLD}KEY OPTIONS${RESET}
                      Raw email is sent over HTTPS for lookup and is not stored in event rows or profile traits
   --message <text>   Feedback message for the product team
   --filter <json>    Filters for query (e.g. '[{"field":"country","op":"eq","value":"US"}]')
+  --group-by <fields> Query groups: event, date, user_id, session_id, country, and at most one properties.<key>
+  --sql <statement>  One SELECT for sql. Pass the statement as this flag's value
+  -f, --file <path>  Read the sql statement from a file
   --interval <N>     Live view refresh in seconds (default: 5)
   --window <N>       Live view time window in seconds (default: 60)
   --goal <event>     Goal event for paths, experiments, and compare
@@ -3614,6 +3868,10 @@ try {
       });
       break;
     case 'query':
+      if (hasHelpFlag(args)) {
+        printQueryUsage();
+        break;
+      }
       await cmdQuery(getArg('--project') || args[1], {
         metrics: getArg('--metrics'),
         property: getArg('--property'),
@@ -3628,6 +3886,33 @@ try {
         email: getArg('--email'),
       });
       break;
+    case 'sql': {
+      if (hasHelpFlag(args)) {
+        printSqlUsage();
+        break;
+      }
+      const inlineSql = sqlFlagValue('--sql');
+      const fileShort = sqlFlagValue('-f');
+      const fileLong = sqlFlagValue('--file');
+      const daysFlag = sqlFlagValue('--days');
+      const fromFlag = sqlFlagValue('--from');
+      const toFlag = sqlFlagValue('--to');
+      await cmdSql(args[1] && !args[1].startsWith('--') ? args[1] : getArg('--project'), {
+        sql: inlineSql.value,
+        file: fileShort.value || fileLong.value,
+        hasSqlFlag: inlineSql.present,
+        hasFileFlag: fileShort.present || fileLong.present,
+        duplicateFile: fileShort.present && fileLong.present,
+        days: daysFlag.value,
+        daysPresent: daysFlag.present,
+        date_from: fromFlag.value,
+        fromPresent: fromFlag.present,
+        date_to: toFlag.value,
+        toPresent: toFlag.present,
+        jsonOutput: args.includes('--json'),
+      });
+      break;
+    }
     case 'project':
       await cmdProject(args[1]);
       break;
