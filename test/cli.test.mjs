@@ -2635,9 +2635,15 @@ describe('CLI', () => {
       assert.ok(plain.includes('--days defaults to 7 and must be an integer from 1 to 90.'));
       assert.ok(plain.includes('The span is at most 90 days.'));
       assert.ok(plain.includes('The CLI prints the returned window.'));
-      assert.ok(plain.includes('at most 2 times in total'));
+      assert.ok(plain.includes('Each of events and sessions may be referenced at most once in a statement.'));
+      assert.ok(plain.includes('One join of events to sessions is allowed.'));
+      assert.ok(plain.includes('A self-join is rejected.'));
+      assert.ok(plain.includes('A LIMIT clause must be a plain integer.'));
+      assert.ok(plain.includes('User SQL errors return HTTP 400 INVALID_SQL.'));
+      assert.ok(!plain.includes('at most 2 times'));
       assert.ok(plain.includes('One /sql query runs at a time per account.'));
       assert.ok(plain.includes('SQL_BUSY'));
+      assert.ok(plain.includes('SQL_UPSTREAM_RATE_LIMITED'));
       assert.ok(plain.includes('Retry-After'));
       assert.ok(plain.includes('events columns: id, event, properties, user_id, session_id, timestamp, date, country.'));
       assert.ok(plain.includes('sessions columns: session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date.'));
@@ -2848,9 +2854,12 @@ describe('CLI', () => {
     it('prints INVALID_SQL and the Pro upgrade handoff from the API', async () => {
       const server = await startServer(async (req, res) => {
         const body = await readRequestJson(req);
-        if (String(body.sql).includes('DROP')) {
+        if (String(body.sql).includes('DROP') || String(body.sql).includes('LIMIT ?')) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ code: 'INVALID_SQL', message: 'Only a single SELECT is allowed.' }));
+          const message = String(body.sql).includes('LIMIT ?')
+            ? 'LIMIT must be a plain integer.'
+            : 'Only a single SELECT is allowed.';
+          res.end(JSON.stringify({ code: 'INVALID_SQL', message }));
           return;
         }
         res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -2866,11 +2875,14 @@ describe('CLI', () => {
           AGENT_ANALYTICS_URL: server.baseUrl,
         };
         const invalid = await run(['sql', 'my-site', '--sql', 'DROP TABLE events'], { env });
+        const limit = await run(['sql', 'my-site', '--sql', 'SELECT event FROM events LIMIT ?'], { env });
         const upgrade = await run(['sql', 'my-site', '--sql', 'SELECT event FROM events'], { env });
 
         assert.notEqual(invalid.code, 0);
+        assert.notEqual(limit.code, 0);
         assert.notEqual(upgrade.code, 0);
         assert.ok(stripAnsi(invalid.stdout).includes('Only a single SELECT is allowed.'));
+        assert.ok(stripAnsi(limit.stdout).includes('LIMIT must be a plain integer.'));
         assert.ok(stripAnsi(upgrade.stdout).includes('This endpoint is available on paid plans.'));
         assert.ok(stripAnsi(upgrade.stdout).includes('upgrade-link --detached'));
       } finally {
@@ -2990,17 +3002,24 @@ describe('CLI', () => {
       }
     });
 
-    it('prints Retry-After seconds for SQL_BUSY and SQL_COOLDOWN', async () => {
+    it('prints Retry-After seconds for SQL_BUSY, SQL_COOLDOWN, and SQL_UPSTREAM_RATE_LIMITED', async () => {
       const server = await startServer(async (req, res) => {
         const body = await readRequestJson(req);
-        const cooldown = String(body.sql).includes('cooldown');
+        const sql = String(body.sql);
+        const cooldown = sql.includes('cooldown');
+        const upstream = sql.includes('upstream');
+        const code = cooldown ? 'SQL_COOLDOWN' : upstream ? 'SQL_UPSTREAM_RATE_LIMITED' : 'SQL_BUSY';
+        const retryAfter = cooldown ? '60' : upstream ? '8' : '15';
+        const message = cooldown
+          ? 'SQL is cooling down after a large read.'
+          : upstream
+            ? 'The upstream database rate limited this read.'
+            : 'A SQL query is already running.';
         res.writeHead(429, {
           'Content-Type': 'application/json',
-          'Retry-After': cooldown ? '60' : '15',
+          'Retry-After': retryAfter,
         });
-        res.end(JSON.stringify(cooldown
-          ? { code: 'SQL_COOLDOWN', message: 'SQL is cooling down after a large read.' }
-          : { code: 'SQL_BUSY', message: 'A SQL query is already running.' }));
+        res.end(JSON.stringify({ code, message }));
       });
 
       try {
@@ -3010,15 +3029,20 @@ describe('CLI', () => {
         };
         const busy = await run(['sql', 'my-site', '--sql', 'SELECT event FROM events'], { env });
         const cooldown = await run(['sql', 'my-site', '--sql', 'SELECT cooldown FROM events'], { env });
+        const upstream = await run(['sql', 'my-site', '--sql', 'SELECT upstream FROM events'], { env });
         const busyPlain = stripAnsi(busy.stdout);
         const cooldownPlain = stripAnsi(cooldown.stdout);
+        const upstreamPlain = stripAnsi(upstream.stdout);
 
         assert.notEqual(busy.code, 0);
         assert.notEqual(cooldown.code, 0);
+        assert.notEqual(upstream.code, 0);
         assert.ok(busyPlain.includes('Retry after 15 seconds.'));
         assert.ok(busyPlain.includes('A SQL query is already running.'));
         assert.ok(cooldownPlain.includes('Retry after 60 seconds.'));
         assert.ok(cooldownPlain.includes('SQL is cooling down after a large read.'));
+        assert.ok(upstreamPlain.includes('Retry after 8 seconds.'));
+        assert.ok(upstreamPlain.includes('The upstream database rate limited this read.'));
       } finally {
         await server.close();
       }

@@ -1678,15 +1678,15 @@ Pro read on POST /sql. A successful call counts as one metered read. A free acco
 Use query or breakdown first. sql is the escape hatch when query cannot express the question.
 Pass one SELECT with --sql, or read it from a file with -f or --file. The examples pass the statement as a flag value. Do not concatenate untrusted shell input into the command.
 The statement must be one SELECT, at most 20 KB, and must not start with WITH. The API rejects multiple statements, write or DDL keywords outside string literals, schema-qualified names, sqlite_master, sqlite_schema, sqlite_temp_master, and any table other than events and sessions.
-A statement may reference events and sessions at most 2 times in total. A recursive CTE is rejected. A third reference is HTTP 400 INVALID_SQL.
-One /sql query runs at a time per account. A second call returns HTTP 429 SQL_BUSY with Retry-After, and the CLI prints those seconds.
+Each of events and sessions may be referenced at most once in a statement. One join of events to sessions is allowed. A self-join is rejected. A recursive CTE is rejected. A LIMIT clause must be a plain integer. User SQL errors return HTTP 400 INVALID_SQL.
+One /sql query runs at a time per account. A second call returns HTTP 429 SQL_BUSY with Retry-After, and the CLI prints those seconds. HTTP 429 SQL_UPSTREAM_RATE_LIMITED also includes Retry-After, and the CLI prints those seconds the same way.
 --days defaults to 7 and must be an integer from 1 to 90. It is sent as days. --from and --to match query: YYYY-MM-DD dates, sent as date_from and date_to. The span is at most 90 days. Pass --days or both --from and --to, not both forms. The server always applies this window to events by timestamp and sessions by start time. The CLI prints the returned window.
 events columns: id, event, properties, user_id, session_id, timestamp, date, country.
 sessions columns: session_id, user_id, project_id, start_time, end_time, duration, entry_page, exit_page, event_count, is_bounce, date.
 resolved_user_id is not exposed. properties is a JSON string.
 The server returns at most 1,000 rows. truncated is true when more rows existed. statistics includes elapsed_ms, rows_read, and expensive. expensive is true when rows_read is over 1,000,000.
 Timeout is 10 seconds (HTTP 504 SQL_TIMEOUT). The query can still finish inside D1 after that timeout. The account rate limit is 10 calls per minute (HTTP 429 RATE_LIMITED, reason sql_rate_limit). A query that reads more than 5,000,000 rows starts a 60 second SQL_COOLDOWN (HTTP 429, Retry-After). The monthly budget stays 100,000,000 rows read (HTTP 429 SQL_BUDGET).
-Errors: PRO_REQUIRED (403), INVALID_SQL (400), INVALID_WINDOW (400), SQL_TIMEOUT (504), SQL_BUDGET (429), SQL_BUSY (429), SQL_COOLDOWN (429), RATE_LIMITED (429), SQL_UNAVAILABLE (503).
+Errors: PRO_REQUIRED (403), INVALID_SQL (400), INVALID_WINDOW (400), SQL_TIMEOUT (504), SQL_BUDGET (429), SQL_BUSY (429), SQL_COOLDOWN (429), SQL_UPSTREAM_RATE_LIMITED (429), RATE_LIMITED (429), SQL_UNAVAILABLE (503).
 --json prints the API response. Without --json, the CLI prints a table. SQL NULL prints as null.
 
 Examples:
@@ -1847,7 +1847,7 @@ function sqlRetrySeconds(err) {
 
 function logSqlRetry(err) {
   const code = sqlRetryCode(err);
-  if (code !== 'SQL_BUSY' && code !== 'SQL_COOLDOWN') return;
+  if (code !== 'SQL_BUSY' && code !== 'SQL_COOLDOWN' && code !== 'SQL_UPSTREAM_RATE_LIMITED') return;
   const seconds = sqlRetrySeconds(err);
   if (seconds == null) return;
   log(`Retry after ${seconds} seconds.`);
