@@ -330,6 +330,9 @@ function logSessionGrant(session, { status = false } = {}) {
   }
   log(`  ${BOLD}Project:${RESET} ${grant.project}`);
   log(`  ${BOLD}Level:${RESET}   ${grant.level}`);
+  if (grant.level === 'custom') {
+    log(`  ${BOLD}Scopes:${RESET}  ${grant.scopes.length ? grant.scopes.join(', ') : 'none'}`);
+  }
   return grant;
 }
 
@@ -344,6 +347,7 @@ function visibleSession(account, config = getConfig()) {
   if (account && typeof account === 'object') {
     if (Object.prototype.hasOwnProperty.call(account, 'level')) session.level = account.level;
     if (Object.prototype.hasOwnProperty.call(account, 'project')) session.project = account.project;
+    if (Array.isArray(account.scopes)) session.scopes = account.scopes;
   }
   return session;
 }
@@ -4134,7 +4138,7 @@ ${BOLD}ERASURE${RESET} ${DIM}one visitor, one project, confirm erase${RESET}
   ${CYAN}erasures get${RESET} <id>        Show one erasure receipt
 
 ${BOLD}ACCOUNT${RESET}
-  ${CYAN}whoami${RESET}                 Show the account, granted project, and level
+  ${CYAN}whoami${RESET}                 Show the account, granted project, and level. custom prints its scopes
   ${CYAN}auth status${RESET}            Show local auth path and token expiry metadata
   ${CYAN}feedback${RESET}               Send product/process feedback
   ${CYAN}project${RESET} <project>      Get single project details by name or id

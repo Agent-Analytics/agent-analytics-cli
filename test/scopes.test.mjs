@@ -36,22 +36,34 @@ describe('access levels', () => {
   });
 
   it('describes a missing level as legacy all-projects access', () => {
-    assert.deepEqual(sessionGrant({}), { level: 'legacy', project: 'all', projectName: null });
+    assert.deepEqual(sessionGrant({}), { level: 'legacy', project: 'all', projectName: null, scopes: [] });
     assert.deepEqual(sessionGrant({ level: 'legacy', project: null }), {
       level: 'legacy',
       project: 'all',
       projectName: null,
+      scopes: [],
     });
     assert.deepEqual(sessionGrant({ level: 'manage', project: ' my-site ' }), {
       level: 'manage',
       project: 'my-site',
       projectName: 'my-site',
+      scopes: [],
+    });
+    assert.deepEqual(sessionGrant({
+      level: 'custom',
+      scopes: [' account:read ', 'projects:read', ''],
+    }), {
+      level: 'custom',
+      project: 'all',
+      projectName: null,
+      scopes: ['account:read', 'projects:read'],
     });
   });
 
   it('allows project creation only for admin on all projects', () => {
     assert.equal(sessionCanCreateProject({}), null);
     assert.equal(sessionCanCreateProject({ level: 'legacy' }), null);
+    assert.equal(sessionCanCreateProject({ level: 'custom', scopes: ['projects:write'] }), null);
     assert.equal(sessionCanCreateProject({ level: 'read', project: null }), false);
     assert.equal(sessionCanCreateProject({ level: 'manage', project: null }), false);
     assert.equal(sessionCanCreateProject({ level: 'admin', project: 'my-site' }), false);

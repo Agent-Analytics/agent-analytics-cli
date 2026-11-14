@@ -7,6 +7,7 @@
 - `erase` and `erasures` explain a level that is too low and a project outside the grant.
 - Creating a project needs admin on All projects. The quickstart runs `login --level admin` with no project. `create` at read, manage, or a project-limited admin says to run `login --level admin`.
 - Project keys use the `aapk_` prefix. `aap_` remains the poll token prefix.
+- A session the server reports as `custom` prints that level and its scope list in `whoami`. `create` calls the API for `custom` and shows the admin login hint on 403.
 
 ## 0.5.42
 

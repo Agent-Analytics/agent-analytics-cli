@@ -173,6 +173,65 @@ describe('access level CLI', () => {
       assert.equal(code, 0);
       assert.match(plain, /Project: all/);
       assert.match(plain, /Level:\s+admin/);
+      assert.equal(/Scopes:/.test(plain), false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('prints custom with the scope list from the account grant', async () => {
+    const configDir = sessionConfig({ scopes: ['account:read'] });
+    const server = await accountServer({
+      level: 'custom',
+      project: 'my-site',
+      scopes: ['account:read', 'projects:read', 'analytics:read'],
+    });
+    try {
+      const { code, stdout } = await run(['whoami', '--config-dir', configDir], {
+        env: { AGENT_ANALYTICS_URL: server.baseUrl },
+      });
+      const plain = stripAnsi(stdout);
+      assert.equal(code, 0);
+      assert.match(plain, /Project: my-site/);
+      assert.match(plain, /Level:\s+custom/);
+      assert.match(plain, /Scopes:\s+account:read, projects:read, analytics:read/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('asks the server before refusing create for a custom scope list', async () => {
+    let posts = 0;
+    const server = await startServer(async (req, res) => {
+      if (req.method === 'POST' && req.url === '/projects') {
+        posts += 1;
+        await new Promise((resolve) => {
+          req.on('data', () => {});
+          req.on('end', resolve);
+        });
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 'FORBIDDEN_SCOPE',
+          message: 'custom scopes cannot create projects',
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    try {
+      const { code, stdout } = await run([
+        'create', 'my-site', '--domain', 'https://my-site.example',
+        '--config-dir', sessionConfig({
+          level: 'custom',
+          project: null,
+          scopes: ['projects:write', 'account:read'],
+        }),
+      ], { env: { AGENT_ANALYTICS_URL: server.baseUrl } });
+      const plain = stripAnsi(stdout);
+      assert.notEqual(code, 0);
+      assert.equal(posts, 1);
+      assert.match(plain, /This session is custom/);
+      assert.match(plain, /run login --level admin/);
     } finally {
       await server.close();
     }

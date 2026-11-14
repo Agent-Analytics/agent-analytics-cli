@@ -113,7 +113,7 @@ replays delete --all --confirm delete_replay_data [--project <project>]
 replays usage                    Show retained storage and rolling 30-day ingestion
 
 # Account
-whoami                           Show the account, granted project, and level
+whoami                           Show the account, granted project, and level. custom prints its scopes
 erase <project>                  Delete one visitor. Needs manage or admin, --confirm erase, and one subject
 erasures <project>               List the 100 newest erasure receipts
 erasures get <id>                Show one erasure receipt
