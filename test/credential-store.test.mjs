@@ -400,4 +400,32 @@ describe('credential-store', () => {
     assert.equal(config.agent_session.storage, 'file');
     assert.deepEqual(await readAgentSession(), fullSession);
   });
+
+  it('keeps level and an explicit all-projects grant in file storage and native metadata', async () => {
+    const granted = { ...fullSession, level: 'admin', project: null };
+    setCredentialStoreTestSeams({ platform: 'linux' });
+    await setAgentSession(granted);
+    assert.equal(getConfig().agent_session.level, 'admin');
+    assert.equal(getConfig().agent_session.project, null);
+    assert.deepEqual(await readAgentSession(), granted);
+
+    const writes = [];
+    setCredentialStoreTestSeams({
+      platform: 'darwin',
+      nativeKeyring: {
+        async setPassword(_service, _account, value) { writes.push(value); },
+        async getPassword() { return writes[0] || null; },
+        async deletePassword() {},
+      },
+    });
+    await setAgentSession(granted);
+    const metadata = getConfig().agent_session;
+    assert.equal(metadata.storage, 'native');
+    assert.equal(metadata.level, 'admin');
+    assert.equal(metadata.project, null);
+    assert.equal(metadata.access_token, undefined);
+    assert.equal(JSON.parse(writes[0]).level, 'admin');
+    assert.equal(JSON.parse(writes[0]).project, null);
+    assert.equal((await readAgentSession()).level, 'admin');
+  });
 });

@@ -20,8 +20,8 @@ Demo mode fetches a short-lived read-only agent session from the hosted API. It 
 Get the fastest path to useful analytics for a project you own:
 
 ```bash
-# 1. Start agent login or signup in the browser
-npx --yes @agent-analytics/cli@0.5.42 login
+# 1. First project: admin on All projects. Do not pass --project
+npx --yes @agent-analytics/cli@0.5.42 login --level admin
 
 # 2. Create a project; --domain is the primary surface URL/origin for setup
 npx --yes @agent-analytics/cli@0.5.42 create my-site --domain https://mysite.com
@@ -40,7 +40,10 @@ npx --yes @agent-analytics/cli@0.5.42 logout
 
 ```bash
 # Setup
-login                            Browser approval flow for signup/login
+login                            Browser approval. Level defaults to read
+login --level admin              First project. Admin on All projects. Do not pass --project
+login --project <name> --level <level>
+                                 Ask for one project at read, manage, or admin
 login --detached                 Detached handoff: print approval URL and exit
 login --detached --wait          Detached approval with polling for local shells
 upgrade-link --detached          Print a human Pro payment handoff link
@@ -110,8 +113,8 @@ replays delete --all --confirm delete_replay_data [--project <project>]
 replays usage                    Show retained storage and rolling 30-day ingestion
 
 # Account
-whoami                           Show current account & tier
-erase <project>                  Delete one visitor. Requires --confirm erase and exactly one subject
+whoami                           Show the account, granted project, and level. custom prints its scopes
+erase <project>                  Delete one visitor. Needs manage or admin, --confirm erase, and one subject
 erasures <project>               List the 100 newest erasure receipts
 erasures get <id>                Show one erasure receipt
 feedback --message "..."         Send product/process feedback
@@ -120,7 +123,7 @@ logout                           Clear local auth and revoke the stored agent se
 
 The CLI is agent-session-first. It stores a renewable Agent Analytics session after browser approval and uses that bearer auth for CLI API calls. By default, macOS and Windows store the session secret in the OS keychain; Linux and headless environments use the CLI config file. Existing file-stored sessions migrate automatically to native storage on the next authenticated command when native storage is available. Runtime-specific HTTP integrations should stay tied to the approved agent session, project setup, and project context rather than treating the CLI as a manual key setup path.
 
-Replay commands require agent-session scopes `replays:read` and `replays:write`. If the saved session predates replay support, run `login` again to approve the added scopes. Replay remains disabled by default even for eligible accounts, and enabling it does not modify or activate the base tracker. A customer must separately install:
+Replay reads are included in read. Enabling or deleting replays needs manage or admin (`login --level manage`). If the saved session predates replay support, run `login` again. Replay remains disabled by default even for eligible accounts, and enabling it does not modify or activate the base tracker. A customer must separately install:
 
 ```html
 <script src="https://api.agentanalytics.sh/replay.js" data-token="aat_PROJECT_TOKEN"></script>
@@ -324,7 +327,7 @@ The API requires an idempotency key, unique per account. When `--idempotency-key
 
 A finished job returns HTTP 200. A job that is still running returns HTTP 202. `status` is `pending`, `running`, `completed`, or `failed`. Poll with `erasures get <id>`. `erasures <project>` lists the 100 newest receipts. Receipts contain no raw subject, no deleted payloads, and no raw email. `--json` prints those receipt fields. A generated idempotency key is included as `idempotency_key`.
 
-Agent sessions need the `erasures:write` scope. That scope is not in the default agent session, and this CLI does not request it at login. `analytics:read` and `projects:write` are not enough. A session without that scope gets HTTP 403 `FORBIDDEN` and the message `agent session missing required scope: erasures:write`. An account API key or a dashboard session can erase. Demo mode is read-only.
+Erasure needs an agent session at manage or admin. `login` requests read unless you pass `--level manage` or `--level admin`. read gets HTTP 403 `FORBIDDEN_SCOPE` on `erase` and `erasures`. A project-limited session can erase only its granted project. Another project is HTTP 404 `PROJECT_NOT_FOUND`. `whoami` prints the granted project and level. A session saved before levels is legacy: it keeps its old scopes and all-projects access. A legacy session without `erasures:write` still gets HTTP 403 `FORBIDDEN` and the message `agent session missing required scope: erasures:write`. An account API key (`aak_`) cannot erase. A project key (`aapk_`) at manage or admin can. This CLI uses an agent session, not a key. Dashboard login can still erase. Demo mode is read-only.
 
 Erasure accepts are limited to 20 per account per hour on every plan, including free. That limit is HTTP 429 `RATE_LIMITED` with `reason` `erasure_rate_limit`. It is separate from the per-minute request limit and is not metered as a read.
 

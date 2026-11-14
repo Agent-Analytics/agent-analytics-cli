@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
+import { agentSessionAccessFields, loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
-import { DEFAULT_AGENT_SESSION_SCOPES } from '../lib/scopes.mjs';
+import { scopesForLevel } from '../lib/scopes.mjs';
 
 async function withServer(handler, fn) {
   const server = createServer(handler);
@@ -18,6 +18,22 @@ async function withServer(handler, fn) {
 }
 
 describe('auth flow helpers', () => {
+  it('sends level, optional project, and the matching scopes', () => {
+    assert.deepEqual(agentSessionAccessFields(), {
+      level: 'read',
+      scopes: [...scopesForLevel('read')],
+    });
+    assert.deepEqual(agentSessionAccessFields({ project: '  my-site  ', level: 'ADMIN' }), {
+      level: 'admin',
+      project: 'my-site',
+      scopes: [...scopesForLevel('admin')],
+    });
+    assert.deepEqual(scopesForLevel('admin'), scopesForLevel('manage'));
+    assert.ok(scopesForLevel('manage').includes('erasures:write'));
+    assert.equal(scopesForLevel('read').includes('erasures:write'), false);
+    assert.equal(scopesForLevel('read').includes('projects:write'), false);
+  });
+
   it('completes interactive login with loopback callback + PKCE exchange', async () => {
     let callbackUrl = null;
     let callbackHtml = '';
@@ -89,7 +105,9 @@ describe('auth flow helpers', () => {
 
       assert.equal(startPayload.mode, 'interactive');
       assert.ok(startPayload.code_challenge);
-      assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
+      assert.equal(startPayload.level, 'read');
+      assert.equal('project' in startPayload, false);
+      assert.deepEqual(startPayload.scopes, [...scopesForLevel('read')]);
       assert.equal(pending.authorize_url, 'https://approve.example/req-1');
       assert.equal('approval_code' in pending, false);
       assert.equal(exchangePayload.auth_request_id, 'req-1');
@@ -170,7 +188,9 @@ describe('auth flow helpers', () => {
         timeoutMs: 2000,
         pollIntervalMs: 10,
       });
-      assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
+      assert.equal(startPayload.level, 'read');
+      assert.equal('project' in startPayload, false);
+      assert.deepEqual(startPayload.scopes, [...scopesForLevel('read')]);
       assert.equal(result.started.auth_request_id, 'req-detached');
       assert.equal(result.exchanged.agent_session.refresh_token, 'aar_detached');
     });
@@ -208,7 +228,9 @@ describe('auth flow helpers', () => {
       const started = await startDetachedLogin(api);
 
       assert.equal(startPayload.mode, 'detached');
-      assert.deepEqual(startPayload.scopes, DEFAULT_AGENT_SESSION_SCOPES);
+      assert.equal(startPayload.level, 'read');
+      assert.equal('project' in startPayload, false);
+      assert.deepEqual(startPayload.scopes, [...scopesForLevel('read')]);
       assert.equal(started.auth_request_id, 'req-handoff');
       assert.equal('approval_code' in started, false);
       assert.equal(pollCount, 0);

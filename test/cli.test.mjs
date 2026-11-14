@@ -522,7 +522,7 @@ describe('CLI', () => {
 
         assert.notEqual(code, 0);
         assert.equal(calls, 0);
-        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--project <name>\] \[--level read\|manage\|admin\] \[--detached/i);
         assert.match(plain, /browser/i);
         assert.match(plain, /detached/i);
         assert.equal(plain.includes('API key'), false);
@@ -541,7 +541,7 @@ describe('CLI', () => {
       const plain = stripAnsi(stdout);
 
       assert.notEqual(code, 0);
-      assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+      assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--project <name>\] \[--level read\|manage\|admin\] \[--detached/i);
       assert.match(plain, /browser/i);
       assert.match(plain, /detached/i);
       assert.equal(plain.includes('API key'), false);
@@ -565,7 +565,7 @@ describe('CLI', () => {
 
         assert.notEqual(code, 0);
         assert.equal(calls, 0);
-        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--project <name>\] \[--level read\|manage\|admin\] \[--detached/i);
         assert.match(plain, /browser/i);
         assert.match(plain, /detached/i);
         assert.equal(plain.includes('API key'), false);
@@ -591,7 +591,7 @@ describe('CLI', () => {
 
         assert.notEqual(code, 0);
         assert.equal(calls, 0);
-        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--project <name>\] \[--level read\|manage\|admin\] \[--detached/i);
         assert.match(plain, /browser/i);
         assert.match(plain, /detached/i);
         assert.equal(plain.includes('API key'), false);
@@ -617,7 +617,7 @@ describe('CLI', () => {
 
         assert.notEqual(code, 0);
         assert.equal(calls, 0);
-        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--detached/i);
+        assert.match(plain, /Usage: npx @agent-analytics\/cli login \[--project <name>\] \[--level read\|manage\|admin\] \[--detached/i);
         assert.match(plain, /browser/i);
         assert.match(plain, /detached/i);
         assert.equal(plain.includes('API key'), false);
