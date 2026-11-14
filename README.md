@@ -331,11 +331,11 @@ Erasure accepts are limited to 20 per account per hour on every plan, including 
 A database restore can bring erased rows back for up to 30 days. Ask support to re-apply erasures after any restore. New events for an erased id are dropped for 7 days, then accepted again. Erasure is not a permanent suppress list. Stored hashes are still identifiers.
 
 ```bash
-npx --yes @agent-analytics/cli@0.5.41 erase my-site --user-id user_123 --confirm erase
-npx --yes @agent-analytics/cli@0.5.41 erase my-site --session-id sess_123 --confirm erase --include-replays=false
-npx --yes @agent-analytics/cli@0.5.41 erase my-site --email person@example.com --confirm erase --confirm-large
-npx --yes @agent-analytics/cli@0.5.41 erasures my-site
-npx --yes @agent-analytics/cli@0.5.41 erasures get era_123 --json
+npx --yes @agent-analytics/cli@0.5.42 erase my-site --user-id user_123 --confirm erase
+npx --yes @agent-analytics/cli@0.5.42 erase my-site --session-id sess_123 --confirm erase --include-replays=false
+npx --yes @agent-analytics/cli@0.5.42 erase my-site --email person@example.com --confirm erase --confirm-large
+npx --yes @agent-analytics/cli@0.5.42 erasures my-site
+npx --yes @agent-analytics/cli@0.5.42 erasures get era_123 --json
 ```
 
 ## Feedback
