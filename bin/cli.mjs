@@ -4,8 +4,9 @@
  * agent-analytics CLI
  * 
  * Usage:
- *   npx @agent-analytics/cli login                — Start browser-based agent session login
- *   npx @agent-analytics/cli login --detached     — Detached approval handoff
+ *   npx @agent-analytics/cli login                - Browser login. Level defaults to read
+ *   npx @agent-analytics/cli login --level admin  - First project. Admin on All projects
+ *   npx @agent-analytics/cli login --detached     - Detached approval handoff
  *   npx @agent-analytics/cli logout               — Clear local auth and revoke the stored agent session when possible
  *   npx @agent-analytics/cli upgrade-link --detached — Print a human payment handoff link
  *   npx @agent-analytics/cli scan <url>           — Preview what your agent should track first
@@ -62,12 +63,18 @@
  *   npx @agent-analytics/cli erasures <name>      - List erasure receipts
  *   npx @agent-analytics/cli erasures get <id>    - Show one erasure receipt
  *   npx @agent-analytics/cli feedback --message "..." — Send product/process feedback
- *   npx @agent-analytics/cli whoami               — Show current account
+ *   npx @agent-analytics/cli whoami               - Show account, granted project, and level
  *   npx @agent-analytics/cli auth status          — Show local auth path and expiry metadata
  */
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
 import { finishManualExchange, loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
+import {
+  mergeSessionGrant,
+  normalizeAccessLevel,
+  sessionCanCreateProject,
+  sessionGrant,
+} from '../lib/scopes.mjs';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
@@ -286,12 +293,70 @@ function logDetachedApproval(started) {
 
 function loginUsageMessage() {
   return [
-    'Usage: npx @agent-analytics/cli login [--detached [--wait]]',
+    'Usage: npx @agent-analytics/cli login [--project <name>] [--level read|manage|admin] [--detached [--wait]]',
     '   or: npx @agent-analytics/cli login --auth-request <id> --exchange-code <code>',
     '',
-    'Login uses browser-approved agent sessions.',
+    'Login uses browser-approved agent sessions. The level defaults to read.',
+    'read can view analytics. manage can change project data and erase visitors. admin can do that and create projects when the owner approves All projects.',
+    'Pass --project to ask for one project. Omit it and the owner picks a project or All projects.',
+    'The first project needs admin on All projects: npx @agent-analytics/cli login --level admin',
+    'The CLI sends project and level to current servers and still sends scopes so older servers can approve the session.',
     'For remote or issue-based agent work, use: npx @agent-analytics/cli login --detached',
   ].join('\n');
+}
+
+function parseLoginAccess(project, level) {
+  let normalized = 'read';
+  try {
+    normalized = normalizeAccessLevel(level);
+  } catch (err) {
+    error(`${err.message}\n\n${loginUsageMessage()}`);
+  }
+  if (project != null && !String(project).trim()) {
+    error(`--project needs a project name.\n\n${loginUsageMessage()}`);
+  }
+  return {
+    project: project == null ? undefined : String(project).trim(),
+    level: normalized,
+  };
+}
+
+function logSessionGrant(session, { status = false } = {}) {
+  const grant = sessionGrant(session);
+  if (status) {
+    log(`  ${BOLD}Level:${RESET}           ${grant.level}`);
+    log(`  ${BOLD}Project:${RESET}         ${grant.project}`);
+    return grant;
+  }
+  log(`  ${BOLD}Project:${RESET} ${grant.project}`);
+  log(`  ${BOLD}Level:${RESET}   ${grant.level}`);
+  if (grant.level === 'custom') {
+    log(`  ${BOLD}Scopes:${RESET}  ${grant.scopes.length ? grant.scopes.join(', ') : 'none'}`);
+  }
+  return grant;
+}
+
+function visibleSession(account, config = getConfig()) {
+  const session = { ...(config.agent_session || {}) };
+  const live = account?.agent_session;
+  if (live && typeof live === 'object') {
+    if (Object.prototype.hasOwnProperty.call(live, 'level')) session.level = live.level;
+    if (Object.prototype.hasOwnProperty.call(live, 'project')) session.project = live.project;
+    if (Array.isArray(live.scopes)) session.scopes = live.scopes;
+  }
+  if (account && typeof account === 'object') {
+    if (Object.prototype.hasOwnProperty.call(account, 'level')) session.level = account.level;
+    if (Object.prototype.hasOwnProperty.call(account, 'project')) session.project = account.project;
+    if (Array.isArray(account.scopes)) session.scopes = account.scopes;
+  }
+  return session;
+}
+
+async function saveExchangedSession(result) {
+  const session = mergeSessionGrant(result?.agent_session || {}, result || {});
+  const saved = await setAgentSession(session);
+  updateStoredAccount(result?.account);
+  return { session, saved };
 }
 
 function currentCommandForHandoff() {
@@ -370,10 +435,35 @@ function authenticatedWebsiteAnalysisProjectMessage(url) {
   return [
     'CLI website analysis requires --project for authenticated scans.',
     `Scan sites for projects you own or manage. If you need anonymous preview, use ${websiteAnalysisWebPreviewUrl()}`,
-    'If this is a new site, create or identify the matching project first, then rerun scan:',
+    'If this is a new site, create or identify the matching project first. Creating a project needs admin on All projects.',
+    'run login --level admin',
     `  npx @agent-analytics/cli create my-site --domain ${website}`,
     `  npx @agent-analytics/cli scan ${website} --project my-site --json`,
   ].join('\n');
+}
+
+function createProjectAccessHint(session = getConfig().agent_session || {}) {
+  const grant = sessionGrant(session);
+  const who = grant.level === 'admin' && grant.projectName
+    ? `admin, limited to project "${grant.projectName}"`
+    : grant.level;
+  return [
+    `Creating a project needs admin with All projects. This session is ${who}.`,
+    'run login --level admin',
+    `${cliInvocationWithConfig()} login --level admin`,
+    'Do not pass --project. The owner must approve All projects.',
+  ].join('\n');
+}
+
+function isCreateLevelError(err) {
+  const code = err?.code || err?.body?.code || err?.body?.error;
+  if (code === 'PRO_REQUIRED' || code === 'DEMO_READ_ONLY' || code === 'ACCOUNT_SETUP_PENDING' || code === 'ACCOUNT_SETUP_FAILED') {
+    return false;
+  }
+  if (code === 'FORBIDDEN_SCOPE' || code === 'FORBIDDEN') return true;
+  if (err?.status !== 403) return false;
+  const message = String(err?.message || err?.body?.message || '');
+  return /project|scope|level|admin|forbidden/i.test(message);
 }
 
 function isProjectRequiredScanError(err) {
@@ -397,11 +487,12 @@ async function resolveProject(api, target) {
 
 // ==================== COMMANDS ====================
 
-async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, waitForDetached }) {
+async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, waitForDetached, project, level }) {
   if (invalidShape) {
     error(loginUsageMessage());
   }
 
+  const access = parseLoginAccess(project, level);
   const api = createApiClient(null);
 
   if (exchangeCode) {
@@ -410,10 +501,10 @@ async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, w
     }
     try {
       const result = await finishManualExchange(api, authRequestId, exchangeCode);
-      const saved = await setAgentSession(result.agent_session);
-      updateStoredAccount(result.account);
-      warnCredentialStorageFallback(saved);
-      logConnected(result.account, savedAgentSessionMessage(saved));
+      const savedSession = await saveExchangedSession(result);
+      warnCredentialStorageFallback(savedSession.saved);
+      logConnected(result.account, savedAgentSessionMessage(savedSession.saved));
+      logSessionGrant(savedSession.session);
     } catch (err) {
       if (!isDetachedAlreadyExchangedError(err)) {
         throw err;
@@ -433,7 +524,7 @@ async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, w
     let stopWaiting = () => {};
     try {
       if (!waitForDetached) {
-        const started = await startDetachedLogin(api);
+        const started = await startDetachedLogin(api, access);
         logDetachedApproval(started);
         log('');
         success(`Detached approval request created: ${started.auth_request_id}`);
@@ -442,6 +533,7 @@ async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, w
 
       const { started, exchanged } = await loginDetached(api, {
         ...loginTimingOptions(),
+        ...access,
         onPending(started) {
           logDetachedApproval(started);
           log(`${DIM}Polling is enabled because --wait/--poll was passed.${RESET}`);
@@ -450,10 +542,10 @@ async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, w
         },
       });
       stopWaiting(`${DIM}Browser approval received.${RESET}`);
-      const saved = await setAgentSession(exchanged.agent_session);
-      updateStoredAccount(exchanged.account);
-      warnCredentialStorageFallback(saved);
-      logConnected(exchanged.account, savedAgentSessionMessage(saved, `Detached request ${started.auth_request_id} approved and session`));
+      const savedSession = await saveExchangedSession(exchanged);
+      warnCredentialStorageFallback(savedSession.saved);
+      logConnected(exchanged.account, savedAgentSessionMessage(savedSession.saved, `Detached request ${started.auth_request_id} approved and session`));
+      logSessionGrant(savedSession.session);
       return;
     } catch (err) {
       stopWaiting(`${DIM}Stopped waiting for browser approval.${RESET}`);
@@ -477,6 +569,7 @@ async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, w
   try {
     const result = await loginInteractive(api, {
       ...loginTimingOptions(),
+      ...access,
       onPending(started) {
         log(`Approval URL: ${CYAN}${started.authorize_url}${RESET}`);
         log(`${DIM}The browser should open automatically. If it does not, open the URL above.${RESET}`);
@@ -485,15 +578,15 @@ async function cmdLogin({ invalidShape, detached, exchangeCode, authRequestId, w
       },
     });
     stopWaiting(`${DIM}Browser approval received.${RESET}`);
-    let saved;
+    let savedSession;
     try {
-      saved = await setAgentSession(result.agent_session);
-      updateStoredAccount(result.account);
+      savedSession = await saveExchangedSession(result);
     } catch (err) {
       error(`Login approved, but saving the agent session failed: ${err.message}`);
     }
-    warnCredentialStorageFallback(saved);
-    logConnected(result.account, savedAgentSessionMessage(saved));
+    warnCredentialStorageFallback(savedSession.saved);
+    logConnected(result.account, savedAgentSessionMessage(savedSession.saved));
+    logSessionGrant(savedSession.session);
     log('');
     log(`Fallbacks:`);
     log(`  ${CYAN}npx @agent-analytics/cli login --detached${RESET}`);
@@ -806,12 +899,20 @@ const cmdCreate = withApi(async (api, name, domain, opts = {}) => {
   if (!name) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com');
   if (!domain) error('Usage: npx @agent-analytics/cli create <project-name> --domain https://mysite.com\n\nThe --domain value is the primary surface URL/origin used to restrict tracking for this project.');
 
+  const stored = getConfig().agent_session || {};
+  if (sessionCanCreateProject(stored) === false) {
+    error(createProjectAccessHint(stored));
+  }
+
   heading(`Creating project: ${name}`);
 
   let data;
   try {
     data = await api.createProject(name, domain, { sourceScanId: opts.source_scan_id });
   } catch (err) {
+    if (isCreateLevelError(err)) {
+      error(`${err.message}\n\n${createProjectAccessHint(stored)}`);
+    }
     if (err?.status === 409 && err?.code === 'ACCOUNT_SETUP_PENDING') {
       error([
         'Account setup is still finishing.',
@@ -852,8 +953,9 @@ const cmdProjects = withApi(async (api) => {
   const projects = data.projects;
 
   if (!projects || projects.length === 0) {
-    log('No projects yet. Create one:');
-    log(`  ${CYAN}npx @agent-analytics/cli create my-site${RESET}`);
+    log('No projects yet. Creating one needs admin on All projects:');
+    log(`  ${CYAN}${cliInvocationWithConfig()} login --level admin${RESET}`);
+    log(`  ${CYAN}npx @agent-analytics/cli create my-site --domain https://mysite.com${RESET}`);
     return;
   }
 
@@ -2997,6 +3099,7 @@ const cmdWhoami = withApi(async (api) => {
   log('');
   heading('Auth');
   logAuthDiagnostics(getConfig());
+  logSessionGrant(visibleSession(data));
   log('');
 });
 
@@ -3033,6 +3136,7 @@ function cmdAuth(sub) {
   heading('Agent Session');
   log(`  ${BOLD}ID:${RESET}              ${session.id || 'N/A'}`);
   log(`  ${BOLD}Scopes:${RESET}          ${Array.isArray(session.scopes) ? session.scopes.join(', ') : 'N/A'}`);
+  if (hasAgentSession(config)) logSessionGrant(session, { status: true });
   log(`  ${BOLD}Access expires:${RESET}  ${formatExpiry(session.access_expires_at)}`);
   log(`  ${BOLD}Refresh expires:${RESET} ${formatExpiry(session.refresh_expires_at)}`);
   log('');
@@ -3461,11 +3565,15 @@ Pass exactly one subject. --confirm must be the word erase. The command refuses 
 --confirm-large is required when the subject matches more than 100,000 events.
 --idempotency-key is unique per account. When omitted, the CLI generates a UUID, prints idempotency_key, and sends it. The same key and the same body returns the original job. A failed job continues. The same key with a different body is HTTP 409 IDEMPOTENCY_CONFLICT.
 The CLI does not print the subject. status is pending, running, completed, or failed. HTTP 200 means the job finished. HTTP 202 means it is still running. Poll with erasures get <id>.
-Agent sessions need erasures:write. That scope is not in the default agent session, and login does not request it. analytics:read and projects:write are not enough. A session without that scope gets HTTP 403 FORBIDDEN and the message "agent session missing required scope: erasures:write".
+Erasure needs manage or admin. login defaults to read, which cannot erase or list receipts. Ask with: npx @agent-analytics/cli login --level manage
+A project-limited session can erase only its granted project. Another project is HTTP 404 PROJECT_NOT_FOUND.
+A level that is too low is HTTP 403 FORBIDDEN_SCOPE.
+A legacy session keeps its old scopes. Without erasures:write it is HTTP 403 FORBIDDEN and the message "agent session missing required scope: erasures:write".
+An account API key (aak_) cannot erase. A project key uses the aapk_ prefix. This CLI uses an agent session, not a key.
 Demo mode is read-only.
 --json prints the receipt fields. A generated idempotency key is added as idempotency_key.
 
-API errors: INVALID_ERASURE (400), CONFIRM_LARGE_REQUIRED (400), FORBIDDEN (403, agent session missing required scope: erasures:write), DEMO_READ_ONLY (403), PROJECT_NOT_FOUND (404), IDEMPOTENCY_CONFLICT (409), RATE_LIMITED (429, reason erasure_rate_limit). The hourly cap is that 429. It is not metered as a read.
+API errors: INVALID_ERASURE (400), CONFIRM_LARGE_REQUIRED (400), FORBIDDEN_SCOPE (403, level is too low), FORBIDDEN (403, agent session missing required scope: erasures:write), DEMO_READ_ONLY (403), PROJECT_NOT_FOUND (404, missing project or outside the grant), IDEMPOTENCY_CONFLICT (409), RATE_LIMITED (429, reason erasure_rate_limit). The hourly cap is that 429. It is not metered as a read.
 
 Examples:
   npx @agent-analytics/cli erase my-site --user-id user_123 --confirm erase
@@ -3484,6 +3592,8 @@ function erasuresUsageText() {
 
 Lists the 100 newest erasure receipts for a project, or fetches one receipt by id.
 Receipts do not include the subject, deleted payloads, or raw email. The CLI does not print hashes.
+Listing receipts needs manage or admin. read gets HTTP 403 FORBIDDEN_SCOPE.
+A project outside the grant is HTTP 404 PROJECT_NOT_FOUND. Run whoami to see the granted project and level.
 --json prints the receipt fields.
 get is the show subcommand, so a project named get cannot be listed with this form.
 
@@ -3782,17 +3892,48 @@ function erasureErrorCode(err) {
   return err?.code || err?.body?.code || err?.body?.error || null;
 }
 
-function isMissingErasureScope(err) {
-  if (erasureErrorCode(err) !== 'FORBIDDEN') return false;
+function isErasureLevelError(err) {
+  const code = erasureErrorCode(err);
+  if (code === 'FORBIDDEN_SCOPE') return true;
+  if (code !== 'FORBIDDEN') return false;
   const message = String(err?.message || err?.body?.message || '');
-  return message.includes('agent session missing required scope: erasures:write');
+  return message.includes('erasures:write') || /cannot erase/i.test(message) || /manage or admin/i.test(message);
 }
 
-function logErasureFailureHint(err) {
+function erasureLevelHint(session = getConfig().agent_session || {}) {
+  const grant = sessionGrant(session);
+  const requested = grant.level === 'admin' ? 'admin' : 'manage';
+  return [
+    `Erasure needs manage or admin. This session is ${grant.level}.`,
+    `run login --level ${requested}`,
+    'read cannot list or delete erasure receipts. A legacy session can erase only when it already includes erasures:write.',
+  ].join('\n');
+}
+
+function erasureProjectHint(session = getConfig().agent_session || {}, project) {
+  const grant = sessionGrant(session);
+  const lines = [];
+  if (grant.projectName && project && project !== grant.projectName) {
+    lines.push(`This session is granted project "${grant.projectName}". "${project}" is outside that grant, or it does not exist.`);
+  } else if (project) {
+    lines.push(`"${project}" was not found. A project-limited session also returns 404 PROJECT_NOT_FOUND when the name is outside its grant.`);
+  } else {
+    lines.push('That erasure was not found. A project-limited session returns 404 when the receipt is outside its grant.');
+  }
+  lines.push('Run whoami to see the granted project.');
+  return lines.join('\n');
+}
+
+function logErasureFailureHint(err, { project } = {}) {
   const code = erasureErrorCode(err);
-  if (isMissingErasureScope(err)) {
+  if (isErasureLevelError(err)) {
     log('');
-    log('This agent session does not include erasures:write. That scope is not in the default agent session, and login does not request it. analytics:read and projects:write are not enough.');
+    log(erasureLevelHint());
+    return;
+  }
+  if (code === 'PROJECT_NOT_FOUND') {
+    log('');
+    log(erasureProjectHint(getConfig().agent_session || {}, project));
     return;
   }
   if (code === 'CONFIRM_LARGE_REQUIRED') {
@@ -3865,7 +4006,7 @@ const cmdErase = withApi(async (api, opts) => {
   try {
     data = await api.createErasure(payload);
   } catch (err) {
-    logErasureFailureHint(err);
+    logErasureFailureHint(err, { project: opts.project });
     if (generated) log(`idempotency_key: ${idempotencyKey}`);
     throw sanitizeErasureError(err, subjects);
   }
@@ -3879,7 +4020,13 @@ const cmdErase = withApi(async (api, opts) => {
 });
 
 const cmdErasures = withApi(async (api, project, opts = {}) => {
-  const data = await api.listErasures(project);
+  let data;
+  try {
+    data = await api.listErasures(project);
+  } catch (err) {
+    logErasureFailureHint(err, { project });
+    throw err;
+  }
   const views = erasureListViews(data);
   if (opts.jsonOutput) {
     printJson(Array.isArray(data) ? views : { erasures: views });
@@ -3889,7 +4036,13 @@ const cmdErasures = withApi(async (api, project, opts = {}) => {
 });
 
 const cmdErasureGet = withApi(async (api, id, opts = {}) => {
-  const data = await api.getErasure(id);
+  let data;
+  try {
+    data = await api.getErasure(id);
+  } catch (err) {
+    logErasureFailureHint(err);
+    throw err;
+  }
   const view = erasureReceiptView(data);
   if (opts.jsonOutput) {
     printJson(view);
@@ -3907,7 +4060,10 @@ ${BOLD}USAGE${RESET}
   npx @agent-analytics/cli <command> [options]
 
 ${BOLD}SETUP${RESET}
-  ${CYAN}login${RESET}                  Browser-based agent session login
+  ${CYAN}login${RESET}                  Browser login. Level defaults to read
+  ${CYAN}login --level${RESET} admin    First project. Admin on All projects. Do not pass --project
+  ${CYAN}login --project${RESET} <name> --level read|manage|admin
+                                 Ask for one project and a level
   ${CYAN}login${RESET} --detached       Detached approval handoff; prints URL and exits
   ${CYAN}login${RESET} --detached --wait  Detached approval with polling
   ${CYAN}upgrade-link${RESET} --detached  Print a human Pro payment handoff link
@@ -3918,7 +4074,7 @@ ${BOLD}SETUP${RESET}
   ${CYAN}--demo${RESET} <command>        Run a read-only command against seeded demo data
   ${CYAN}logout${RESET}                 Clear local auth and revoke the stored agent session when possible
   ${CYAN}scan${RESET} <url>              Preview what your agent should track first
-  ${CYAN}create${RESET} <name>          Create a project and get your tracking snippet
+  ${CYAN}create${RESET} <name>          Create a project. Needs admin on All projects
   ${CYAN}projects${RESET}               List all your projects
 
 ${BOLD}ANALYTICS${RESET}
@@ -3977,12 +4133,12 @@ ${BOLD}SESSION REPLAY${RESET} ${DIM}— explicit opt-in, privacy-sensitive, Pro/
   ${CYAN}replays usage${RESET}                  Show retained storage and rolling 30-day ingestion
 
 ${BOLD}ERASURE${RESET} ${DIM}one visitor, one project, confirm erase${RESET}
-  ${CYAN}erase${RESET} <project>          Delete one subject. Requires --confirm erase
+  ${CYAN}erase${RESET} <project>          Delete one subject. Needs manage or admin and --confirm erase
   ${CYAN}erasures${RESET} <project>       List the 100 newest erasure receipts
   ${CYAN}erasures get${RESET} <id>        Show one erasure receipt
 
 ${BOLD}ACCOUNT${RESET}
-  ${CYAN}whoami${RESET}                 Show current account & tier
+  ${CYAN}whoami${RESET}                 Show the account, granted project, and level. custom prints its scopes
   ${CYAN}auth status${RESET}            Show local auth path and token expiry metadata
   ${CYAN}feedback${RESET}               Send product/process feedback
   ${CYAN}project${RESET} <project>      Get single project details by name or id
@@ -4046,11 +4202,12 @@ ${BOLD}KEY OPTIONS${RESET}
   --include-replays <bool>  Erasure replay delete. Default true. Pass false to keep replays
   --confirm-large    Confirm an erasure that matches more than 100,000 events
   --portfolio        Email erasure across the portfolio. Valid with --email only. Default false
+  --level <level>    login only: read (default), manage, or admin
   --config-dir <dir> Read/write auth config from an explicit directory
 
 ${BOLD}QUICK START${RESET}
-  ${DIM}# 1. Start agent login${RESET}
-  npx @agent-analytics/cli login
+  ${DIM}# 1. First project: admin on All projects. Do not pass --project.${RESET}
+  npx @agent-analytics/cli login --level admin
 
   ${DIM}# 2. Create a project${RESET}
   npx @agent-analytics/cli create my-site --domain https://mysite.com
@@ -4160,16 +4317,17 @@ function hasHelpFlag(commandArgs) {
 }
 
 function hasInvalidLoginShape(commandArgs) {
-  const flagsWithValues = new Set(['--auth-request', '--exchange-code', '--token']);
+  const flagsWithValues = new Set(['--auth-request', '--exchange-code', '--token', '--project', '--level']);
   const flagsWithoutValues = new Set(['--detached', '--wait', '--poll']);
   const seen = new Set();
 
   for (let i = 1; i < commandArgs.length; i += 1) {
     const arg = commandArgs[i];
     if (flagsWithValues.has(arg)) {
+      const value = commandArgs[i + 1];
+      if (!value || value.startsWith('--')) return true;
       seen.add(arg);
       i += 1;
-      if (i >= commandArgs.length) return true;
       continue;
     }
     if (flagsWithoutValues.has(arg)) {
@@ -4185,6 +4343,7 @@ function hasInvalidLoginShape(commandArgs) {
   if (hasManualExchange) {
     if (!seen.has('--auth-request') || !seen.has('--exchange-code')) return true;
     if (seen.has('--detached') || seen.has('--wait') || seen.has('--poll')) return true;
+    if (seen.has('--project') || seen.has('--level')) return true;
   }
 
   if ((seen.has('--wait') || seen.has('--poll')) && !seen.has('--detached')) return true;
@@ -4208,6 +4367,8 @@ try {
         exchangeCode: getArg('--exchange-code'),
         authRequestId: getArg('--auth-request'),
         waitForDetached: args.includes('--wait') || args.includes('--poll'),
+        project: getArg('--project'),
+        level: getArg('--level'),
       });
       break;
     case 'logout':

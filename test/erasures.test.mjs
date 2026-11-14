@@ -108,7 +108,9 @@ describe('erasures', () => {
       assert.ok(plain.includes('INVALID_ERASURE'));
       assert.ok(plain.includes('CONFIRM_LARGE_REQUIRED'));
       assert.ok(plain.includes('FORBIDDEN (403, agent session missing required scope: erasures:write)'));
-      assert.equal(plain.includes('FORBIDDEN_SCOPE'), false);
+      assert.ok(plain.includes('FORBIDDEN_SCOPE'));
+      assert.ok(plain.includes('aapk_'));
+      assert.equal(plain.replaceAll('aapk_', '').includes('aap_'), false);
       assert.equal(plain.includes('processing'), false);
       assert.ok(plain.includes('DEMO_READ_ONLY'));
       assert.ok(plain.includes('PROJECT_NOT_FOUND'));
@@ -521,7 +523,8 @@ describe('erasures', () => {
           body: { error: 'FORBIDDEN', message: 'agent session missing required scope: erasures:write' },
           includes: [
             'agent session missing required scope: erasures:write',
-            'analytics:read and projects:write are not enough',
+            'run login --level manage',
+            'This session is legacy',
           ],
           excludes: ['upgrade-link', 'FORBIDDEN_SCOPE'],
         },
