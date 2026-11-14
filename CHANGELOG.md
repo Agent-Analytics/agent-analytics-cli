@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.43
+
 - `login` accepts `--project <name>` and `--level read|manage|admin`. The default level is read. Start sends project, level, and the scopes for that level so older servers can still approve a session.
 - `whoami` prints the granted project and level. A session with no level prints legacy.
 - `erase` and `erasures` explain a level that is too low and a project outside the grant.
