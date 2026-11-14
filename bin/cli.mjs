@@ -58,6 +58,9 @@
  *   npx @agent-analytics/cli replays open <id>           — Create a short-lived viewer URL
  *   npx @agent-analytics/cli replays open --session <id> --project <project> — Open by analytics session
  *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
+ *   npx @agent-analytics/cli erase <name>         - Delete one subject (--confirm erase)
+ *   npx @agent-analytics/cli erasures <name>      - List erasure receipts
+ *   npx @agent-analytics/cli erasures get <id>    - Show one erasure receipt
  *   npx @agent-analytics/cli feedback --message "..." — Send product/process feedback
  *   npx @agent-analytics/cli whoami               — Show current account
  *   npx @agent-analytics/cli auth status          — Show local auth path and expiry metadata
@@ -65,6 +68,7 @@
 
 import { AgentAnalyticsAPI } from '../lib/api.mjs';
 import { finishManualExchange, loginDetached, loginInteractive, startDetachedLogin } from '../lib/auth-flow.mjs';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   clearStoredAuth,
@@ -294,7 +298,14 @@ function currentCommandForHandoff() {
   return `${cliInvocationWithConfig()} ${args.map(shellQuote).join(' ')}`.trim();
 }
 
+function isErasureRateLimitError(err) {
+  const reason = err?.body?.reason;
+  if (reason === 'erasure_rate_limit') return true;
+  return String(err?.message || '').includes('erasure_rate_limit');
+}
+
 function isUpgradeableError(err) {
+  if (isErasureRateLimitError(err)) return false;
   const code = err?.code || err?.body?.error || err?.body?.code;
   const message = String(err?.message || '');
   if (code === 'PRO_REQUIRED') return true;
@@ -3415,6 +3426,478 @@ const cmdReplays = withApi(async (api, sub, target, opts = {}) => {
   }
 });
 
+const ERASURE_COUNT_FIELDS = [
+  ['events', 'Events'],
+  ['sessions', 'Sessions'],
+  ['identity_rows', 'Identity rows'],
+  ['profiles', 'Profiles'],
+  ['email_lookups', 'Email lookups'],
+  ['replay_sessions', 'Replay sessions'],
+  ['replay_objects', 'Replay objects'],
+];
+
+const ERASURE_SUBJECT_FLAGS = ['--user-id', '--session-id', '--email'];
+const ERASURE_VALUE_FLAGS = new Set([
+  ...ERASURE_SUBJECT_FLAGS,
+  '--confirm',
+  '--idempotency-key',
+  '--include-replays',
+]);
+const ERASURE_BOOL_FLAGS = new Set(['--confirm-large', '--portfolio', '--json']);
+const ERASURE_OPEN_STATUSES = new Set(['pending', 'running']);
+const ERASURE_STATUSES = new Set(['pending', 'running', 'completed', 'failed']);
+const ERASURE_SUBJECT_TYPES = new Set(['user_id', 'session_id', 'email']);
+
+function eraseUsageText() {
+  return `Usage: npx @agent-analytics/cli erase <project> (--user-id <id> | --session-id <id> | --email <email>) --confirm erase [--idempotency-key <key>] [--include-replays true|false] [--confirm-large] [--portfolio] [--json]
+
+Deletes one visitor from a project. The receipt cannot restore the rows.
+Pass exactly one subject. --confirm must be the word erase. The command refuses locally when confirm is missing or when more than one subject is set.
+--user-id deletes that id, walks the project identity graph once, and deletes matching events, sessions, identity rows, profiles, email lookups, and replays.
+--session-id deletes that session and its replay. It does not walk the identity graph.
+--email is trimmed and lowercased, matched with the project email HMAC, then follows the user id path. The raw email is not stored on the receipt.
+--portfolio is email only. It defaults to false. Pass it to erase that email across the portfolio.
+--include-replays defaults to true. Pass --include-replays=false or --include-replays false to keep replay data.
+--confirm-large is required when the subject matches more than 100,000 events.
+--idempotency-key is unique per account. When omitted, the CLI generates a UUID, prints idempotency_key, and sends it. The same key and the same body returns the original job. A failed job continues. The same key with a different body is HTTP 409 IDEMPOTENCY_CONFLICT.
+The CLI does not print the subject. status is pending, running, completed, or failed. HTTP 200 means the job finished. HTTP 202 means it is still running. Poll with erasures get <id>.
+Agent sessions need erasures:write. That scope is not in the default agent session, and login does not request it. analytics:read and projects:write are not enough. A session without that scope gets HTTP 403 FORBIDDEN and the message "agent session missing required scope: erasures:write".
+Demo mode is read-only.
+--json prints the receipt fields. A generated idempotency key is added as idempotency_key.
+
+API errors: INVALID_ERASURE (400), CONFIRM_LARGE_REQUIRED (400), FORBIDDEN (403, agent session missing required scope: erasures:write), DEMO_READ_ONLY (403), PROJECT_NOT_FOUND (404), IDEMPOTENCY_CONFLICT (409), RATE_LIMITED (429, reason erasure_rate_limit). The hourly cap is that 429. It is not metered as a read.
+
+Examples:
+  npx @agent-analytics/cli erase my-site --user-id user_123 --confirm erase
+  npx @agent-analytics/cli erase my-site --session-id sess_123 --confirm erase --include-replays=false
+  npx @agent-analytics/cli erase my-site --email person@example.com --confirm erase --confirm-large
+  npx @agent-analytics/cli erase my-site --email person@example.com --confirm erase --portfolio --idempotency-key 4f1c0b3e-7a0d-4c1e-9b2a-6d5e8f0a1b2c`;
+}
+
+function printEraseUsage() {
+  log(eraseUsageText());
+}
+
+function erasuresUsageText() {
+  return `Usage: npx @agent-analytics/cli erasures <project> [--json]
+   or: npx @agent-analytics/cli erasures get <id> [--json]
+
+Lists the 100 newest erasure receipts for a project, or fetches one receipt by id.
+Receipts do not include the subject, deleted payloads, or raw email. The CLI does not print hashes.
+--json prints the receipt fields.
+get is the show subcommand, so a project named get cannot be listed with this form.
+
+Examples:
+  npx @agent-analytics/cli erasures my-site
+  npx @agent-analytics/cli erasures get era_123 --json`;
+}
+
+function printErasuresUsage() {
+  log(erasuresUsageText());
+}
+
+function splitCliFlag(token) {
+  const eq = token.indexOf('=');
+  if (eq === -1) return { name: token, inline: undefined };
+  return { name: token.slice(0, eq), inline: token.slice(eq + 1) };
+}
+
+function takeFlagValue(commandArgs, index, inline) {
+  if (inline !== undefined) return { value: inline, index };
+  const next = commandArgs[index + 1];
+  if (next == null || next.startsWith('-')) return { value: null, index };
+  return { value: next, index: index + 1 };
+}
+
+function parseCliBoolean(name, inline) {
+  if (inline === undefined) return true;
+  const value = String(inline).trim().toLowerCase();
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  error(`${name} must be true or false.`);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function erasureTextContainsSubject(text, subjects) {
+  if (typeof text !== 'string' || !subjects?.length) return false;
+  const haystack = text.toLowerCase();
+  for (const subject of subjects) {
+    if (typeof subject !== 'string' || subject.length === 0) continue;
+    const needle = subject.toLowerCase();
+    if (needle.length >= 8) {
+      if (haystack.includes(needle)) return true;
+      continue;
+    }
+    const pattern = new RegExp(`(?:^|[^a-z0-9_])${escapeRegExp(needle)}(?:$|[^a-z0-9_])`);
+    if (pattern.test(haystack)) return true;
+  }
+  return false;
+}
+
+function erasureNeedles(...values) {
+  const needles = [];
+  for (const value of values) {
+    if (typeof value !== 'string' || value.length === 0) continue;
+    needles.push(value);
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== value) needles.push(trimmed);
+  }
+  return needles;
+}
+
+function parseEraseArgs(commandArgs) {
+  let project = null;
+  const seen = new Set();
+  const subjectValues = new Map();
+  let confirm;
+  let confirmSeen = false;
+  let idempotencyKey = null;
+  let idempotencySeen = false;
+  let includeReplays = true;
+  let confirmLarge = false;
+  let portfolio = false;
+  let jsonOutput = false;
+
+  for (let i = 1; i < commandArgs.length; i += 1) {
+    const token = commandArgs[i];
+    if (!token.startsWith('-')) {
+      if (project) error(eraseUsageText());
+      project = token;
+      continue;
+    }
+
+    const { name, inline } = splitCliFlag(token);
+    if (!name || name === '--') error(eraseUsageText());
+    if (seen.has(name)) error(`Pass ${name} once.`);
+    seen.add(name);
+
+    if (ERASURE_BOOL_FLAGS.has(name)) {
+      const enabled = parseCliBoolean(name, inline);
+      if (name === '--confirm-large') confirmLarge = enabled;
+      else if (name === '--portfolio') portfolio = enabled;
+      else jsonOutput = enabled;
+      continue;
+    }
+
+    if (!ERASURE_VALUE_FLAGS.has(name)) error(eraseUsageText());
+    const taken = takeFlagValue(commandArgs, i, inline);
+    i = taken.index;
+    if (ERASURE_SUBJECT_FLAGS.includes(name)) {
+      subjectValues.set(name, taken.value);
+      continue;
+    }
+    if (name === '--confirm') {
+      confirmSeen = true;
+      confirm = taken.value;
+      continue;
+    }
+    if (name === '--idempotency-key') {
+      idempotencySeen = true;
+      idempotencyKey = taken.value;
+      continue;
+    }
+    includeReplays = parseCliBoolean(name, taken.value == null ? '' : taken.value);
+  }
+
+  if (!project) error(eraseUsageText());
+
+  if (subjectValues.size > 1) {
+    error('Pass exactly one subject. --user-id, --session-id, and --email cannot be combined.');
+  }
+  if (subjectValues.size === 0) {
+    error('Pass exactly one of --user-id, --session-id, or --email.');
+  }
+  if (!confirmSeen || confirm !== 'erase') {
+    error('Erasure requires --confirm erase.');
+  }
+
+  const [subjectFlag] = subjectValues.keys();
+  const rawSubject = subjectValues.get(subjectFlag);
+  if (rawSubject == null) error(`${subjectFlag} requires a value.`);
+
+  let userId = null;
+  let sessionId = null;
+  let email = null;
+  let rawEmail = null;
+  if (subjectFlag === '--email') {
+    rawEmail = String(rawSubject);
+    email = normalizeEmail(rawEmail);
+    if (!email) error('The subject is empty.');
+    if (email.length > 256) error('The subject is longer than 256 characters.');
+  } else {
+    const value = String(rawSubject);
+    if (value.trim() === '') error('The subject is empty.');
+    if (value.length > 256) error('The subject is longer than 256 characters.');
+    if (subjectFlag === '--user-id') userId = value;
+    else sessionId = value;
+  }
+
+  if (portfolio && subjectFlag !== '--email') {
+    error('--portfolio is only valid with --email.');
+  }
+
+  if (idempotencySeen) {
+    if (idempotencyKey == null || String(idempotencyKey).length === 0) {
+      error('The idempotency key is empty.');
+    }
+    if (String(idempotencyKey).length > 1024) {
+      error('The idempotency key is longer than 1024 characters.');
+    }
+  }
+
+  return {
+    project,
+    userId,
+    sessionId,
+    email,
+    rawEmail,
+    idempotencyKey: idempotencySeen ? String(idempotencyKey) : null,
+    includeReplays,
+    confirmLarge,
+    portfolio,
+    jsonOutput,
+  };
+}
+
+function parseErasuresArgs(commandArgs) {
+  const positionals = [];
+  let jsonOutput = false;
+  for (let i = 1; i < commandArgs.length; i += 1) {
+    const token = commandArgs[i];
+    if (token === '--json') {
+      if (jsonOutput) error('Pass --json once.');
+      jsonOutput = true;
+      continue;
+    }
+    if (token.startsWith('-')) error(erasuresUsageText());
+    positionals.push(token);
+  }
+  if (positionals[0] === 'get') {
+    if (positionals.length !== 2 || !positionals[1]) error(erasuresUsageText());
+    return { action: 'get', id: positionals[1], jsonOutput };
+  }
+  if (positionals.length !== 1 || !positionals[0]) error(erasuresUsageText());
+  return { action: 'list', project: positionals[0], jsonOutput };
+}
+
+function erasureScalar(value, subjects) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const text = String(value);
+    return erasureTextContainsSubject(text, subjects) ? null : text;
+  }
+  if (typeof value !== 'string' || value === '') return null;
+  if (erasureTextContainsSubject(value, subjects)) return null;
+  return value;
+}
+
+function erasurePlainText(value, subjects) {
+  const text = erasureScalar(value, subjects);
+  if (!text || text.includes('@')) return null;
+  return text;
+}
+
+function erasureReceiptView(data, subjects = []) {
+  const source = data && typeof data === 'object' ? data : {};
+  const countsIn = source.counts && typeof source.counts === 'object' ? source.counts : {};
+  const counts = {};
+  for (const [key] of ERASURE_COUNT_FIELDS) {
+    const value = countsIn[key];
+    counts[key] = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  }
+  const view = { counts };
+  const id = erasurePlainText(source.id, subjects);
+  const status = erasurePlainText(source.status, subjects);
+  const project = erasurePlainText(source.project, subjects);
+  const subjectType = erasurePlainText(source.subject_type, subjects);
+  const completedAt = erasurePlainText(source.completed_at, subjects);
+  const errorText = erasurePlainText(source.error, subjects);
+  if (id && /^era_[A-Za-z0-9_-]{1,120}$/.test(id)) view.id = id;
+  if (status && ERASURE_STATUSES.has(status)) view.status = status;
+  if (project) view.project = project;
+  if (subjectType && ERASURE_SUBJECT_TYPES.has(subjectType)) view.subject_type = subjectType;
+  if (typeof source.replay_included === 'boolean') view.replay_included = source.replay_included;
+  if (completedAt) view.completed_at = completedAt;
+  if (errorText) view.error = errorText;
+  return view;
+}
+
+function erasureListViews(data, subjects = []) {
+  if (Array.isArray(data)) return data.map((row) => erasureReceiptView(row, subjects));
+  if (Array.isArray(data?.erasures)) return data.erasures.map((row) => erasureReceiptView(row, subjects));
+  if (data && typeof data === 'object' && (data.id || data.status)) return [erasureReceiptView(data, subjects)];
+  return [];
+}
+
+function colorErasureStatus(status) {
+  if (status === 'completed') return `${GREEN}${status}${RESET}`;
+  if (status === 'failed') return `${RED}${status}${RESET}`;
+  if (ERASURE_OPEN_STATUSES.has(status)) return `${YELLOW}${status}${RESET}`;
+  return status;
+}
+
+function logErasureReceipt(view, { idempotencyKey = null, generated = false } = {}) {
+  heading(view.id ? `Erasure ${view.id}` : 'Erasure');
+  log('');
+  if (view.status) log(`  ${BOLD}Status:${RESET} ${colorErasureStatus(view.status)}`);
+  if (view.project) log(`  ${BOLD}Project:${RESET} ${view.project}`);
+  if (view.subject_type) log(`  ${BOLD}Subject:${RESET} ${view.subject_type}`);
+  if (typeof view.replay_included === 'boolean') {
+    log(`  ${BOLD}Replays:${RESET} ${view.replay_included ? 'included' : 'skipped'}`);
+  }
+  for (const [key, label] of ERASURE_COUNT_FIELDS) {
+    log(`  ${BOLD}${label}:${RESET} ${view.counts?.[key] ?? 0}`);
+  }
+  if (view.completed_at) log(`  ${BOLD}Completed:${RESET} ${view.completed_at}`);
+  if (view.error) log(`  ${BOLD}Error:${RESET} ${view.error}`);
+  else if (view.status === 'failed') log(`  ${BOLD}Error:${RESET} Erasure failed.`);
+  if (generated && idempotencyKey) log(`  ${BOLD}Idempotency key:${RESET} ${idempotencyKey}`);
+  if (view.id && ERASURE_OPEN_STATUSES.has(view.status)) {
+    log(`  ${DIM}Poll:${RESET} npx @agent-analytics/cli erasures get ${view.id}`);
+  }
+  log('');
+}
+
+function logErasureList(project, views) {
+  heading(`Erasures: ${project}`);
+  log('');
+  if (views.length === 0) {
+    log('  No erasures found.');
+    log('');
+    return;
+  }
+  for (const view of views) {
+    const counts = view.counts || {};
+    const completed = view.completed_at ? `  ${view.completed_at}` : '';
+    log(`  ${view.id || ''}  ${view.status || ''}  ${view.subject_type || ''}  events ${counts.events ?? 0}  sessions ${counts.sessions ?? 0}${completed}`);
+  }
+  log('');
+  log(`${DIM}${views.length} shown. The list is the 100 newest.${RESET}`);
+  log('');
+}
+
+function erasureErrorCode(err) {
+  return err?.code || err?.body?.code || err?.body?.error || null;
+}
+
+function isMissingErasureScope(err) {
+  if (erasureErrorCode(err) !== 'FORBIDDEN') return false;
+  const message = String(err?.message || err?.body?.message || '');
+  return message.includes('agent session missing required scope: erasures:write');
+}
+
+function logErasureFailureHint(err) {
+  const code = erasureErrorCode(err);
+  if (isMissingErasureScope(err)) {
+    log('');
+    log('This agent session does not include erasures:write. That scope is not in the default agent session, and login does not request it. analytics:read and projects:write are not enough.');
+    return;
+  }
+  if (code === 'CONFIRM_LARGE_REQUIRED') {
+    log('');
+    log('This subject matches more than 100,000 events. Retry with --confirm-large. Use a new idempotency key because the body changed.');
+    return;
+  }
+  if (code === 'IDEMPOTENCY_CONFLICT') {
+    log('');
+    log('This idempotency key was already used with a different request body.');
+    return;
+  }
+  if (code === 'DEMO_READ_ONLY') {
+    log('');
+    log('Demo data is read-only.');
+    return;
+  }
+  if (isErasureRateLimitError(err)) {
+    log('');
+    log('Erasure accepts are limited to 20 per account per hour. This limit is separate from the per-minute request limit and is not metered as a read.');
+    return;
+  }
+  if (!err?.status || err.status >= 500) {
+    log('');
+    log('If a job was accepted, retry the same body with the printed idempotency key.');
+  }
+}
+
+function sanitizeErasureError(err, subjects) {
+  const code = erasureErrorCode(err);
+  const rawMessage = typeof err?.message === 'string' ? err.message : '';
+  const hidden = rawMessage === '' || erasureTextContainsSubject(rawMessage, subjects);
+  const message = hidden
+    ? (code ? `HTTP ${err?.status || ''} ${code}`.replace(/\s+/g, ' ').trim() : 'Erasure request failed.')
+    : rawMessage;
+  const safe = new Error(message);
+  safe.status = err?.status;
+  safe.code = code;
+  const reason = err?.body?.reason;
+  safe.body = {};
+  if (code && !erasureTextContainsSubject(String(code), subjects)) safe.body.code = code;
+  if (typeof reason === 'string' && !erasureTextContainsSubject(reason, subjects)) safe.body.reason = reason;
+  return safe;
+}
+
+function printErasureJson(view, idempotencyKey, generated) {
+  const payload = generated ? { idempotency_key: idempotencyKey, ...view } : view;
+  printJson(payload);
+}
+
+const cmdErase = withApi(async (api, opts) => {
+  const subjects = erasureNeedles(opts.userId, opts.sessionId, opts.email, opts.rawEmail);
+  const generated = opts.idempotencyKey == null;
+  const idempotencyKey = generated ? randomUUID() : opts.idempotencyKey;
+  if (generated) logStderr(`idempotency_key: ${idempotencyKey}`);
+
+  const payload = {
+    project: opts.project,
+    idempotency_key: idempotencyKey,
+    confirm: 'erase',
+    include_replays: opts.includeReplays,
+  };
+  if (opts.userId != null) payload.user_id = opts.userId;
+  if (opts.sessionId != null) payload.session_id = opts.sessionId;
+  if (opts.email != null) payload.email = opts.email;
+  if (opts.confirmLarge) payload.confirm_large = true;
+  if (opts.portfolio) payload.portfolio = true;
+
+  let data;
+  try {
+    data = await api.createErasure(payload);
+  } catch (err) {
+    logErasureFailureHint(err);
+    if (generated) log(`idempotency_key: ${idempotencyKey}`);
+    throw sanitizeErasureError(err, subjects);
+  }
+
+  const view = erasureReceiptView(data, subjects);
+  if (opts.jsonOutput) {
+    printErasureJson(view, idempotencyKey, generated);
+    return;
+  }
+  logErasureReceipt(view, { idempotencyKey, generated });
+});
+
+const cmdErasures = withApi(async (api, project, opts = {}) => {
+  const data = await api.listErasures(project);
+  const views = erasureListViews(data);
+  if (opts.jsonOutput) {
+    printJson(Array.isArray(data) ? views : { erasures: views });
+    return;
+  }
+  logErasureList(project, views);
+});
+
+const cmdErasureGet = withApi(async (api, id, opts = {}) => {
+  const data = await api.getErasure(id);
+  const view = erasureReceiptView(data);
+  if (opts.jsonOutput) {
+    printJson(view);
+    return;
+  }
+  logErasureReceipt(view);
+});
+
 function showHelp() {
   log(`
 ${BOLD}Agent Analytics${RESET} — Stop juggling dashboards. Let your agent do it.
@@ -3493,6 +3976,11 @@ ${BOLD}SESSION REPLAY${RESET} ${DIM}— explicit opt-in, privacy-sensitive, Pro/
   ${CYAN}replays delete --all${RESET}            Delete all replay data with explicit --confirm
   ${CYAN}replays usage${RESET}                  Show retained storage and rolling 30-day ingestion
 
+${BOLD}ERASURE${RESET} ${DIM}one visitor, one project, confirm erase${RESET}
+  ${CYAN}erase${RESET} <project>          Delete one subject. Requires --confirm erase
+  ${CYAN}erasures${RESET} <project>       List the 100 newest erasure receipts
+  ${CYAN}erasures get${RESET} <id>        Show one erasure receipt
+
 ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show current account & tier
   ${CYAN}auth status${RESET}            Show local auth path and token expiry metadata
@@ -3552,6 +4040,12 @@ ${BOLD}KEY OPTIONS${RESET}
   --mask/--block/--ignore <selectors>  Comma-separated replay privacy selectors
   --before <timestamp> Replay list pagination cursor
   --confirm delete_replay_data  Required with replays delete --all
+  --confirm erase    Required for erase. The value must be the word erase
+  --session-id <id>  Erase one session. Does not walk the identity graph
+  --idempotency-key <key>  Erasure idempotency key. Generated and printed when omitted
+  --include-replays <bool>  Erasure replay delete. Default true. Pass false to keep replays
+  --confirm-large    Confirm an erasure that matches more than 100,000 events
+  --portfolio        Email erasure across the portfolio. Valid with --email only. Default false
   --config-dir <dir> Read/write auth config from an explicit directory
 
 ${BOLD}QUICK START${RESET}
@@ -3616,6 +4110,7 @@ const DEMO_MUTATING_COMMANDS = new Set([
   'init',
   'update',
   'delete',
+  'erase',
   'upgrade-link',
   'revoke-key',
   'feedback',
@@ -4042,6 +4537,27 @@ try {
     case 'auth':
       cmdAuth(args[1]);
       break;
+    case 'erase': {
+      if (hasHelpFlag(args)) {
+        printEraseUsage();
+        break;
+      }
+      await cmdErase(parseEraseArgs(args));
+      break;
+    }
+    case 'erasures': {
+      if (hasHelpFlag(args)) {
+        printErasuresUsage();
+        break;
+      }
+      const parsed = parseErasuresArgs(args);
+      if (parsed.action === 'get') {
+        await cmdErasureGet(parsed.id, { jsonOutput: parsed.jsonOutput });
+      } else {
+        await cmdErasures(parsed.project, { jsonOutput: parsed.jsonOutput });
+      }
+      break;
+    }
     case 'help':
     case '--help':
     case '-h':

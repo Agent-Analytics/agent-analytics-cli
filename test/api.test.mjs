@@ -580,6 +580,85 @@ describe('AgentAnalyticsAPI', () => {
         note: 'Moved annual plan discount above the fold.',
       }));
     });
+
+    it('createErasure → POST /erasures sends one subject and omits the others', async () => {
+      const logs = [];
+      const original = console.log;
+      console.log = (...args) => logs.push(args.map(String).join(' '));
+      try {
+        await api.createErasure({
+          project: 'my-site',
+          idempotency_key: 'key-1',
+          confirm: 'erase',
+          user_id: 'user_123',
+          include_replays: true,
+          confirm_large: false,
+          portfolio: false,
+        });
+      } finally {
+        console.log = original;
+      }
+      assert.equal(lastUrl, 'https://api.test/erasures');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        idempotency_key: 'key-1',
+        confirm: 'erase',
+        user_id: 'user_123',
+        include_replays: true,
+      }));
+      assert.equal(logs.join('\n').includes('user_123'), false);
+    });
+
+    it('createErasure sends session_id with include_replays false and omits confirm_large', async () => {
+      await api.createErasure({
+        project: 'my-site',
+        idempotency_key: 'key-2',
+        confirm: 'erase',
+        session_id: 'sess_123',
+        include_replays: false,
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        idempotency_key: 'key-2',
+        confirm: 'erase',
+        session_id: 'sess_123',
+        include_replays: false,
+      }));
+    });
+
+    it('createErasure sends a normalized email with portfolio and confirm_large', async () => {
+      await api.createErasure({
+        project: 'my-site',
+        idempotency_key: 'key-3',
+        confirm: 'erase',
+        email: 'person@example.com',
+        include_replays: true,
+        confirm_large: true,
+        portfolio: true,
+      });
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        idempotency_key: 'key-3',
+        confirm: 'erase',
+        email: 'person@example.com',
+        include_replays: true,
+        confirm_large: true,
+        portfolio: true,
+      }));
+    });
+
+    it('listErasures → GET /erasures?project=', async () => {
+      await api.listErasures('my site');
+      assert.equal(lastMethod, 'GET');
+      assert.equal(lastUrl, 'https://api.test/erasures?project=my%20site');
+    });
+
+    it('getErasure → GET /erasures/:id encodes the id', async () => {
+      await api.getErasure('era 1/2');
+      assert.equal(lastMethod, 'GET');
+      assert.equal(lastUrl, 'https://api.test/erasures/era%201%2F2');
+    });
   });
 
 });

@@ -111,6 +111,9 @@ replays usage                    Show retained storage and rolling 30-day ingest
 
 # Account
 whoami                           Show current account & tier
+erase <project>                  Delete one visitor. Requires --confirm erase and exactly one subject
+erasures <project>               List the 100 newest erasure receipts
+erasures get <id>                Show one erasure receipt
 feedback --message "..."         Send product/process feedback
 logout                           Clear local auth and revoke the stored agent session when possible
 ```
@@ -307,6 +310,32 @@ npx --yes @agent-analytics/cli@0.5.41 vitals my-site --by device
 ```bash
 npx --yes @agent-analytics/cli@0.5.41 errors my-site --since 7d --new-since 2026-11-12
 npx --yes @agent-analytics/cli@0.5.41 errors my-site --since 7d --until 2026-11-12 --new-since "Changed pricing page offer" --limit 20 --json
+```
+
+## Erasure
+
+`erase` deletes one visitor from a project on `POST /erasures`. Pass exactly one of `--user-id`, `--session-id`, or `--email`, and pass `--confirm erase`. The command refuses locally when confirm is missing or when more than one subject is set. It does not print the subject.
+
+`--user-id` deletes that id, walks the project identity graph once, and deletes matching events, sessions, identity rows, profiles, email lookup rows, and replays. `--session-id` deletes that session and its replay and does not walk the graph. `--email` is normalized, matched with the project email HMAC, and then follows the user id path. `--portfolio` is email only and defaults to false, so the erasure stays in the named project.
+
+`--include-replays` defaults to true. Pass `--include-replays=false` or `--include-replays false` to keep replay data. `--confirm-large` is required when the subject matches more than 100,000 events.
+
+The API requires an idempotency key, unique per account. When `--idempotency-key` is omitted, the CLI generates a UUID, prints `idempotency_key`, and sends that key. The same key and the same body returns the original job. A failed job continues. The same key with a different body is HTTP 409 `IDEMPOTENCY_CONFLICT`.
+
+A finished job returns HTTP 200. A job that is still running returns HTTP 202. `status` is `pending`, `running`, `completed`, or `failed`. Poll with `erasures get <id>`. `erasures <project>` lists the 100 newest receipts. Receipts contain no raw subject, no deleted payloads, and no raw email. `--json` prints those receipt fields. A generated idempotency key is included as `idempotency_key`.
+
+Agent sessions need the `erasures:write` scope. That scope is not in the default agent session, and this CLI does not request it at login. `analytics:read` and `projects:write` are not enough. A session without that scope gets HTTP 403 `FORBIDDEN` and the message `agent session missing required scope: erasures:write`. An account API key or a dashboard session can erase. Demo mode is read-only.
+
+Erasure accepts are limited to 20 per account per hour on every plan, including free. That limit is HTTP 429 `RATE_LIMITED` with `reason` `erasure_rate_limit`. It is separate from the per-minute request limit and is not metered as a read.
+
+A database restore can bring erased rows back for up to 30 days. Ask support to re-apply erasures after any restore. New events for an erased id are dropped for 7 days, then accepted again. Erasure is not a permanent suppress list. Stored hashes are still identifiers.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.41 erase my-site --user-id user_123 --confirm erase
+npx --yes @agent-analytics/cli@0.5.41 erase my-site --session-id sess_123 --confirm erase --include-replays=false
+npx --yes @agent-analytics/cli@0.5.41 erase my-site --email person@example.com --confirm erase --confirm-large
+npx --yes @agent-analytics/cli@0.5.41 erasures my-site
+npx --yes @agent-analytics/cli@0.5.41 erasures get era_123 --json
 ```
 
 ## Feedback
