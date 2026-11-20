@@ -308,6 +308,29 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastUrl, 'https://api.test/properties?project=my-site&since=60d');
     });
 
+    it('getCatalog → GET /catalog with the window, limits, and one cursor', async () => {
+      await api.getCatalog('my-site', { days: 7 });
+      assert.equal(lastUrl, 'https://api.test/catalog?project=my-site&days=7');
+      assert.equal(lastMethod, 'GET');
+
+      await api.getCatalog('my site', {
+        date_from: '2026-11-01',
+        date_to: '2026-11-20',
+        limit: 18,
+        property_limit: 40,
+        cursor: 'evt/cursor+1',
+      });
+      assert.equal(
+        lastUrl,
+        'https://api.test/catalog?project=my%20site&date_from=2026-11-01&date_to=2026-11-20&limit=18&property_limit=40&cursor=evt%2Fcursor%2B1',
+      );
+
+      await api.getCatalog('my-site', { days: 30, properties_cursor: 'prop_cursor' });
+      assert.equal(lastUrl, 'https://api.test/catalog?project=my-site&days=30&properties_cursor=prop_cursor');
+      assert.equal(new URL(lastUrl).searchParams.has('cursor'), false);
+      assert.equal(new URL(lastUrl).searchParams.get('properties_cursor'), 'prop_cursor');
+    });
+
     it('getBreakdown → GET /breakdown with since', async () => {
       await api.getBreakdown('my-site', {
         property: 'path',

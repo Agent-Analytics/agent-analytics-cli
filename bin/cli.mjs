@@ -25,6 +25,7 @@
  *   npx @agent-analytics/cli annotate <name>      — Append one project annotation
  *   npx @agent-analytics/cli properties <name>    — Discover event names & property keys
  *   npx @agent-analytics/cli properties-received <name> — Show property keys per event
+ *   npx @agent-analytics/cli catalog <name>       — Event catalog: counts, types, presence, examples
  *   npx @agent-analytics/cli sessions <name>      — List individual sessions
  *   npx @agent-analytics/cli insights <name>      — Period-over-period comparison
  *   npx @agent-analytics/cli breakdown <name>     — Property value distribution
@@ -1607,6 +1608,249 @@ const cmdProperties = withApi(async (api, project, days = 30) => {
     log(`  ${data.property_keys.join(', ')}`);
   }
   log('');
+});
+
+function catalogUsageText() {
+  return `Usage: npx @agent-analytics/cli catalog <project> [--days N] [--from YYYY-MM-DD --to YYYY-MM-DD] [--limit N] [--property-limit N] [--cursor <token>] [--properties-cursor <token>] [--json]
+       npx @agent-analytics/cli catalog --project <project> [options]
+
+Pro read on GET /catalog. A successful call counts as one metered read. A free account gets HTTP 403 PRO_REQUIRED and the call is not metered.
+An agent session needs analytics:read. A missing scope is HTTP 403 FORBIDDEN. A project outside the session is HTTP 404 PROJECT_NOT_FOUND. The response does not include that project's name.
+--days defaults to 7 and must be an integer from 1 to 90. It is sent as days. --from and --to are YYYY-MM-DD dates, sent as date_from and date_to. Pass --days or both --from and --to, not both. The inclusive span is at most 90 days, matching hosted POST /sql. A bad window is HTTP 400 INVALID_WINDOW.
+--limit is events per page. The server default is 10. It must be an integer from 1 to 18. --property-limit is property keys per event. The server default is 25. It must be an integer from 1 to 40. The CLI rejects an out-of-range value before the request and names it VALIDATION_ERROR.
+--cursor continues events from next_cursor. --properties-cursor continues one event's keys from properties_next_cursor. Pass one of them, not both. Send the same window the cursor was issued for. The printed next command uses the returned date_from and date_to. A bad cursor, a cursor from another window, or both cursors is HTTP 400 VALIDATION_ERROR.
+Events are ordered by name. count, first_seen, and last_seen are exact. first_seen and last_seen are ISO-8601. Property keys are alphabetical. type is string, number, boolean, object, array, null, or mixed. presence is the share of the sample, rounded to 4 decimal places. examples has up to 3 values. Email-shaped text is [redacted-email]. Object and array values are omitted.
+Property type, presence, and examples come from the newest dates, at most 40 rows per event. properties_exact is true when that sample includes every counted row. queryable and groupable are on the JSON body.
+--json prints the API response, including project_context when the project has saved context. Without --json, the CLI prints one summary per event. When next_cursor or properties_next_cursor is set, it prints the catalog command for the next page.
+HTTP 429 is a D1 read-budget exhaustion or an upstream rate limit. The CLI prints 429, the error code, and Retry-After seconds. No customer database is HTTP 500 DATABASE_NOT_PROVISIONED. Other read failures are HTTP 500 QUERY_FAILED.
+
+Examples:
+  npx @agent-analytics/cli catalog my-site
+  npx @agent-analytics/cli catalog my-site --days 30 --limit 18 --property-limit 40
+  npx @agent-analytics/cli catalog my-site --from 2026-11-01 --to 2026-11-20
+  npx @agent-analytics/cli catalog my-site --from 2026-11-14 --to 2026-11-20 --cursor <next_cursor>
+  npx @agent-analytics/cli catalog --project my-site --json`;
+}
+
+function printCatalogUsage() {
+  log(catalogUsageText());
+}
+
+const CATALOG_VALUE_FLAGS = new Set([
+  '--json', '--help', '-h', '--project', '--days', '--from', '--to',
+  '--limit', '--property-limit', '--cursor', '--properties-cursor',
+]);
+
+function catalogFlagValue(flag) {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return { present: false, value: null };
+  const value = args[idx + 1];
+  if (value == null || CATALOG_VALUE_FLAGS.has(value) || String(value).startsWith('--')) {
+    return { present: true, value: null };
+  }
+  return { present: true, value };
+}
+
+function parseCatalogBoundedInt(flag, raw, max) {
+  const value = String(raw).trim();
+  if (!/^(?:0|[1-9]\d*)$/.test(value)) {
+    error(`${flag} must be an integer from 1 to ${max} (VALIDATION_ERROR).`);
+  }
+  const number = Number(value);
+  if (number < 1 || number > max) {
+    error(`${flag} must be an integer from 1 to ${max} (VALIDATION_ERROR).`);
+  }
+  return number;
+}
+
+function parseCatalogDays(raw) {
+  const value = String(raw).trim();
+  if (!/^(?:0|[1-9]\d*)$/.test(value)) error('--days must be an integer from 1 to 90 (INVALID_WINDOW).');
+  const days = Number(value);
+  if (days < 1 || days > 90) error('--days must be an integer from 1 to 90 (INVALID_WINDOW).');
+  return days;
+}
+
+function catalogInclusiveSpan(dateFrom, dateTo) {
+  const from = Date.parse(`${dateFrom}T00:00:00.000Z`);
+  const to = Date.parse(`${dateTo}T00:00:00.000Z`);
+  return Math.round((to - from) / 86400000) + 1;
+}
+
+function parseCatalogWindow(opts) {
+  const hasDays = opts.days != null && String(opts.days).trim() !== '';
+  const hasFrom = opts.date_from != null && String(opts.date_from).trim() !== '';
+  const hasTo = opts.date_to != null && String(opts.date_to).trim() !== '';
+  if ((opts.daysPresent && !hasDays) || (opts.fromPresent && !hasFrom) || (opts.toPresent && !hasTo)) {
+    const flag = opts.daysPresent && !hasDays ? '--days' : opts.fromPresent && !hasFrom ? '--from' : '--to';
+    error(`${flag} requires a value.`);
+  }
+  if (hasDays && (hasFrom || hasTo)) error('Pass --days or both --from and --to, not both (INVALID_WINDOW).');
+  if (hasFrom !== hasTo) error('--from and --to must be passed together (INVALID_WINDOW).');
+  if (!hasFrom) return { days: hasDays ? parseCatalogDays(opts.days) : 7 };
+  const dateFrom = String(opts.date_from).trim();
+  const dateTo = String(opts.date_to).trim();
+  if (!isIsoDate(dateFrom) || !isIsoDate(dateTo)) error('--from and --to must be YYYY-MM-DD dates (INVALID_WINDOW).');
+  if (dateFrom > dateTo) error('--from must be on or before --to (INVALID_WINDOW).');
+  if (catalogInclusiveSpan(dateFrom, dateTo) > 90) {
+    error('The catalog window span must be at most 90 days, inclusive (INVALID_WINDOW).');
+  }
+  return { date_from: dateFrom, date_to: dateTo };
+}
+
+function parseCatalogCursors(opts) {
+  if (opts.cursorPresent && (opts.cursor == null || String(opts.cursor).trim() === '')) error('--cursor requires a value.');
+  if (opts.propertiesCursorPresent && (opts.properties_cursor == null || String(opts.properties_cursor).trim() === '')) {
+    error('--properties-cursor requires a value.');
+  }
+  const cursor = opts.cursor == null ? undefined : String(opts.cursor).trim();
+  const propertiesCursor = opts.properties_cursor == null ? undefined : String(opts.properties_cursor).trim();
+  if (cursor && propertiesCursor) error('Pass --cursor or --properties-cursor, not both (VALIDATION_ERROR).');
+  return {
+    cursor: cursor || undefined,
+    properties_cursor: propertiesCursor || undefined,
+  };
+}
+
+function catalogErrorCode(err) {
+  return err?.code || err?.body?.code || err?.body?.error || null;
+}
+
+function catalogRetrySeconds(err) {
+  const raw = err?.retryAfter ?? err?.body?.retry_after_seconds ?? err?.body?.retry_after;
+  if (raw == null || String(raw).trim() === '') return null;
+  const value = String(raw).trim();
+  if (!/^\d+$/.test(value)) return null;
+  return value;
+}
+
+function clarifyCatalogError(err) {
+  const code = catalogErrorCode(err);
+  const status = err?.status;
+  const apiMessage = typeof err?.message === 'string' && err.message ? err.message : `HTTP ${status || 'error'}`;
+  let message = apiMessage;
+  if (status === 429) {
+    const label = code ? `HTTP 429 ${code}` : 'HTTP 429';
+    const seconds = catalogRetrySeconds(err);
+    message = seconds ? `${label}. ${apiMessage} Retry after ${seconds} seconds.` : `${label}. ${apiMessage}`;
+  } else if (code === 'PRO_REQUIRED') {
+    message = apiMessage.includes('PRO_REQUIRED') ? apiMessage : `PRO_REQUIRED. ${apiMessage}`;
+  } else if (code === 'PROJECT_NOT_FOUND') {
+    message = 'PROJECT_NOT_FOUND. Project not found or unauthorized. A project outside this session is hidden, and the response does not include its name.';
+  } else if (code === 'VALIDATION_ERROR' || code === 'INVALID_WINDOW') {
+    message = apiMessage.includes(code) ? apiMessage : `${code}. ${apiMessage}`;
+  }
+  const wrapped = new Error(message);
+  wrapped.status = status;
+  wrapped.code = code;
+  wrapped.body = err?.body;
+  wrapped.retryAfter = err?.retryAfter;
+  return wrapped;
+}
+
+function formatCatalogExample(value) {
+  if (typeof value === 'string') return value;
+  if (value == null) return 'null';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function catalogContinuationCommand(project, bounds, extra) {
+  const parts = [cliInvocationWithConfig(), 'catalog', shellQuote(project)];
+  if (bounds?.date_from && bounds?.date_to) {
+    parts.push('--from', bounds.date_from, '--to', bounds.date_to);
+  } else if (bounds?.days != null) {
+    parts.push('--days', String(bounds.days));
+  }
+  if (extra.limit != null) parts.push('--limit', String(extra.limit));
+  if (extra.property_limit != null) parts.push('--property-limit', String(extra.property_limit));
+  if (extra.cursor) parts.push('--cursor', shellQuote(extra.cursor));
+  if (extra.properties_cursor) parts.push('--properties-cursor', shellQuote(extra.properties_cursor));
+  return parts.join(' ');
+}
+
+function logCatalogResult(project, data, request) {
+  const events = Array.isArray(data.events) ? data.events : [];
+  const window = data.window && typeof data.window === 'object' ? data.window : null;
+  heading(`Catalog: ${data.project || project}`);
+  log('');
+  if (window?.date_from || window?.date_to) {
+    log(`  ${DIM}window:${RESET} ${window.date_from || ''} to ${window.date_to || ''}`);
+  }
+  log(`  ${DIM}counts:${RESET} exact`);
+  const perEvent = data.sampling?.per_event;
+  const sampleNote = perEvent == null ? 'newest dates' : `newest dates, at most ${perEvent} rows per event`;
+  log(`  ${DIM}properties:${RESET} ${sampleNote}`);
+  log('');
+  if (events.length === 0) {
+    log('  No events found.');
+  } else {
+    for (const event of events) {
+      log(`  ${BOLD}${event.event}${RESET}  ${event.count ?? ''} events  ${DIM}${event.first_seen || ''} → ${event.last_seen || ''}${RESET}`);
+      const sampleBits = [];
+      if (event.sample_size != null) sampleBits.push(`sample ${event.sample_size}`);
+      if (event.properties_exact === true) sampleBits.push('properties exact');
+      if (event.properties_exact === false) sampleBits.push('properties sampled');
+      if (sampleBits.length > 0) log(`    ${DIM}${sampleBits.join('  ')}${RESET}`);
+      const properties = Array.isArray(event.properties) ? event.properties : [];
+      if (properties.length === 0) {
+        log(`    ${DIM}No property keys in this sample.${RESET}`);
+      }
+      for (const prop of properties) {
+        const examples = Array.isArray(prop.examples) && prop.examples.length > 0
+          ? prop.examples.map(formatCatalogExample).join(', ')
+          : 'none';
+        const presence = prop.presence == null ? '' : prop.presence;
+        log(`    ${CYAN}${prop.key}${RESET}  ${prop.type || ''}  presence ${presence}  examples: ${examples}`);
+      }
+      log('');
+    }
+  }
+
+  const bounds = window?.date_from && window?.date_to
+    ? { date_from: window.date_from, date_to: window.date_to }
+    : request;
+  const shared = { limit: request.limit, property_limit: request.property_limit };
+  if (data.next_cursor) {
+    log('Next events:');
+    log(`  ${CYAN}${catalogContinuationCommand(data.project || project, bounds, { ...shared, cursor: data.next_cursor })}${RESET}`);
+  }
+  for (const event of events) {
+    if (!event?.properties_next_cursor) continue;
+    log(`More properties for ${event.event}:`);
+    log(`  ${CYAN}${catalogContinuationCommand(data.project || project, bounds, { ...shared, properties_cursor: event.properties_next_cursor })}${RESET}`);
+  }
+  log('');
+}
+
+const cmdCatalog = withApi(async (api, project, opts = {}) => {
+  if (!project || String(project).startsWith('--')) error(catalogUsageText());
+  const bounds = parseCatalogWindow(opts);
+  if (opts.limitPresent && (opts.limit == null || String(opts.limit).trim() === '')) error('--limit requires a value.');
+  if (opts.propertyLimitPresent && (opts.property_limit == null || String(opts.property_limit).trim() === '')) {
+    error('--property-limit requires a value.');
+  }
+  const limit = opts.limitPresent ? parseCatalogBoundedInt('--limit', opts.limit, 18) : undefined;
+  const propertyLimit = opts.propertyLimitPresent
+    ? parseCatalogBoundedInt('--property-limit', opts.property_limit, 40)
+    : undefined;
+  const cursors = parseCatalogCursors(opts);
+  let data;
+  try {
+    data = await api.getCatalog(project, {
+      ...bounds,
+      limit,
+      property_limit: propertyLimit,
+      ...cursors,
+    });
+  } catch (err) {
+    throw clarifyCatalogError(err);
+  }
+  if (opts.jsonOutput) {
+    printJson(data);
+    return;
+  }
+  logCatalogResult(project, data, { ...bounds, limit, property_limit: propertyLimit });
 });
 
 const cmdSessions = withApi(async (api, project, opts = {}) => {
@@ -4100,6 +4344,7 @@ ${BOLD}ANALYTICS${RESET}
   ${CYAN}compare${RESET} <name>         Free before/after read of unique converters. A 7-day read should run on ship day + 8
   ${CYAN}annotate${RESET} <name>        Append one annotation (duplicate returns appended: false)
   ${CYAN}properties${RESET} <name>      Discover event names & property keys
+  ${CYAN}catalog${RESET} <name>        Event catalog: exact counts, types, presence, and examples (Pro). --days or --from/--to, --limit, --property-limit, --json
   ${CYAN}context get${RESET} <name>     Read stored goals, activation events, and event glossary
   ${CYAN}context set${RESET} <name>     Set compact project context with --json
   ${CYAN}portfolio-context get${RESET}  Read stored account portfolio context
@@ -4146,11 +4391,14 @@ ${BOLD}ACCOUNT${RESET}
   ${CYAN}delete${RESET} <project>       Delete a project by name or id
 
 ${BOLD}KEY OPTIONS${RESET}
-  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90. For vitals, a positive integer. For sql, an integer from 1 to 90
-  --from <date>      Start date (YYYY-MM-DD) for query, vitals, and sql
-  --to <date>        End date (YYYY-MM-DD) for query, vitals, and sql
+  --days <N>         Lookback window in days (default: 7). For compare, window_days: a multiple of 7 from 1 to 90. For vitals, a positive integer. For sql and catalog, an integer from 1 to 90
+  --from <date>      Start date (YYYY-MM-DD) for query, vitals, sql, and catalog
+  --to <date>        End date (YYYY-MM-DD) for query, vitals, sql, and catalog
   --by <group>       Vitals breakdown: device or path
-  --limit <N>        Max results (default: 100). For errors, default 20 and max 100. For vitals, default 10 and max 20
+  --limit <N>        Max results (default: 100). For errors, default 20 and max 100. For vitals, default 10 and max 20. For catalog, events per page, default 10 and max 18
+  --property-limit <N>  Catalog property keys per event (default 25, max 40)
+  --cursor <token>   Catalog event page cursor from next_cursor. Do not combine with --properties-cursor
+  --properties-cursor <token>  Catalog property page cursor from properties_next_cursor
   --domain <url>     Primary surface URL/origin (required for create)
   --source-scan <id> Link project creation to a prior website analysis
   --full             Create a new signed-in full website analysis
@@ -4452,6 +4700,38 @@ try {
         sample: getArg('--sample') ? parseInt(getArg('--sample'), 10) : undefined,
       });
       break;
+    case 'catalog': {
+      if (hasHelpFlag(args)) {
+        printCatalogUsage();
+        break;
+      }
+      const daysFlag = catalogFlagValue('--days');
+      const fromFlag = catalogFlagValue('--from');
+      const toFlag = catalogFlagValue('--to');
+      const limitFlag = catalogFlagValue('--limit');
+      const propertyLimitFlag = catalogFlagValue('--property-limit');
+      const cursorFlag = catalogFlagValue('--cursor');
+      const propertiesCursorFlag = catalogFlagValue('--properties-cursor');
+      const positional = args[1] && !args[1].startsWith('--') ? args[1] : null;
+      await cmdCatalog(positional || catalogFlagValue('--project').value, {
+        days: daysFlag.value,
+        daysPresent: daysFlag.present,
+        date_from: fromFlag.value,
+        fromPresent: fromFlag.present,
+        date_to: toFlag.value,
+        toPresent: toFlag.present,
+        limit: limitFlag.value,
+        limitPresent: limitFlag.present,
+        property_limit: propertyLimitFlag.value,
+        propertyLimitPresent: propertyLimitFlag.present,
+        cursor: cursorFlag.value,
+        cursorPresent: cursorFlag.present,
+        properties_cursor: propertiesCursorFlag.value,
+        propertiesCursorPresent: propertiesCursorFlag.present,
+        jsonOutput: args.includes('--json'),
+      });
+      break;
+    }
     case 'sessions':
       await cmdSessions(args[1], {
         since: getArg('--since'),
