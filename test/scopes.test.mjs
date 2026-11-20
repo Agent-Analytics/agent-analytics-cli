@@ -27,7 +27,7 @@ describe('access levels', () => {
       'replays:read',
     ]);
     for (const scope of read) assert.ok(manage.includes(scope));
-    for (const scope of ['projects:write', 'experiments:write', 'feedback:write', 'replays:write', 'erasures:write']) {
+    for (const scope of ['projects:write', 'experiments:write', 'feedback:write', 'replays:write', 'erasures:write', 'imports:write']) {
       assert.ok(manage.includes(scope));
       assert.equal(read.includes(scope), false);
     }

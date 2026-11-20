@@ -60,6 +60,7 @@
  *   npx @agent-analytics/cli replays open --session <id> --project <project> — Open by analytics session
  *   npx @agent-analytics/cli delete-account       — Delete your account (opens dashboard)
  *   npx @agent-analytics/cli erase <name>         - Delete one subject (--confirm erase)
+ *   npx @agent-analytics/cli import posthog --project <name> — Import PostHog history (dry run unless --yes)
  *   npx @agent-analytics/cli erasures <name>      - List erasure receipts
  *   npx @agent-analytics/cli erasures get <id>    - Show one erasure receipt
  *   npx @agent-analytics/cli feedback --message "..." — Send product/process feedback
@@ -89,6 +90,16 @@ import {
   setConfigDirOverride,
   updateStoredAccount,
 } from '../lib/config.mjs';
+import {
+  DEFAULT_POSTHOG_HOST,
+  assertPosthogHost,
+  assertPosthogProjectId,
+  formatCounts,
+  importResultView,
+  parseExportDocument,
+  redactSecrets,
+  runPosthogImport,
+} from '../lib/posthog-import.mjs';
 
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -4051,6 +4062,242 @@ const cmdErasureGet = withApi(async (api, id, opts = {}) => {
   logErasureReceipt(view);
 });
 
+function importUsageText() {
+  return `Usage: npx @agent-analytics/cli import posthog --project <name> (--file <path> | --api) [--from <date>] [--to <date>] [--limit <n>] [--yes] [--resume <job_id>] [--posthog-project-id <id>] [--json]
+
+Reads a PostHog export or pages the PostHog query API, then posts event objects to one Agent Analytics project. The server never calls PostHog. POSTHOG_PERSONAL_API_KEY is sent only to POSTHOG_HOST (default ${DEFAULT_POSTHOG_HOST}) as a bearer token. It is not sent to Agent Analytics, printed, or written to disk.
+
+The default is a dry run. It opens a dry-run job and prints preview counts and a sample. --yes, or --confirm import, writes. A dry-run job cannot be turned into writes; run again with --yes to open a new job.
+
+--file reads a JSON array, an object with an events array, or JSONL.
+--api pages POST /api/projects/:id/query/ with a HogQL keyset on timestamp and uuid. Set --posthog-project-id or POSTHOG_PROJECT_ID. The key needs query:read.
+
+--from and --to are YYYY-MM-DD (inclusive UTC day) or ISO-8601 timestamps.
+--limit caps how many events are sent.
+--resume <job_id> continues an open job. Chunk ids are a hash of each page, so a retry posts the same id. Agent Analytics returns the stored receipt and does not write that page again. The job payload does not list chunk ids, so resume re-sends pages and skips the write when the receipt says replayed.
+
+Needs manage or admin (scope imports:write). Read is 403 FORBIDDEN_SCOPE. A project outside the grant is 404 PROJECT_NOT_FOUND. The demo project is 403 DEMO_READ_ONLY. A sixth open job, or a job past 1,000,000 events, is 409 IMPORT_LIMIT.
+
+outside_retention: events older than the plan retention window are counted and not written, because the nightly retention delete would remove them. Imported rows do not count toward the monthly event limit.
+
+Examples:
+  npx @agent-analytics/cli import posthog --project my-site --file posthog.json
+  npx @agent-analytics/cli import posthog --project my-site --file posthog.json --yes
+  npx @agent-analytics/cli import posthog --project my-site --api --posthog-project-id 42 --from 2026-08-01 --to 2026-11-01 --limit 100
+  npx @agent-analytics/cli import posthog --project my-site --file posthog.json --yes --resume phi_...`;
+}
+
+function printImportUsage() {
+  log(importUsageText());
+}
+
+function parseImportArgs(commandArgs) {
+  const subcommand = commandArgs[1];
+  if (subcommand == null || subcommand === '--help' || subcommand === '-h') {
+    return { help: true };
+  }
+  if (subcommand !== 'posthog') {
+    error(`Unknown import source: ${subcommand}\n\n${importUsageText()}`);
+  }
+  if (commandArgs.includes('--help') || commandArgs.includes('-h')) {
+    return { help: true };
+  }
+
+  const withValues = new Set([
+    '--project',
+    '--file',
+    '--from',
+    '--to',
+    '--limit',
+    '--resume',
+    '--posthog-project-id',
+    '--confirm',
+  ]);
+  const flags = new Set(['--api', '--yes', '--json']);
+  const seen = new Set();
+  let project = null;
+  let file = null;
+  let from = null;
+  let to = null;
+  let limit = null;
+  let resume = null;
+  let posthogProjectId = null;
+  let confirm = null;
+  let api = false;
+  let yes = false;
+  let jsonOutput = false;
+
+  for (let index = 2; index < commandArgs.length; index += 1) {
+    const token = commandArgs[index];
+    const split = splitCliFlag(token);
+    const name = split.name;
+    if (!name.startsWith('--')) {
+      if (project == null) {
+        project = token;
+        continue;
+      }
+      error(`Unexpected argument: ${token}\n\n${importUsageText()}`);
+    }
+    if (seen.has(name)) error(`Duplicate flag: ${name}`);
+    seen.add(name);
+    if (flags.has(name)) {
+      const enabled = parseCliBoolean(name, split.inline);
+      if (name === '--api') api = enabled;
+      if (name === '--yes') yes = enabled;
+      if (name === '--json') jsonOutput = enabled;
+      continue;
+    }
+    if (!withValues.has(name)) {
+      error(`Unknown flag: ${name}\n\n${importUsageText()}`);
+    }
+    const taken = takeFlagValue(commandArgs, index, split.inline);
+    if (taken.value == null || taken.value === '') error(`${name} needs a value.`);
+    index = taken.index;
+    if (name === '--project') project = taken.value;
+    if (name === '--file') file = taken.value;
+    if (name === '--from') from = taken.value;
+    if (name === '--to') to = taken.value;
+    if (name === '--limit') limit = taken.value;
+    if (name === '--resume') resume = taken.value;
+    if (name === '--posthog-project-id') posthogProjectId = taken.value;
+    if (name === '--confirm') confirm = taken.value;
+  }
+
+  if (!project) error(`--project is required.\n\n${importUsageText()}`);
+  if (api && file) error('Pass either --file or --api, not both.');
+  if (!api && !file) error(`Pass --file <path> or --api.\n\n${importUsageText()}`);
+  if (confirm != null && confirm !== 'import') {
+    error('Pass --yes to write. --confirm import is the same switch. The default is a dry run.');
+  }
+  const write = yes || confirm === 'import';
+  return {
+    help: false,
+    project,
+    file,
+    api,
+    from,
+    to,
+    limit,
+    resume,
+    posthogProjectId,
+    write,
+    jsonOutput,
+  };
+}
+
+function logImportSample(sample) {
+  if (!sample?.length) {
+    log('Sample: no new rows. Already stored events are omitted from the preview.');
+    return;
+  }
+  log('Sample:');
+  for (const row of sample.slice(0, 5)) {
+    const when = typeof row.timestamp === 'number' ? new Date(row.timestamp).toISOString() : '';
+    const path = row.path ? `  ${row.path}` : '';
+    log(`  ${row.event || ''}  ${row.user_id || ''}  ${when}${path}`);
+  }
+}
+
+function logImportResult(view, { leftOpen = false, alreadyClosed = false } = {}) {
+  log('');
+  if (view.empty && !view.id) {
+    log('No PostHog events matched. Nothing was imported.');
+  } else if (view.empty && leftOpen) {
+    log(`No PostHog events matched. Job ${view.id} was left open.`);
+  } else if (view.empty) {
+    log(`No PostHog events matched. Job ${view.id} is ${view.status}.`);
+  } else if (alreadyClosed) {
+    log(`Job ${view.id} is already ${view.status}.`);
+  } else if (view.dry_run) {
+    log(`Dry run ${view.id}  ${view.status}`);
+  } else {
+    log(`Imported ${view.id}  ${view.status}`);
+  }
+  if (view.counts) log(formatCounts(view.counts));
+  log(view.outside_retention_note);
+  if (view.local_skipped_window > 0) {
+    log(`Events outside --from/--to were not sent: ${view.local_skipped_window}.`);
+  }
+  if (view.local_skipped_secret > 0) {
+    log(`Events held back because they contained a PostHog key: ${view.local_skipped_secret}. They were not sent.`);
+  }
+  if (view.chunks_replayed > 0) {
+    log(`Already committed chunks: ${view.chunks_replayed}. Those pages were not written again.`);
+  }
+  if (view.dry_run && !view.empty && !alreadyClosed) {
+    log('Dry run only. Pass --yes to write these events.');
+    logImportSample(view.sample);
+  }
+  log('');
+}
+
+const cmdImportPosthog = withApi(async (api, opts) => {
+  let events = null;
+  let posthog = null;
+  const secret = process.env.POSTHOG_PERSONAL_API_KEY || null;
+  if (opts.file) {
+    let text;
+    try {
+      text = readFileSync(opts.file, 'utf8');
+    } catch {
+      throw new Error(`Could not read ${opts.file}.`);
+    }
+    events = text;
+  } else {
+    if (!secret) {
+      throw new Error('POSTHOG_PERSONAL_API_KEY is required for --api. It is sent only to PostHog.');
+    }
+    const projectId = opts.posthogProjectId || process.env.POSTHOG_PROJECT_ID || '';
+    if (!String(projectId).trim()) {
+      throw new Error('--posthog-project-id or POSTHOG_PROJECT_ID is required for --api.');
+    }
+    posthog = {
+      origin: assertPosthogHost(process.env.POSTHOG_HOST || DEFAULT_POSTHOG_HOST, getBaseUrl()),
+      projectId: assertPosthogProjectId(projectId),
+      apiKey: secret,
+      fetch: globalThis.fetch,
+    };
+  }
+
+  const emit = (line) => {
+    const safe = redactSecrets(line, secret);
+    if (opts.jsonOutput) logStderr(safe);
+    else log(safe);
+  };
+  if (!opts.write && !opts.resume) emit('Dry run. No events will be written. Pass --yes to import.');
+
+  let result;
+  try {
+    if (opts.file) events = parseExportDocument(events);
+    result = await runPosthogImport({
+      api,
+      project: opts.project,
+      source: opts.api ? 'api' : 'export',
+      dryRun: !opts.write,
+      resumeJobId: opts.resume,
+      from: opts.from,
+      to: opts.to,
+      limit: opts.limit,
+      events,
+      posthog,
+      secret,
+      onProgress: emit,
+    });
+  } catch (err) {
+    throw new Error(redactSecrets(err.message, secret));
+  }
+
+  const view = importResultView(result);
+  if (opts.jsonOutput) {
+    printJson(view);
+  } else {
+    logImportResult(view, { leftOpen: result.leftOpen, alreadyClosed: result.alreadyClosed });
+  }
+  if (result.job?.status === 'aborted') {
+    throw new Error(`Job ${result.job.id} is aborted. Start a new import.`);
+  }
+});
+
 function showHelp() {
   log(`
 ${BOLD}Agent Analytics${RESET} — Stop juggling dashboards. Let your agent do it.
@@ -4137,6 +4384,12 @@ ${BOLD}ERASURE${RESET} ${DIM}one visitor, one project, confirm erase${RESET}
   ${CYAN}erasures${RESET} <project>       List the 100 newest erasure receipts
   ${CYAN}erasures get${RESET} <id>        Show one erasure receipt
 
+${BOLD}IMPORT${RESET} ${DIM}PostHog history, original timestamps, dry run unless --yes${RESET}
+  ${CYAN}import posthog${RESET} --project <name> --file <path>
+                                 Preview a PostHog export. --yes writes it
+  ${CYAN}import posthog${RESET} --project <name> --api
+                                 Page the PostHog query API. Needs POSTHOG_PERSONAL_API_KEY
+
 ${BOLD}ACCOUNT${RESET}
   ${CYAN}whoami${RESET}                 Show the account, granted project, and level. custom prints its scopes
   ${CYAN}auth status${RESET}            Show local auth path and token expiry metadata
@@ -4197,6 +4450,11 @@ ${BOLD}KEY OPTIONS${RESET}
   --before <timestamp> Replay list pagination cursor
   --confirm delete_replay_data  Required with replays delete --all
   --confirm erase    Required for erase. The value must be the word erase
+  --yes              import posthog: write events. The default is a dry run
+  --confirm import   Same as --yes for import posthog
+  --api              import posthog: page the PostHog query API
+  --posthog-project-id <id>  PostHog project for --api. Or POSTHOG_PROJECT_ID
+  --resume <job_id>  Continue an open PostHog import. scan also uses --resume
   --session-id <id>  Erase one session. Does not walk the identity graph
   --idempotency-key <key>  Erasure idempotency key. Generated and printed when omitted
   --include-replays <bool>  Erasure replay delete. Default true. Pass false to keep replays
@@ -4268,6 +4526,7 @@ const DEMO_MUTATING_COMMANDS = new Set([
   'update',
   'delete',
   'erase',
+  'import',
   'upgrade-link',
   'revoke-key',
   'feedback',
@@ -4698,6 +4957,16 @@ try {
     case 'auth':
       cmdAuth(args[1]);
       break;
+    case 'import': {
+      if (args[1] == null || args[1] === '--help' || args[1] === '-h' || hasHelpFlag(args)) {
+        if (args[1] == null || args[1] === '--help' || args[1] === '-h' || args[1] === 'posthog') {
+          printImportUsage();
+          break;
+        }
+      }
+      await cmdImportPosthog(parseImportArgs(args));
+      break;
+    }
     case 'erase': {
       if (hasHelpFlag(args)) {
         printEraseUsage();
