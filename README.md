@@ -151,7 +151,7 @@ When a free account hits a Pro-only analytics task, run an explicit upgrade hand
 npx --yes @agent-analytics/cli@0.5.43 upgrade-link --detached
 ```
 
-The CLI prints an `app.agentanalytics.sh` link. The human confirms the logged-in dashboard account, pays in Lemon Squeezy, and returns to the agent after Pro activates. Use `upgrade-link --wait` when the local shell should keep polling for activation.
+The CLI prints an `app.agentanalytics.sh` link. The human confirms the logged-in dashboard account, pays on the payment page, and returns to the agent after Pro activates. Use `upgrade-link --wait` when the local shell should keep polling for activation.
 
 
 For machine-readable pricing, current account status, and the human handoff, use:

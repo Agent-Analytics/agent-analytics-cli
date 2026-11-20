@@ -711,7 +711,7 @@ async function cmdUpgradeLink({ detached, wait, jsonOutput = false }) {
   log(`Open this link in the human browser:`);
   log(`  ${CYAN}${link.toString()}${RESET}`);
   log('');
-  log(`${DIM}The browser stays on app.agentanalytics.sh first, confirms the logged-in account, then opens Lemon Squeezy.${RESET}`);
+  log(`${DIM}The browser stays on app.agentanalytics.sh first, confirms the logged-in account, then opens the payment page.${RESET}`);
 
   if (detached) {
     log(`${DIM}After payment, return to the agent and rerun the blocked command.${RESET}`);

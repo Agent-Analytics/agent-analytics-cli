@@ -30,12 +30,13 @@ async function withUsage(data, task) {
 it('prints a single structured payment handoff and preserves account-bound authority', async () => {
   const data = {
     tier: 'free',
-    payment: { state: 'upgrade_available', agent_can_charge: false, pricing: { events_per_unit: 10000, unit_price_cents: 100 }, next_action: { url: 'https://app.test/account/billing/agent-upgrade?account=acct-test', reason: 'Needs Pro' } },
+    payment: { state: 'upgrade_available', provider: 'billing-portal', agent_can_charge: false, pricing: { events_per_unit: 10000, unit_price_cents: 100 }, next_action: { url: 'https://app.test/account/billing/agent-upgrade?account=acct-test', reason: 'Needs Pro' } },
   };
   await withUsage(data, async (invoke, requests) => {
     const { stdout } = await invoke(['upgrade-link', '--detached', '--json', '--reason', 'Need funnels', '--command', 'funnel site']);
     const result = JSON.parse(stdout);
     assert.equal(result.payment.agent_can_charge, false);
+    assert.equal(result.payment.provider, data.payment.provider);
     assert.deepEqual(result.payment.pricing, data.payment.pricing);
     const url = new URL(result.payment.next_action.url);
     assert.equal(url.searchParams.get('account'), 'acct-test');
@@ -43,6 +44,27 @@ it('prints a single structured payment handoff and preserves account-bound autho
     assert.equal(url.searchParams.has('command'), false);
     assert.deepEqual(requests, [{ method: 'GET', path: '/account/usage', auth: 'Bearer aas_test' }]);
   });
+});
+
+it('passes through any payment provider on the handoff response', async () => {
+  for (const provider of ['lemonsqueezy', 'paddle', 'billing-portal', 'other']) {
+    const data = {
+      tier: 'free',
+      payment: {
+        state: 'upgrade_available',
+        provider,
+        agent_can_charge: false,
+        next_action: { url: 'https://app.test/account/billing/agent-upgrade?account=acct-test', reason: 'Needs Pro' },
+      },
+    };
+    await withUsage(data, async invoke => {
+      const { stdout } = await invoke(['upgrade-link', '--detached', '--json']);
+      const result = JSON.parse(stdout);
+      assert.equal(result.payment.provider, provider);
+      assert.equal(result.payment.agent_can_charge, false);
+      assert.equal(result.payment.state, 'upgrade_available');
+    });
+  }
 });
 
 it('keeps private commands and custom reasons out of both browser handoff formats', async () => {
