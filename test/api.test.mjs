@@ -659,6 +659,42 @@ describe('AgentAnalyticsAPI', () => {
       assert.equal(lastMethod, 'GET');
       assert.equal(lastUrl, 'https://api.test/erasures/era%201%2F2');
     });
+
+    it('createPosthogImport → POST /imports/posthog sends project, source, and dry_run', async () => {
+      await api.createPosthogImport({ project: 'my-site', source: 'api', dry_run: true });
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastUrl, 'https://api.test/imports/posthog');
+      assert.equal(lastOpts.body, JSON.stringify({
+        project: 'my-site',
+        source: 'api',
+        dry_run: true,
+      }));
+      assert.equal(JSON.stringify(lastOpts.headers).includes('phx_'), false);
+    });
+
+    it('postPosthogImportChunk omits dry_run on a write and encodes the job id', async () => {
+      await api.postPosthogImportChunk('phi_abc', {
+        chunk_id: 'page-1',
+        events: [{ uuid: '11111111-1111-4111-8111-111111111111', event: '$pageview' }],
+      });
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastUrl, 'https://api.test/imports/posthog/phi_abc/chunks');
+      assert.equal(lastOpts.body, JSON.stringify({
+        chunk_id: 'page-1',
+        events: [{ uuid: '11111111-1111-4111-8111-111111111111', event: '$pageview' }],
+      }));
+      assert.equal(Object.hasOwn(JSON.parse(lastOpts.body), 'dry_run'), false);
+    });
+
+    it('getPosthogImport and completePosthogImport use the job url', async () => {
+      await api.getPosthogImport('phi_abc');
+      assert.equal(lastMethod, 'GET');
+      assert.equal(lastUrl, 'https://api.test/imports/posthog/phi_abc');
+      await api.completePosthogImport('phi_abc');
+      assert.equal(lastMethod, 'POST');
+      assert.equal(lastUrl, 'https://api.test/imports/posthog/phi_abc/complete');
+      assert.equal(lastOpts.body, undefined);
+    });
   });
 
 });

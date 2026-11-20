@@ -117,6 +117,7 @@ whoami                           Show the account, granted project, and level. c
 erase <project>                  Delete one visitor. Needs manage or admin, --confirm erase, and one subject
 erasures <project>               List the 100 newest erasure receipts
 erasures get <id>                Show one erasure receipt
+import posthog --project <name>  Import PostHog history. Dry run unless --yes. --file or --api
 feedback --message "..."         Send product/process feedback
 logout                           Clear local auth and revoke the stored agent session when possible
 ```
@@ -341,6 +342,34 @@ npx --yes @agent-analytics/cli@0.5.43 erasures my-site
 npx --yes @agent-analytics/cli@0.5.43 erasures get era_123 --json
 ```
 
+## PostHog import
+
+`import posthog` copies PostHog event history into one project through `POST /imports/posthog`. Agent Analytics does not call PostHog and rejects a body that contains a key field. The CLI reads an export or pages PostHog, then posts the event objects.
+
+The default is a dry run. It opens a dry-run job and prints preview counts and a sample. `--yes`, or `--confirm import`, writes. A dry-run job cannot be turned into a write. Run the command again with `--yes` to open a second job.
+
+```bash
+npx --yes @agent-analytics/cli@0.5.43 import posthog --project my-site --file posthog.json
+npx --yes @agent-analytics/cli@0.5.43 import posthog --project my-site --file posthog.json --yes
+npx --yes @agent-analytics/cli@0.5.43 import posthog --project my-site --api --posthog-project-id 42 --from 2026-08-01 --to 2026-11-01 --limit 100
+npx --yes @agent-analytics/cli@0.5.43 import posthog --project my-site --file posthog.json --yes --resume phi_...
+```
+
+`--file` accepts a JSON array, an object with an `events` array, or JSONL. `--api` reads `POSTHOG_PERSONAL_API_KEY` and pages `POST /api/projects/:id/query/` on `POSTHOG_HOST` (default `https://us.posthog.com`). The key is sent only to that host, as a bearer token. It is not sent to Agent Analytics, printed, or written to disk. `--posthog-project-id` or `POSTHOG_PROJECT_ID` selects the PostHog project. The key needs `query:read`.
+
+PostHog's event list returns only the last 24 hours unless `after` is set, and it rejects a window of a year or more. The query API rejects `OFFSET` for a personal API key. The CLI pages with a HogQL keyset on `timestamp` and `uuid`, 40 events at a time.
+
+`--from` and `--to` are `YYYY-MM-DD` (inclusive UTC day) or ISO-8601. `--limit` caps the events sent. Chunk ids are a hash of the page. A retry posts the same id. The server returns the stored receipt and does not write that page again. `--resume <job_id>` continues an open job the same way. The job payload does not list chunk ids, so resume re-sends pages and skips the write when the receipt says `replayed`.
+
+Import needs manage or admin (`imports:write`). `login` requests read unless you pass `--level manage` or `--level admin`.
+
+- `403 FORBIDDEN_SCOPE`: the session is read, or the credential is an account key (`aak_`) or a dashboard cookie. Run `login --level manage`.
+- `404 PROJECT_NOT_FOUND`: the project is missing, or it is outside this grant. A job URL in a hidden project is `404 NOT_FOUND`.
+- `409 IMPORT_LIMIT`: five import jobs are already open, or this job would pass 1,000,000 received events.
+- `403 DEMO_READ_ONLY`: `agentanalytics-demo` cannot be imported into.
+
+`outside_retention` counts events older than the plan retention window. Those rows are not written, because the nightly retention delete would remove them. Imported rows do not count toward the monthly event limit. A finished command prints `inserted`, `duplicate`, `skipped`, and `outside_retention` from the job.
+
 ## Feedback
 
 Use the CLI feedback command when Agent Analytics was confusing, a task took too long, or the agent had to do manual analysis that the product should have handled:
@@ -401,6 +430,9 @@ Do not install the skill from this CLI repo. This package is the runtime CLI; th
 | `AGENT_ANALYTICS_URL` | Custom API URL (for self-hosted) |
 | `AGENT_ANALYTICS_DASHBOARD_URL` | Custom dashboard URL for local upgrade-link testing |
 | `AGENT_ANALYTICS_CREDENTIAL_STORE` | Optional credential storage override: `auto` (default), `native`, or `file` |
+| `POSTHOG_PERSONAL_API_KEY` | Personal API key for `import posthog --api`. Sent only to `POSTHOG_HOST`. Never sent to Agent Analytics, printed, or stored |
+| `POSTHOG_HOST` | PostHog API origin for `import posthog --api`. Default `https://us.posthog.com` |
+| `POSTHOG_PROJECT_ID` | Default PostHog project id when `--posthog-project-id` is omitted |
 
 ## Links
 

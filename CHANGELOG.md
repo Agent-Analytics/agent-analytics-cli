@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `import posthog --project <name>` to copy PostHog history through `POST /imports/posthog`. `--file` reads a JSON array, an events object, or JSONL. `--api` pages the PostHog query API with `POSTHOG_PERSONAL_API_KEY`. The key is not sent to Agent Analytics. The default is a dry run; `--yes` writes. `--resume` replays chunk ids and skips pages the server already committed.
+
 ## 0.5.43
 
 - `login` accepts `--project <name>` and `--level read|manage|admin`. The default level is read. Start sends project, level, and the scopes for that level so older servers can still approve a session.
