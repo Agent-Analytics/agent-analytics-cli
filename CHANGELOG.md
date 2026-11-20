@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `catalog <project>` for the Pro `GET /catalog` read. Human output lists each event's count, first and last seen, and each property's key, type, presence, and examples. `--json` prints the API response. `--days` is an integer from 1 to 90 (default 7), or pass `--from` and `--to` with an inclusive span of at most 90 days. `--limit` is 1 to 18 and `--property-limit` is 1 to 40. `--cursor` and `--properties-cursor` page events and property keys, and the next command is printed when another page exists.
+
 ## 0.5.43
 
 - `login` accepts `--project <name>` and `--level read|manage|admin`. The default level is read. Start sends project, level, and the scopes for that level so older servers can still approve a session.

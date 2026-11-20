@@ -3049,6 +3049,396 @@ describe('CLI', () => {
     });
   });
 
+  describe('catalog', () => {
+    function catalogPayload(overrides = {}) {
+      return {
+        project: 'my-site',
+        window: { date_from: '2026-11-14', date_to: '2026-11-20' },
+        order: 'event',
+        counts: 'exact',
+        sampling: {
+          properties: 'newest_dates',
+          per_event: 40,
+          exact_when: 'count is at most per_event and the sample includes every counted row',
+        },
+        redaction: { examples: 'email', raw_examples: false },
+        events: [
+          {
+            event: 'page_view',
+            count: 1280,
+            first_seen: '2026-11-14T00:12:03.000Z',
+            last_seen: '2026-11-20T15:04:05.000Z',
+            sample_size: 40,
+            properties_exact: false,
+            properties: [
+              {
+                key: 'path',
+                type: 'string',
+                types: { string: 40 },
+                queryable: true,
+                groupable: true,
+                present: 40,
+                presence: 1,
+                examples: ['/', '/pricing'],
+              },
+              {
+                key: 'email',
+                type: 'string',
+                types: { string: 12 },
+                queryable: true,
+                groupable: true,
+                present: 12,
+                presence: 0.3,
+                examples: ['[redacted-email]'],
+              },
+            ],
+            properties_next_cursor: 'prop-cursor',
+          },
+        ],
+        next_cursor: 'evt-cursor',
+        ...overrides,
+      };
+    }
+
+    it('shows catalog help before auth and lists it on the main help screen', async () => {
+      const help = await run(['catalog', '--help']);
+      const plain = stripAnsi(help.stdout);
+      const main = stripAnsi((await run(['--help'])).stdout);
+
+      assert.equal(help.code, 0);
+      assert.ok(plain.includes('catalog <project>'));
+      assert.ok(plain.includes('catalog --project <project>'));
+      assert.ok(plain.includes('GET /catalog'));
+      assert.ok(plain.includes('PRO_REQUIRED'));
+      assert.ok(plain.includes('PROJECT_NOT_FOUND'));
+      assert.ok(plain.includes('VALIDATION_ERROR'));
+      assert.ok(plain.includes('INVALID_WINDOW'));
+      assert.ok(plain.includes('HTTP 429'));
+      assert.ok(plain.includes('--days defaults to 7 and must be an integer from 1 to 90.'));
+      assert.ok(plain.includes('The inclusive span is at most 90 days'));
+      assert.ok(plain.includes('integer from 1 to 18'));
+      assert.ok(plain.includes('integer from 1 to 40'));
+      assert.ok(plain.includes('Pass one of them, not both.'));
+      assert.ok(plain.includes('--json prints the API response'));
+      assert.ok(plain.includes('catalog my-site --from 2026-11-14 --to 2026-11-20 --cursor'));
+      assert.ok(main.includes('catalog <name>'));
+      assert.ok(main.includes('--property-limit <N>'));
+      assert.ok(main.includes('--properties-cursor <token>'));
+      assert.ok(!plain.includes('checkout'));
+    });
+
+    it('prints a per-event summary and the next cursor commands', async () => {
+      let requestUrl;
+      let authorization;
+      const payload = catalogPayload();
+      const server = await startServer((req, res) => {
+        requestUrl = req.url;
+        authorization = req.headers.authorization;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(payload));
+      });
+
+      try {
+        const result = await run(['catalog', 'my-site'], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.equal(authorization, 'Bearer aas_test123');
+        assert.equal(requestUrl, '/catalog?project=my-site&days=7');
+        assert.ok(plain.includes('Catalog: my-site'));
+        assert.ok(plain.includes('window: 2026-11-14 to 2026-11-20'));
+        assert.ok(plain.includes('counts: exact'));
+        assert.ok(plain.includes('newest dates, at most 40 rows per event'));
+        assert.ok(plain.includes('page_view'));
+        assert.ok(plain.includes('1280 events'));
+        assert.ok(plain.includes('2026-11-14T00:12:03.000Z → 2026-11-20T15:04:05.000Z'));
+        assert.ok(plain.includes('sample 40'));
+        assert.ok(plain.includes('properties sampled'));
+        assert.ok(plain.includes('path'));
+        assert.ok(plain.includes('string'));
+        assert.ok(plain.includes('presence 1'));
+        assert.ok(plain.includes('examples: /, /pricing'));
+        assert.ok(plain.includes('email'));
+        assert.ok(plain.includes('presence 0.3'));
+        assert.ok(plain.includes('examples: [redacted-email]'));
+        assert.ok(plain.includes('Next events:'));
+        assert.ok(plain.includes('catalog my-site --from 2026-11-14 --to 2026-11-20 --cursor evt-cursor'));
+        assert.ok(plain.includes('More properties for page_view:'));
+        assert.ok(plain.includes('catalog my-site --from 2026-11-14 --to 2026-11-20 --properties-cursor prop-cursor'));
+        assert.equal(plain.includes('--cursor evt-cursor --properties-cursor'), false);
+        assert.equal(plain.includes('--days 7 --cursor'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('sends --project, dates, limits, and one cursor, and --json prints the raw body', async () => {
+      const urls = [];
+      const payload = catalogPayload({ next_cursor: null, events: [] });
+      const server = await startServer((req, res) => {
+        urls.push(req.url);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(payload));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const byProject = await run([
+          'catalog',
+          '--project', 'my-site',
+          '--from', '2026-08-23',
+          '--to', '2026-11-20',
+          '--limit', '18',
+          '--property-limit', '40',
+          '--properties-cursor', 'prop-cursor',
+        ], { env });
+        const asJson = await run([
+          'catalog', 'my-site', '--days', '30', '--json',
+        ], { env });
+
+        assert.equal(byProject.code, 0);
+        assert.equal(asJson.code, 0);
+        assert.equal(
+          urls[0],
+          '/catalog?project=my-site&date_from=2026-08-23&date_to=2026-11-20&limit=18&property_limit=40&properties_cursor=prop-cursor',
+        );
+        const sent = new URL(urls[0], 'http://127.0.0.1');
+        assert.equal(sent.searchParams.has('days'), false);
+        assert.equal(sent.searchParams.has('cursor'), false);
+        assert.equal(urls[1], '/catalog?project=my-site&days=30');
+        assert.equal(asJson.stdout, `${JSON.stringify(payload, null, 2)}\n`);
+        assert.equal(asJson.stdout.includes('Next events:'), false);
+        assert.equal(asJson.stdout.includes('Catalog:'), false);
+        assert.ok(stripAnsi(byProject.stdout).includes('No events found.'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('keeps the same limit on the printed next command and prefers the positional project', async () => {
+      let requestUrl;
+      const server = await startServer((req, res) => {
+        requestUrl = req.url;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(catalogPayload({
+          events: [{
+            event: 'signup',
+            count: 2,
+            first_seen: '2026-11-14T00:00:00.000Z',
+            last_seen: '2026-11-20T00:00:00.000Z',
+            sample_size: 2,
+            properties_exact: true,
+            properties: [{ key: 'plan', type: 'string', presence: 1, examples: ['pro'] }],
+            properties_next_cursor: null,
+          }],
+          next_cursor: 'next-evt',
+        })));
+      });
+
+      try {
+        const result = await run([
+          'catalog', 'my-site',
+          '--project', 'other-site',
+          '--days', '14',
+          '--limit', '5',
+          '--property-limit', '8',
+        ], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.equal(result.code, 0);
+        assert.equal(requestUrl, '/catalog?project=my-site&days=14&limit=5&property_limit=8');
+        assert.ok(plain.includes('properties exact'));
+        assert.ok(plain.includes('plan'));
+        assert.ok(plain.includes('presence 1'));
+        assert.ok(plain.includes('examples: pro'));
+        assert.ok(plain.includes('--from 2026-11-14 --to 2026-11-20 --limit 5 --property-limit 8 --cursor next-evt'));
+        assert.equal(plain.includes('other-site'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('rejects both cursors and out-of-range values before calling the API', async () => {
+      let calls = 0;
+      const server = await startServer((_req, res) => {
+        calls += 1;
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'should not be called' }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const both = await run(['catalog', 'my-site', '--cursor', 'evt', '--properties-cursor', 'prop'], { env });
+        const days = await run(['catalog', 'my-site', '--days', '91'], { env });
+        const zero = await run(['catalog', 'my-site', '--days', '0'], { env });
+        const word = await run(['catalog', 'my-site', '--days', '7d'], { env });
+        const mixed = await run(['catalog', 'my-site', '--days', '7', '--from', '2026-11-01', '--to', '2026-11-20'], { env });
+        const half = await run(['catalog', 'my-site', '--from', '2026-11-01'], { env });
+        const wide = await run(['catalog', 'my-site', '--from', '2026-08-22', '--to', '2026-11-20'], { env });
+        const backwards = await run(['catalog', 'my-site', '--from', '2026-11-20', '--to', '2026-11-01'], { env });
+        const badDate = await run(['catalog', 'my-site', '--from', '2026-13-01', '--to', '2026-11-20'], { env });
+        const limit = await run(['catalog', 'my-site', '--limit', '19'], { env });
+        const propertyLimit = await run(['catalog', 'my-site', '--property-limit', '41'], { env });
+        const missing = await run(['catalog', '--days', '7'], { env });
+
+        assert.equal(calls, 0);
+        for (const result of [both, days, zero, word, mixed, half, wide, backwards, badDate, limit, propertyLimit, missing]) {
+          assert.notEqual(result.code, 0);
+        }
+        assert.ok(stripAnsi(both.stdout).includes('Pass --cursor or --properties-cursor, not both (VALIDATION_ERROR).'));
+        assert.ok(stripAnsi(days.stdout).includes('--days must be an integer from 1 to 90 (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(zero.stdout).includes('--days must be an integer from 1 to 90 (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(word.stdout).includes('--days must be an integer from 1 to 90 (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(mixed.stdout).includes('Pass --days or both --from and --to, not both (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(half.stdout).includes('--from and --to must be passed together (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(wide.stdout).includes('The catalog window span must be at most 90 days, inclusive (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(backwards.stdout).includes('--from must be on or before --to (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(badDate.stdout).includes('--from and --to must be YYYY-MM-DD dates (INVALID_WINDOW).'));
+        assert.ok(stripAnsi(limit.stdout).includes('--limit must be an integer from 1 to 18 (VALIDATION_ERROR).'));
+        assert.ok(stripAnsi(propertyLimit.stdout).includes('--property-limit must be an integer from 1 to 40 (VALIDATION_ERROR).'));
+        assert.ok(stripAnsi(missing.stdout).includes('catalog <project>'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints PRO_REQUIRED with the existing upgrade handoff and no checkout link', async () => {
+      let checkoutCalls = 0;
+      const server = await startServer((req, res) => {
+        if (req.url.includes('/billing/checkout')) checkoutCalls += 1;
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'PRO_REQUIRED',
+          message: 'This endpoint is available on paid plans.',
+        }));
+      });
+
+      try {
+        const result = await run(['catalog', 'my-site'], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.notEqual(result.code, 0);
+        assert.equal(checkoutCalls, 0);
+        assert.ok(plain.includes('PRO_REQUIRED'));
+        assert.ok(plain.includes('This endpoint is available on paid plans.'));
+        assert.ok(plain.includes('upgrade-link --detached'));
+        assert.ok(plain.includes('upgrade-link --wait'));
+        assert.equal(plain.includes('checkout'), false);
+        assert.equal(plain.includes('pricing'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints PROJECT_NOT_FOUND without the hidden project name from the body', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'PROJECT_NOT_FOUND',
+          message: 'project not found or unauthorized',
+          project: 'other-site',
+        }));
+      });
+
+      try {
+        const result = await run(['catalog', 'my-site'], {
+          env: {
+            ...agentSessionEnv('aas_test123'),
+            AGENT_ANALYTICS_URL: server.baseUrl,
+          },
+        });
+        const plain = stripAnsi(result.stdout);
+
+        assert.notEqual(result.code, 0);
+        assert.ok(plain.includes('PROJECT_NOT_FOUND'));
+        assert.ok(plain.includes('Project not found or unauthorized.'));
+        assert.ok(plain.includes('does not include its name'));
+        assert.equal(plain.includes('other-site'), false);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('prints VALIDATION_ERROR, INVALID_WINDOW, and 429 from the API', async () => {
+      const server = await startServer((req, res) => {
+        const url = new URL(req.url, 'http://127.0.0.1');
+        if (url.searchParams.get('cursor') === 'bad') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'VALIDATION_ERROR',
+            message: 'cursor does not match the requested window',
+          }));
+          return;
+        }
+        if (url.searchParams.get('days') === '3') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'INVALID_WINDOW',
+            message: 'window is invalid',
+          }));
+          return;
+        }
+        const budget = url.searchParams.get('days') === '4';
+        res.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Retry-After': budget ? '3' : '12',
+        });
+        res.end(JSON.stringify({
+          error: budget ? 'D1_BUDGET_EXHAUSTED' : 'D1_UPSTREAM_RATE_LIMITED',
+          message: budget ? 'D1 request budget exhausted' : 'Cloudflare API rate limit reached',
+          retry_after_seconds: budget ? 3 : 12,
+        }));
+      });
+
+      try {
+        const env = {
+          ...agentSessionEnv('aas_test123'),
+          AGENT_ANALYTICS_URL: server.baseUrl,
+        };
+        const invalid = await run(['catalog', 'my-site', '--cursor', 'bad'], { env });
+        const windowError = await run(['catalog', 'my-site', '--days', '3'], { env });
+        const upstream = await run(['catalog', 'my-site', '--days', '2'], { env });
+        const budget = await run(['catalog', 'my-site', '--days', '4'], { env });
+
+        assert.notEqual(invalid.code, 0);
+        assert.notEqual(windowError.code, 0);
+        assert.notEqual(upstream.code, 0);
+        assert.notEqual(budget.code, 0);
+        assert.ok(stripAnsi(invalid.stdout).includes('VALIDATION_ERROR. cursor does not match the requested window'));
+        assert.ok(stripAnsi(windowError.stdout).includes('INVALID_WINDOW. window is invalid'));
+        assert.ok(stripAnsi(upstream.stdout).includes('HTTP 429 D1_UPSTREAM_RATE_LIMITED.'));
+        assert.ok(stripAnsi(upstream.stdout).includes('Cloudflare API rate limit reached'));
+        assert.ok(stripAnsi(upstream.stdout).includes('Retry after 12 seconds.'));
+        assert.ok(stripAnsi(budget.stdout).includes('HTTP 429 D1_BUDGET_EXHAUSTED.'));
+        assert.ok(stripAnsi(budget.stdout).includes('Retry after 3 seconds.'));
+        assert.equal(stripAnsi(upstream.stdout).includes('checkout'), false);
+      } finally {
+        await server.close();
+      }
+    });
+  });
+
   describe('identity lookup', () => {
     it('sends --email to /events as POST for server-side scoped HMAC lookup', async () => {
       let requestMethod;

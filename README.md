@@ -80,6 +80,7 @@ compare <name>                   Free before/after read of unique converters, or
 annotate <name> --title <text>   Append one project annotation without replacing context
 properties <name>                Discover event names & property keys
 properties-received <name>       Property keys grouped by received event name
+catalog <name>                   Pro event catalog: exact counts, property types, presence, and examples. --days or --from/--to, --limit, --property-limit, --json
 context get <name>               Read stored goals, activation events, event glossary, and annotations
 context set <name> --json '{...}' Store compact goals, activation events, glossary, and annotations
 portfolio-context get            Read stored account portfolio context
@@ -257,6 +258,23 @@ Before setting or refreshing the glossary, inspect the project's current event n
 ```bash
 npx --yes @agent-analytics/cli@0.5.43 properties my-site
 npx --yes @agent-analytics/cli@0.5.43 properties-received my-site
+```
+
+`catalog` is a Pro read on `GET /catalog`. A successful call counts as one metered read. A free account gets HTTP 403 `PRO_REQUIRED`, and that call is not metered. An agent session needs `analytics:read`. A missing scope is HTTP 403 `FORBIDDEN`. A project outside the session is HTTP 404 `PROJECT_NOT_FOUND`, and the response does not include that project's name.
+
+Pass the project as the positional argument or with `--project`. `--days` defaults to 7 and must be an integer from 1 to 90. `--from` and `--to` are `YYYY-MM-DD` dates, sent as `date_from` and `date_to`. Pass `--days` or both dates, not both. The inclusive span is at most 90 days, matching hosted `POST /sql`. A bad window is HTTP 400 `INVALID_WINDOW`. `--limit` is events per page (server default 10, integer 1 to 18). `--property-limit` is property keys per event (server default 25, integer 1 to 40). The CLI rejects an out-of-range limit before the request as `VALIDATION_ERROR`.
+
+Each event includes an exact `count` plus `first_seen` and `last_seen`. Each property includes `key`, `type` (`string`, `number`, `boolean`, `object`, `array`, `null`, or `mixed`), `presence`, and up to 3 `examples`. Property type, presence, and examples are a sample of the newest dates, at most 40 rows per event. `properties_exact` is true when that sample includes every counted row. Email-shaped examples are `[redacted-email]`. `--json` prints the API body, including `project_context` when the project has saved context.
+
+`--cursor` continues events from `next_cursor`. `--properties-cursor` continues one event's keys from `properties_next_cursor`. Pass one cursor, not both. A bad cursor is HTTP 400 `VALIDATION_ERROR`. When another page exists, the human output prints the next `catalog` command using the returned window. HTTP 429 is a read-budget or upstream rate limit. The CLI prints `429`, the error code, and `Retry-After` seconds.
+
+```bash
+npx @agent-analytics/cli catalog my-site
+npx @agent-analytics/cli catalog my-site --days 30 --limit 18 --property-limit 40
+npx @agent-analytics/cli catalog my-site --from 2026-11-01 --to 2026-11-20 --json
+```
+
+```bash
 npx --yes @agent-analytics/cli@0.5.43 context set my-site --json '{
   "goals": ["Increase activated Agent Analytics accounts"],
   "activation_events": ["signup_completed", "project_created", "first_event_received"],
