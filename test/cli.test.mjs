@@ -332,6 +332,9 @@ describe('CLI', () => {
         assert.ok(plain.includes('The+requested+analytics+task+needs+Pro.'));
         assert.ok(!plain.includes('command='));
         assert.ok(!plain.includes('Need+funnels'));
+        assert.ok(plain.includes('then opens the payment page.'));
+        assert.ok(!plain.includes('Lemon Squeezy'));
+        assert.ok(!plain.toLowerCase().includes('lemonsqueezy'));
       } finally {
         await server.close();
         config.cleanup();

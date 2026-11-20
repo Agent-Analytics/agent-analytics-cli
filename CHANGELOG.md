@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upgrade handoff text says the payment page instead of naming a payment provider. The CLI still only prints a checkout link for a human and does not charge.
+
 ## 0.5.43
 
 - `login` accepts `--project <name>` and `--level read|manage|admin`. The default level is read. Start sends project, level, and the scopes for that level so older servers can still approve a session.
